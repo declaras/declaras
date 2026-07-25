@@ -1,5 +1,5 @@
 # declaras
 
-Declaración de renta automática (Colombia).
+Backend de declaras — declaración de renta automática (Colombia).
 
-Monorepo.
+El frontend vive en [declaras/declaras-front](https://github.com/declaras/declaras-front).
