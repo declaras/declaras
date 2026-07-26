@@ -1,0 +1,39 @@
+anio: 2025
+uvt: 49799
+uvt_siguiente: 52374
+tope_obligacion_ingresos_uvt: 1400
+tope_obligacion_patrimonio_uvt: 4500
+tope_obligacion_consignaciones_uvt: 1400
+limite_general_pct: 0.40
+limite_general_uvt: 1340
+exenta_laboral_pct: 0.25
+exenta_laboral_tope_uvt: 790
+dependiente_uvt: 72
+dependientes_max: 4
+ded_387_pct: 0.10
+ded_387_tope_uvt_mes: 32
+prepagada_tope_uvt_anio: 192
+intereses_vivienda_tope_uvt: 1200
+icetex_tope_uvt: 100
+afc_pct: 0.30
+afc_tope_uvt: 3800
+gmf_pct_deducible: 0.50
+facturas_pct: 0.01
+facturas_tope_uvt: 240
+pension_exenta_uvt_mes: 1000
+dividendos_tarifa_gravados: 0.35
+descuento_dividendos_pct: 0.19
+descuento_dividendos_umbral_uvt: 1090
+donaciones_descuento_pct: 0.25
+# PENDIENTE: decreto AG 2025 (sale ~mitad de 2026). null activa el flag provisional.
+componente_inflacionario: null
+anticipo_pct: [0.25, 0.50, 0.75]
+# Fórmula publicada del art. 241: (base − desde) × tarifa + constante_uvt
+tabla_241:
+  - {desde_uvt: 0,     hasta_uvt: 1090,  tarifa: 0.0,  constante_uvt: 0}
+  - {desde_uvt: 1090,  hasta_uvt: 1700,  tarifa: 0.19, constante_uvt: 0}
+  - {desde_uvt: 1700,  hasta_uvt: 4100,  tarifa: 0.28, constante_uvt: 116}
+  - {desde_uvt: 4100,  hasta_uvt: 8670,  tarifa: 0.33, constante_uvt: 788}
+  - {desde_uvt: 8670,  hasta_uvt: 18970, tarifa: 0.35, constante_uvt: 2296}
+  - {desde_uvt: 18970, hasta_uvt: 31000, tarifa: 0.37, constante_uvt: 5901}
+  - {desde_uvt: 31000, hasta_uvt: null,  tarifa: 0.39, constante_uvt: 10352}

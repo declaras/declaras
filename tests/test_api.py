@@ -1,0 +1,433 @@
+import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import anthropic
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+import declaras.api.main as api_main
+from declaras.api import almacen
+from declaras.api.main import app
+from declaras.caso import Fuente, IngresoLaboral
+from declaras.extraccion import id_documento
+from tests.golden.casos import g1
+
+PDF = b"%PDF-fake"
+
+
+@pytest.fixture()
+def cliente(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    return TestClient(app)
+
+
+def _crear(cliente) -> str:
+    r = cliente.post("/casos", json=g1().model_dump())
+    assert r.status_code == 201
+    return r.json()["id"]
+
+
+def _laboral(confianza: float | None = 0.9, ref: str = "abc123def456") -> IngresoLaboral:
+    return IngresoLaboral(
+        empleador_nit="901", empleador_nombre="Otro Empleador",
+        salarios=10_000_000, aportes_salud=400_000, aportes_pension=400_000,
+        retencion=0, fuente=Fuente.documento("220", ref, confianza=confianza))
+
+
+class ExtractorFalso:
+    """Doble de `extraer_220`: registra la llamada y devuelve o revienta a pedido.
+
+    Con la firma completa (`anio_esperado`) a propósito: si el endpoint dejara de
+    pasar el año, el test que lo verifica falla en vez de pasar de largo. Sin `laboral`
+    explícito respeta el contrato del extractor real y sella `Fuente.ref` con
+    `id_documento(pdf)`, que es de donde sale la deduplicación.
+    """
+
+    def __init__(self, laboral: IngresoLaboral | None = None,
+                 error: Exception | None = None):
+        self.laboral = laboral
+        self.error = error
+        self.llamadas: list[dict] = []
+
+    def __call__(self, pdf_bytes, anio_esperado=None, client=None):
+        self.llamadas.append({"pdf_bytes": pdf_bytes, "anio_esperado": anio_esperado,
+                              "client": client})
+        if self.error is not None:
+            raise self.error
+        if self.laboral is not None:
+            return self.laboral
+        return _laboral(ref=id_documento(pdf_bytes))
+
+
+def _subir(cliente, caso_id: str, extractor: ExtractorFalso, monkeypatch):
+    monkeypatch.setattr(api_main, "extraer_220", extractor)
+    return cliente.post(f"/casos/{caso_id}/documentos/220",
+                        files={"archivo": ("220.pdf", PDF, "application/pdf")})
+
+
+# --- CRUD ---
+
+def test_crear_y_leer_caso(cliente):
+    caso_id = _crear(cliente)
+    r = cliente.get(f"/casos/{caso_id}")
+    assert r.status_code == 200
+    assert r.json()["contribuyente"]["nombre"] == "G1 Asalariado"
+
+
+def test_reemplazar_caso_persiste_el_nuevo_contenido(cliente):
+    caso_id = _crear(cliente)
+    caso = g1()
+    caso.contribuyente.nombre = "Nombre Corregido A Mano"
+    r = cliente.put(f"/casos/{caso_id}", json=caso.model_dump())
+    assert r.status_code == 200
+    assert r.json()["contribuyente"]["nombre"] == "Nombre Corregido A Mano"
+    assert (cliente.get(f"/casos/{caso_id}").json()["contribuyente"]["nombre"]
+            == "Nombre Corregido A Mano")
+
+
+def test_body_con_clave_desconocida_es_422(cliente):
+    # `extra="forbid"` en el caso: un typo del front no se descarta en silencio.
+    r = cliente.post("/casos", json={**g1().model_dump(), "salariosss": 1})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("metodo, sufijo, cuerpo", [
+    ("get", "", "vacio"),
+    ("put", "", "caso"),
+    ("post", "/liquidar", "vacio"),
+    ("get", "/borrador", "vacio"),
+    ("get", "/memoria", "vacio"),
+    ("post", "/documentos/220", "archivo"),
+])
+def test_caso_inexistente_404(cliente, metodo, sufijo, cuerpo):
+    # Todo endpoint pasa por el mismo guard: ninguno responde 200 sobre un caso ajeno.
+    kwargs = {"caso": {"json": g1().model_dump()},
+              "archivo": {"files": {"archivo": ("220.pdf", PDF, "application/pdf")}},
+              "vacio": {}}[cuerpo]
+    r = getattr(cliente, metodo)(f"/casos/no-existe{sufijo}", **kwargs)
+    assert r.status_code == 404
+
+
+# --- liquidación y render ---
+
+def test_liquidar_devuelve_casillas_y_optimiza(cliente):
+    caso_id = _crear(cliente)
+    r = cliente.post(f"/casos/{caso_id}/liquidar")
+    assert r.status_code == 200
+    cuerpo = r.json()
+    assert cuerpo["impuesto_neto"] == 1_495_977
+    assert cuerpo["saldo"] == -6_504_023
+    assert cuerpo["elecciones"] == {"usar_387": False, "usar_72uvt": True}
+    assert cuerpo["combos_evaluados"] == 4
+    assert any(c["codigo"] == "RLG_GENERAL" for c in cuerpo["casillas"])
+    assert isinstance(cuerpo["flags"], list)
+
+
+def test_put_de_anio_sin_parametros_es_422(cliente):
+    # El PUT es la otra puerta de entrada de un caso completo: sin este guard, reparar un
+    # caso podía dejarle un año sin tabla y el 422 aparecía después, al liquidar.
+    caso_id = _crear(cliente)
+    r = cliente.put(f"/casos/{caso_id}",
+                    json=g1().model_copy(update={"anio_gravable": 1999}).model_dump())
+    assert r.status_code == 422
+    assert "1999" in r.json()["detail"]
+    assert cliente.get(f"/casos/{caso_id}").json()["anio_gravable"] == 2025  # no escribió
+
+
+def test_crear_caso_de_anio_sin_parametros_es_422(cliente):
+    # El año se rechaza al crear, no tres pantallas después al liquidar.
+    r = cliente.post("/casos", json=g1().model_copy(update={"anio_gravable": 1999})
+                     .model_dump())
+    assert r.status_code == 422
+    assert "1999" in r.json()["detail"]
+
+
+def test_liquidar_anio_sin_parametros_es_422(cliente):
+    # Defensa en profundidad: el caso pudo entrar al almacén antes de este chequeo.
+    # Año sin tabla es un dato del caso, no una falla del servidor.
+    caso_id = almacen.guardar(g1().model_copy(update={"anio_gravable": 1999}))
+    r = cliente.post(f"/casos/{caso_id}/liquidar")
+    assert r.status_code == 422
+    assert "1999" in r.json()["detail"]
+
+
+def test_borrador_html(cliente):
+    caso_id = _crear(cliente)
+    r = cliente.get(f"/casos/{caso_id}/borrador")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "IMPUESTO_NETO" in r.text
+
+
+def test_memoria_markdown_en_texto_plano(cliente):
+    caso_id = _crear(cliente)
+    r = cliente.get(f"/casos/{caso_id}/memoria")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers["content-type"]
+    assert r.text.startswith("# Memoria de cálculo")
+    assert "## IMPUESTO_NETO" in r.text
+
+
+# --- upload 220 ---
+
+def test_subir_220_agrega_hecho(cliente, monkeypatch):
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(), monkeypatch)
+    assert r.status_code == 200
+    assert len(r.json()["caso"]["laborales"]) == 2
+    # y queda persistido, no solo en la respuesta
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 2
+
+
+def test_subir_220_pasa_el_anio_gravable_del_caso(cliente, monkeypatch):
+    caso_id = _crear(cliente)
+    extractor = ExtractorFalso()
+    _subir(cliente, caso_id, extractor, monkeypatch)
+    # El error más común es subir el 220 de otro año: el caso sabe cuál espera.
+    assert extractor.llamadas[0]["anio_esperado"] == g1().anio_gravable
+    assert extractor.llamadas[0]["pdf_bytes"] == PDF
+
+
+@pytest.mark.parametrize("mensaje", [
+    "la extracción no reconcilia contra el total impreso del certificado",
+    "El certificado es del año gravable 2024 y se esperaba 2025",
+    "El 220 reporta pensiones (30,000,000); regístralas como IngresoPension",
+    "El archivo no parece un PDF (no empieza con %PDF)",
+])
+def test_error_del_documento_es_422_con_el_mensaje(cliente, monkeypatch, mensaje):
+    # Documento malo = error del cliente, no del servidor: 422 y el mensaje llega tal cual.
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(error=ValueError(mensaje)), monkeypatch)
+    assert r.status_code == 422
+    assert r.json()["detail"] == mensaje
+
+
+def test_error_del_documento_no_modifica_el_caso(cliente, monkeypatch):
+    caso_id = _crear(cliente)
+    _subir(cliente, caso_id, ExtractorFalso(error=ValueError("no reconcilia")), monkeypatch)
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 1
+
+
+def _error_401() -> anthropic.AuthenticationError:
+    """El 401 del SDK: la llave existe pero no sirve (revocada, de otro proyecto)."""
+    peticion = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return anthropic.AuthenticationError(
+        "invalid x-api-key", response=httpx.Response(401, request=peticion), body=None)
+
+
+@pytest.mark.parametrize("error", [
+    # Sin ANTHROPIC_API_KEY el SDK no resuelve la autenticación y revienta así, con un
+    # TypeError, al armar los headers de la llamada.
+    TypeError('"Could not resolve authentication method. Expected one of api_key, '
+              'auth_token, or credentials to be set."'),
+    _error_401(),
+])
+def test_falta_de_credenciales_es_503_y_dice_que_falta(cliente, monkeypatch, error):
+    # El bug: cualquiera de estas dos salía como 500 "Internal Server Error", así que un
+    # servidor sin llave se veía idéntico a un bug del motor.
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(error=error), monkeypatch)
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+    # Falta configuración del servidor, no falla el caso: queda como estaba.
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 1
+
+
+@pytest.mark.parametrize("confianza, advierte", [
+    (0.9, False), (0.7, False), (0.69, True), (0.55, True), (None, False),
+])
+def test_advertencia_por_confianza_baja(cliente, monkeypatch, confianza, advierte):
+    # Borde exacto: 0.7 pasa, 0.69 advierte. Sin confianza declarada no se inventa alarma.
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(_laboral(confianza=confianza)), monkeypatch)
+    assert r.status_code == 200
+    advertencia = r.json()["advertencia"]
+    assert (advertencia is not None) is advierte
+    if advierte:
+        assert str(confianza) in advertencia
+    # El hecho se guarda igual: la advertencia es para revisar, no para bloquear.
+    assert len(r.json()["caso"]["laborales"]) == 2
+
+
+def test_subir_el_mismo_pdf_dos_veces_es_409(cliente, monkeypatch):
+    # Reprocesar el mismo certificado duplicaría el ingreso: el sha256 del PDF es la clave.
+    caso_id = _crear(cliente)
+    extractor = ExtractorFalso()
+    assert _subir(cliente, caso_id, extractor, monkeypatch).status_code == 200
+
+    r = _subir(cliente, caso_id, extractor, monkeypatch)
+    assert r.status_code == 409
+    assert id_documento(PDF) in r.json()["detail"]
+    assert len(extractor.llamadas) == 1  # ni siquiera gasta la segunda llamada al modelo
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 2
+
+
+def test_uploads_concurrentes_no_pierden_hechos(cliente, monkeypatch, tmp_path):
+    caso_id = _crear(cliente)
+    monkeypatch.setattr(api_main, "extraer_220", ExtractorFalso())
+
+    # Ensancha la ventana entre leer y escribir el caso. Sin candado los 4 hilos leen el
+    # mismo caso y la última escritura borra los otros tres hechos.
+    reemplazar_real = almacen.reemplazar
+
+    def _reemplazar_lento(cid, caso):
+        time.sleep(0.02)
+        reemplazar_real(cid, caso)
+
+    monkeypatch.setattr(api_main.almacen, "reemplazar", _reemplazar_lento)
+
+    pdfs = [PDF + b"-%d" % i for i in range(4)]  # 4 documentos DISTINTOS: ningún 409
+
+    def _subir_pdf(pdf: bytes):
+        return cliente.post(f"/casos/{caso_id}/documentos/220",
+                            files={"archivo": ("220.pdf", pdf, "application/pdf")})
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        codigos = [r.status_code for r in pool.map(_subir_pdf, pdfs)]
+
+    assert codigos == [200] * 4
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 5  # 1 de G1 + 4
+    for pdf in pdfs:
+        assert (tmp_path / "documentos" / f"{id_documento(pdf)}.pdf").read_bytes() == pdf
+
+
+def test_guarda_el_pdf_para_que_la_fuente_sea_resoluble(cliente, monkeypatch, tmp_path):
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(_laboral(ref="deadbeef1234")), monkeypatch)
+    ref = r.json()["caso"]["laborales"][1]["fuente"]["ref"]
+    assert ref == "deadbeef1234"
+    # `Fuente.ref` sin el documento detrás no es trazabilidad, es un string.
+    assert (tmp_path / "documentos" / f"{ref}.pdf").read_bytes() == PDF
+
+
+# --- almacén ---
+
+def test_rutas_por_defecto_sin_variable_de_entorno(monkeypatch):
+    monkeypatch.delenv("DECLARAS_DATOS", raising=False)
+    assert almacen.ruta_caso("abc123").as_posix() == "var/casos/abc123.json"
+    assert almacen.ruta_documento("abc123").as_posix() == "var/documentos/abc123.pdf"
+
+
+def test_cargar_caso_inexistente_es_keyerror(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    with pytest.raises(KeyError):
+        almacen.cargar("0123456789ab")
+
+
+@pytest.mark.parametrize("id_malo", ["../../etc/passwd", "..", "a/b", "ABC", "x" * 65, ""])
+def test_id_fuera_del_alfabeto_no_existe(tmp_path, monkeypatch, id_malo):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    with pytest.raises(KeyError):
+        almacen.cargar(id_malo)
+
+
+def test_id_con_traversal_no_alcanza_archivos_fuera_del_almacen(tmp_path, monkeypatch):
+    # Sin alfabeto cerrado, `cargar("../otro")` resuelve a un archivo de AFUERA del
+    # almacén (y `reemplazar` lo sobrescribe): el id viene del path del request.
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    vecino = tmp_path / "otro.json"
+    vecino.write_text(g1().model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        almacen.cargar("../otro")
+    with pytest.raises(KeyError):
+        almacen.reemplazar("../otro", g1().model_copy(update={"anio_gravable": 2024}))
+    assert json.loads(vecino.read_text(encoding="utf-8"))["anio_gravable"] == 2025
+
+
+def test_cargar_json_con_schema_viejo_es_error_de_dominio(tmp_path, monkeypatch):
+    # Un caso persistido por una versión anterior + `extra="forbid"` = ValidationError.
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    ruta = almacen.ruta_caso(caso_id)
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    datos["campo_de_una_version_vieja"] = 1
+    ruta.write_text(json.dumps(datos), encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        almacen.cargar(caso_id)
+    assert "no se pudo leer" in str(exc.value)
+    assert caso_id in str(exc.value)
+    # NO es "no existe": un caso corrupto que responde 404 se ve como dato borrado.
+    assert not isinstance(exc.value, KeyError)
+
+
+def test_cargar_json_invalido_es_error_de_dominio(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    almacen.ruta_caso(caso_id).write_text('{"anio_gravable": ', encoding="utf-8")
+    with pytest.raises(ValueError, match="no se pudo leer"):
+        almacen.cargar(caso_id)
+
+
+def test_caso_corrupto_en_disco_es_422_no_500(cliente, tmp_path):
+    caso_id = _crear(cliente)
+    _corromper(tmp_path, caso_id)
+    r = cliente.get(f"/casos/{caso_id}")
+    assert r.status_code == 422
+    assert "no se pudo leer" in r.json()["detail"]
+
+
+def _corromper(tmp_path, caso_id: str) -> None:
+    ruta = tmp_path / "casos" / f"{caso_id}.json"
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    datos["laborales"][0]["campo_que_ya_no_existe"] = 1
+    ruta.write_text(json.dumps(datos), encoding="utf-8")
+
+
+def test_put_repara_un_caso_ilegible(cliente, tmp_path):
+    # El PUT es la entrada manual Y la reparación: valida existencia por archivo, sin
+    # parsear el contenido viejo. Si exigiera cargarlo, el caso que hay que arreglar
+    # sería justo el único que no se puede arreglar.
+    caso_id = _crear(cliente)
+    _corromper(tmp_path, caso_id)
+    assert cliente.get(f"/casos/{caso_id}").status_code == 422
+
+    r = cliente.put(f"/casos/{caso_id}", json=g1().model_dump())
+    assert r.status_code == 200
+    assert cliente.get(f"/casos/{caso_id}").status_code == 200
+
+
+def test_escritura_no_deja_temporales(tmp_path, monkeypatch):
+    # La escritura es atómica (temporal + os.replace): el temporal no debe sobrevivir.
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    almacen.reemplazar(caso_id, g1())
+    assert [r.name for r in (tmp_path / "casos").iterdir()] == [f"{caso_id}.json"]
+
+
+class _OsQueFallaAlPublicar:
+    """`os` con el `replace` roto: simula el crash justo en el punto de publicación."""
+
+    environ = os.environ
+
+    def replace(self, *_a, **_k):
+        raise OSError("disco lleno")
+
+
+def test_fallo_al_publicar_deja_intacto_el_caso_anterior(tmp_path, monkeypatch):
+    # El escenario que justifica el os.replace: si la escritura muere a mitad, el caso
+    # viejo tiene que seguir completo y legible (con write_bytes directo quedaría trunco).
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    monkeypatch.setattr(almacen, "os", _OsQueFallaAlPublicar())
+
+    with pytest.raises(OSError, match="disco lleno"):
+        almacen.reemplazar(caso_id, g1().model_copy(update={"anio_gravable": 2024}))
+
+    assert almacen.cargar(caso_id).anio_gravable == 2025  # el viejo, entero
+    assert [r.name for r in (tmp_path / "casos").iterdir()] == [f"{caso_id}.json"]
+
+
+def test_guardar_devuelve_ids_distintos(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    assert almacen.guardar(g1()) != almacen.guardar(g1())
+
+
+def test_ida_y_vuelta_conserva_el_caso_completo(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso = g1()
+    assert almacen.cargar(almacen.guardar(caso)) == caso

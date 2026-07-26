@@ -125,7 +125,7 @@ CasoTributario
 | AFC + FVP | ≤30% del ingreso, tope 3.800 UVT = $189.236.200 |
 | GMF | 50% de lo pagado, sin tope propio |
 | 1% compras con factura electrónica — extra-límite | tope 240 UVT = $11.951.760 |
-| Exención pensional | 1.000 UVT **por mes** de mesada |
+| Exención pensional | 1.000 UVT **por mes y por contribuyente** (I-2: agregando pagadores; art. 206-5) |
 | Umbral tabla 241 / descuento dividendos | 1.090 UVT = $54.280.910 |
 | Tabla art. 241 | marginales 0/19/28/33/35/37/39% |
 | Tarifa dividendos gravados (1er componente) | 35% |
@@ -150,11 +150,12 @@ Función pura: `liquidar(caso, parametros, elecciones) → Liquidacion`.
 6. Extra-límite (no cuentan para el 40%): 72 UVT por dependiente (máx 4) y 1% de compras con factura electrónica (máx 240 UVT).
 7. Renta líquida gravable → tabla art. 241.
 
-**Cédula de pensiones**: por cada mes, exento hasta 1.000 UVT de mesada; el exceso anualizado es renta gravable que se suma a la base de la tabla 241. Sin acceso a las deducciones del 40%.
+**Cédula de pensiones**: por cada mes, exento hasta 1.000 UVT del agregado de mesadas del contribuyente (I-2: el tope es del contribuyente, se suman los pagadores del mes antes de restar); el exceso anualizado es renta gravable que se suma a la base de la tabla 241. Sin acceso a las deducciones del 40%.
 
 **Cédula de dividendos**:
 - *No gravados*: se suman a la base de tabla 241 (junto con general + pensiones). Luego descuento art. 254-1 = 19% marginal sobre la porción de dividendos que exceda 1.090 UVT (resta del impuesto, no de la base).
-- *Gravados*: primer componente al 35%; el neto restante se suma a la base de tabla 241 y participa también del descuento 254-1.
+- *Gravados*: primer componente al 35%; el neto restante se suma a la base de tabla 241 y participa también del descuento 254-1 (interpretación I-3: la base del 254-1 toma los gravados NETOS del 35%, art. 242 inc. 2 — validar con contador).
+- Tope art. 258 ET: el descuento por donaciones (art. 257) no puede exceder el 25% del impuesto a cargo — el motor lo señala con flag (v1) en el cierre.
 
 **Créditos y cierre**: impuesto según tabla(s) − descuentos (254-1, 25% donaciones ESAL certificadas) − retenciones (todas las fuentes) − anticipo pagado − saldo a favor anterior + anticipo año siguiente → saldo a pagar / a favor.
 

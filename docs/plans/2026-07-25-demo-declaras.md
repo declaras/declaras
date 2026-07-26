@@ -160,9 +160,9 @@ def test_tabla_241():
     p = cargar(2025)
     assert impuesto_tabla_241(0, p) == 0
     assert impuesto_tabla_241(54_280_910, p) == 0            # exacto en 1.090 UVT
-    assert impuesto_tabla_241(62_154_472, p) == 1_495_977    # tramo 19%
-    assert impuesto_tabla_241(125_212_000, p) == 17_126_740  # tramo 28%
-    assert impuesto_tabla_241(118_978_944, p) == 15_381_484
+    assert impuesto_tabla_241(62_154_472, p) == 1_495_977    # tramo 19% (constante 0)
+    assert impuesto_tabla_241(125_212_000, p) == 17_131_720  # tramo 28% + 116 UVT
+    assert impuesto_tabla_241(118_978_944, p) == 15_386_464
 ```
 
 - [ ] **Step 2: Correr y ver el fallo**
@@ -195,6 +195,7 @@ class Tramo(BaseModel):
     desde_uvt: int
     hasta_uvt: int | None  # None = último tramo, sin tope
     tarifa: float
+    constante_uvt: int = 0  # constante publicada del art. 241, en UVT (116, 788, ...)
 
 
 class ParametrosAnio(BaseModel):
@@ -265,14 +266,15 @@ donaciones_descuento_pct: 0.25
 # PENDIENTE: decreto AG 2025 (sale ~mitad de 2026). null activa el flag provisional.
 componente_inflacionario: null
 anticipo_pct: [0.25, 0.50, 0.75]
+# Fórmula publicada del art. 241: (base − desde) × tarifa + constante_uvt
 tabla_241:
-  - {desde_uvt: 0,     hasta_uvt: 1090,  tarifa: 0.0}
-  - {desde_uvt: 1090,  hasta_uvt: 1700,  tarifa: 0.19}
-  - {desde_uvt: 1700,  hasta_uvt: 4100,  tarifa: 0.28}
-  - {desde_uvt: 4100,  hasta_uvt: 8670,  tarifa: 0.33}
-  - {desde_uvt: 8670,  hasta_uvt: 18970, tarifa: 0.35}
-  - {desde_uvt: 18970, hasta_uvt: 31000, tarifa: 0.37}
-  - {desde_uvt: 31000, hasta_uvt: null,  tarifa: 0.39}
+  - {desde_uvt: 0,     hasta_uvt: 1090,  tarifa: 0.0,  constante_uvt: 0}
+  - {desde_uvt: 1090,  hasta_uvt: 1700,  tarifa: 0.19, constante_uvt: 0}
+  - {desde_uvt: 1700,  hasta_uvt: 4100,  tarifa: 0.28, constante_uvt: 116}
+  - {desde_uvt: 4100,  hasta_uvt: 8670,  tarifa: 0.33, constante_uvt: 788}
+  - {desde_uvt: 8670,  hasta_uvt: 18970, tarifa: 0.35, constante_uvt: 2296}
+  - {desde_uvt: 18970, hasta_uvt: 31000, tarifa: 0.37, constante_uvt: 5901}
+  - {desde_uvt: 31000, hasta_uvt: null,  tarifa: 0.39, constante_uvt: 10352}
 ```
 
 ```python
@@ -304,18 +306,17 @@ from declaras.parametros.modelos import ParametrosAnio
 
 
 def impuesto_tabla_241(base: int, p: ParametrosAnio) -> int:
-    """Impuesto marginal del art. 241 ET sobre una base en pesos."""
+    """Impuesto del art. 241 ET con la fórmula publicada en la ley:
+    (base − límite inferior del tramo) × tarifa + constante del tramo en UVT."""
     if base <= 0:
         return 0
-    total = Decimal(0)
     for tramo in p.tabla_241:
         desde = tramo.desde_uvt * p.uvt
-        if base <= desde:
-            break
         hasta = tramo.hasta_uvt * p.uvt if tramo.hasta_uvt is not None else None
-        techo = min(base, hasta) if hasta is not None else base
-        total += Decimal(techo - desde) * Decimal(str(tramo.tarifa))
-    return pesos(total)
+        if base > desde and (hasta is None or base <= hasta):
+            return pesos(Decimal(base - desde) * Decimal(str(tramo.tarifa))
+                         + tramo.constante_uvt * p.uvt)
+    return 0
 ```
 
 Nota de empaque: agregar a `pyproject.toml` para que el YAML viaje con el paquete:
@@ -657,7 +658,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `tests/test_traza.py`
 
 **Interfaces:**
-- Produces: `Nodo{codigo, etiqueta, valor:int, formula:str, insumos:list[str], regla:str|None}`; `Flag{codigo, mensaje, severidad}`; `Traza` con `.nodo(codigo, etiqueta, valor, formula, insumos=(), regla=None) -> int` (registra y devuelve `int(valor)`), `.flag(codigo, mensaje, severidad="advertencia")`, `.a_liquidacion(anio, elecciones) -> Liquidacion`; `Liquidacion{anio_gravable, elecciones, nodos:dict[str,Nodo], flags:list[Flag]}` con `.valor(codigo) -> int` y `.tiene_flag(codigo) -> bool`; `Elecciones{usar_387:bool=False, usar_72uvt:bool=True}`.
+- Produces: `Nodo{codigo, etiqueta, valor:int, formula:str, insumos:list[str], regla:str|None}`; `Flag{codigo, mensaje, severidad}`; `Traza` con `.nodo(codigo, etiqueta, valor: int, formula, insumos=(), regla=None) -> int` (valida int vía pydantic — ValidationError si no lo es —, ValueError si el código ya está registrado, devuelve el int validado), `.flag(codigo, mensaje, severidad="advertencia")`, `.a_liquidacion(anio, elecciones) -> Liquidacion`; `Liquidacion{anio_gravable, elecciones, nodos:dict[str,Nodo], flags:list[Flag]}` con `.valor(codigo) -> int` y `.tiene_flag(codigo) -> bool`; `Elecciones{usar_387:bool=False, usar_72uvt:bool=True}`. Todos los modelos con `extra="forbid"`.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -951,7 +952,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 # tests/test_rlg_general.py
 from declaras.caso import (
     Arriendo, Beneficios, CasoTributario, Contribuyente, CostosArriendo,
-    Dependiente, Fuente, IngresoLaboral, MontoDeclarado,
+    Dependiente, Fuente, IngresoLaboral, MontoDeclarado, Rendimiento,
 )
 from declaras.motor.elecciones import Elecciones
 from declaras.motor.general import base_general, rlg_general
@@ -985,13 +986,15 @@ def caso_g1():
 
 
 def caso_g3_parcial():
-    """Asalariado 100M + arriendo: el límite NO se copa, el 387 sí paga."""
+    """Asalariado 100M + rendimientos + arriendo: el límite NO se copa, el 387 sí paga."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="3", nombre="G3"),
         laborales=[IngresoLaboral(
             empleador_nit="900", empleador_nombre="ACME", salarios=100_000_000,
             aportes_salud=4_000_000, aportes_pension=4_000_000,
             retencion=6_000_000, fuente=FX)],
+        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
+                                  retencion=280_000, fuente=FX)],
         arriendos=[Arriendo(
             inmueble="Apto", canon_total=36_000_000, retencion=1_260_000,
             costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
@@ -1139,7 +1142,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `tests/test_pensiones.py`
 
 **Interfaces:**
-- Produces: `rlg_pensiones(caso, p, t) -> int` — registra `RLG_PENSIONES`. Exención de `pension_exenta_uvt_mes` (1.000 UVT) **por mes**: gravado = Σ max(0, mesada_m − 1.000 UVT).
+- Produces: `rlg_pensiones(caso, p, t) -> int` — registra `RLG_PENSIONES`. Exención de `pension_exenta_uvt_mes` (1.000 UVT) **por mes y por contribuyente** (interpretación I-2, art. 206-5: el tope es del contribuyente, no de cada pagador): gravado = Σ_mes max(0, Σ_pagadores mesada_mes − 1.000 UVT).
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -1196,12 +1199,12 @@ from declaras.parametros import ParametrosAnio
 
 
 def rlg_pensiones(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> int:
-    """Cédula de pensiones: exención de 1.000 UVT POR MES; el exceso grava."""
+    """Cédula de pensiones (I-2): exención mensual del CONTRIBUYENTE — se agregan
+    los pagadores de cada mes antes de restar el tope; el exceso grava."""
     tope_mes = p.uvt_pesos(p.pension_exenta_uvt_mes)
     gravado = sum(
-        max(0, mesada - tope_mes)
-        for pension in caso.pensiones
-        for mesada in pension.mesadas
+        max(0, sum(pn.mesadas[mes] for pn in caso.pensiones) - tope_mes)
+        for mes in range(12)
     )
     return t.nodo(
         "RLG_PENSIONES", "Renta líquida gravable cédula de pensiones",
@@ -1270,9 +1273,9 @@ def test_dividendos_mixtos_g3():
     v = impuesto_total(_caso([div]), P, t, rlg_general=82_478_944, rlg_pensiones=0)
     assert t.nodos["IMP_DIV_35"].valor == 3_500_000
     assert t.nodos["BASE_TABLA_241"].valor == 118_978_944  # 82.478.944 + 30M + 6.5M
-    assert t.nodos["IMPUESTO_241"].valor == 15_381_484
+    assert t.nodos["IMPUESTO_241"].valor == 15_386_464     # 28% + 116 UVT
     assert t.nodos["DESCUENTO_254_1"].valor == 0           # 36.5M < 1.090 UVT
-    assert v == 18_881_484
+    assert v == 18_886_464
 
 
 def test_descuento_254_1_sobre_umbral():
@@ -1280,10 +1283,10 @@ def test_descuento_254_1_sobre_umbral():
                     no_gravados=80_000_000, fuente=FX)
     t = Traza()
     v = impuesto_total(_caso([div]), P, t, rlg_general=50_000_000, rlg_pensiones=0)
-    # base 130M → imp241 18.467.380; descuento 19% × (80M − 54.280.910) = 4.886.627
-    assert t.nodos["IMPUESTO_241"].valor == 18_467_380
+    # base 130M → imp241 18.472.360 (28% + 116 UVT); descuento 19% × (80M − 54.280.910)
+    assert t.nodos["IMPUESTO_241"].valor == 18_472_360
     assert t.nodos["DESCUENTO_254_1"].valor == 4_886_627
-    assert v == 13_580_753
+    assert v == 13_585_733
 ```
 
 - [ ] **Step 2: Correr y ver el fallo**
@@ -1373,7 +1376,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces:
   - `cerrar(caso, p, t, impuesto_neto: int) -> None` — registra `RETENCIONES` (suma de todas las fuentes), `ANTICIPO_SIGUIENTE` (pct por `anios_previos_declarando`: 0→25%, 1→50%, ≥2→75%; base = `impuesto_neto` o, si `impuesto_neto_anio_anterior` no es None y años≥1, `min(impuesto_neto, promedio de ambos)`; anticipo = `max(0, pesos(base×pct) − retenciones)`) y `SALDO = impuesto_neto + anticipo − retenciones − anticipo_pagado − saldo_favor_anterior` (positivo = a pagar, negativo = a favor).
-  - `validar(caso, p, t) -> None` — registra `PATRIMONIO_BRUTO`, `PATRIMONIO_LIQUIDO`, `OBLIGADO_DECLARAR` (1/0, con los criterios que dispararon en la fórmula; si 0 → flag `NO_OBLIGADO` severidad info) y, si hay `patrimonio_liquido_anterior`, el chequeo de **comparación patrimonial**: si `RLG_GENERAL + RLG_PENSIONES + DIV en base + APLICADO_40 + EXTRA_LIMITE + INCR_TOTAL < (incremento patrimonial + retenciones + anticipo_pagado)` → flag `COMPARACION_PATRIMONIAL` (aproximación del art. 236-239 ET para revisión del contador, no ajusta la base).
+  - `validar(caso, p, t) -> None` — registra `PATRIMONIO_BRUTO`, `PATRIMONIO_LIQUIDO`, `OBLIGADO_DECLARAR` (1/0, con los criterios que dispararon en la fórmula; si 0 → flag `NO_OBLIGADO` severidad info) y, si hay `patrimonio_liquido_anterior`, el chequeo de **comparación patrimonial** (I-5, art. 236: las rentas exentas justifican — la pensión entra BRUTA, no solo el exceso gravado): si `RLG_GENERAL + Σ mesadas totales + DIV en base + APLICADO_40 + EXTRA_LIMITE + INCR_TOTAL < (incremento patrimonial + retenciones + anticipo_pagado)` → flag `COMPARACION_PATRIMONIAL` (aproximación del art. 236-239 ET para revisión del contador, no ajusta la base).
   - `liquidar(caso, p, elecciones) -> Liquidacion` — orquesta: `base_general → rlg_general → rlg_pensiones → impuesto_total → cerrar → validar → t.a_liquidacion(...)`.
 
 - [ ] **Step 1: Escribir los tests que fallan**
@@ -1804,13 +1807,15 @@ def g2() -> CasoTributario:
 
 
 def g3() -> CasoTributario:
-    """Asalariado + arriendos con costos + dividendos mixtos."""
+    """Asalariado + rendimientos + arriendos con costos + dividendos mixtos."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="13", nombre="G3 Capital"),
         laborales=[IngresoLaboral(
             empleador_nit="900555666", empleador_nombre="Consultora Z",
             salarios=100_000_000, aportes_salud=4_000_000,
             aportes_pension=4_000_000, retencion=6_000_000, fuente=FX)],
+        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
+                                  retencion=280_000, fuente=FX)],
         arriendos=[Arriendo(
             inmueble="Apto arrendado", canon_total=36_000_000, retencion=1_260_000,
             costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
@@ -1861,10 +1866,10 @@ def test_g2_pension_y_movimientos():
     liq = optimizar(g2(), P).liquidacion
     assert liq.valor("RLG_GENERAL") == 62_800_000
     assert liq.valor("RLG_PENSIONES") == 62_412_000        # exceso mensual × 12
-    assert liq.valor("IMPUESTO_NETO") == 17_126_740
+    assert liq.valor("IMPUESTO_NETO") == 17_131_720        # 28% + 116 UVT
     assert liq.valor("RETENCIONES") == 3_560_000
-    assert liq.valor("ANTICIPO_SIGUIENTE") == 9_285_055    # 75% − retenciones
-    assert liq.valor("SALDO") == 22_851_795
+    assert liq.valor("ANTICIPO_SIGUIENTE") == 9_288_790    # 75% − retenciones
+    assert liq.valor("SALDO") == 22_860_510
     assert liq.valor("OBLIGADO_DECLARAR") == 1             # también por consignaciones
     assert liq.tiene_flag("COMPONENTE_INFLACIONARIO_PROVISIONAL")
 
@@ -1876,10 +1881,10 @@ def test_g3_capital_y_dividendos():
     assert liq.valor("RLG_GENERAL") == 82_478_944
     assert liq.valor("IMP_DIV_35") == 3_500_000
     assert liq.valor("DESCUENTO_254_1") == 0
-    assert liq.valor("IMPUESTO_NETO") == 18_881_484
+    assert liq.valor("IMPUESTO_NETO") == 18_886_464        # 15.386.464 + 3.5M
     assert liq.valor("RETENCIONES") == 7_540_000
-    assert liq.valor("ANTICIPO_SIGUIENTE") == 6_621_113
-    assert liq.valor("SALDO") == 17_962_597
+    assert liq.valor("ANTICIPO_SIGUIENTE") == 6_624_848
+    assert liq.valor("SALDO") == 17_971_312
 ```
 
 - [ ] **Step 2: Correr**
@@ -1889,8 +1894,8 @@ Expected: `4 passed`. Si algo falla, el error está en el motor (los esperados e
 
 Memoria de cálculo de los esperados (para el implementador y el contador):
 - **G1**: netos 110.4M; cap = 40% = 44.16M; limitadas+25% > cap → aplicado 44.16M; extra = 72 UVT (3.585.528) + 1% de 50M (500.000); RLG = 110.4M − 44.16M − 4.085.528 = 62.154.472; imp = (62.154.472 − 54.280.910)×19% = 1.495.977; anticipo 25%×imp − 8M < 0 → 0; saldo = 1.495.977 − 8.000.000 = −6.504.023.
-- **G2**: netos 81.6M (bruto 88M − aportes 6.4M, CI provisional 0); cap 32.64M; limitadas = GMF 400.000 + 25% de (80M−6.4M)=18.4M → 18.8M ≤ cap; RLG gen = 62.8M; pensiones = (55M−49.799M)×12 = 62.412.000; base 125.212.000 → imp = 30.377.390×19% + 40.553.700×28% = 17.126.740; anticipo = 75%×imp − 3.56M = 9.285.055; saldo = 17.126.740 − 3.560.000 + 9.285.055 = 22.851.795.
-- **G3** (con 387): netos 132M; costos 11.4M; limitadas = GMF 450.000 + 387 10M + 25% de (100M−8M−10M)=20.5M → 30.95M ≤ cap 52.8M; extra 72×2 UVT = 7.171.056; RLG = 82.478.944; dividendos: 35%×10M=3.5M, base = 82.478.944+30M+6.5M = 118.978.944 → imp241 = 15.381.484; descuento 254-1: 36.5M < 54.280.910 → 0; imp neto = 18.881.484; anticipo = 75% − 7.54M = 6.621.113; saldo = 17.962.597.
+- **G2**: netos 81.6M (bruto 88M − aportes 6.4M, CI provisional 0); cap 32.64M; limitadas = GMF 400.000 + 25% de (80M−6.4M)=18.4M → 18.8M ≤ cap; RLG gen = 62.8M; pensiones = (55M−49.799M)×12 = 62.412.000; base 125.212.000 → imp = (base − 1.700 UVT)×28% + 116 UVT = 11.355.036 + 5.776.684 = 17.131.720; anticipo = 75%×imp − 3.56M = 9.288.790; saldo = 17.131.720 − 3.560.000 + 9.288.790 = 22.860.510.
+- **G3** (con 387): bruto 140M (100M laboral + 4M rendimientos + 36M arriendos), netos 132M (INCR aportes 8M, CI provisional 0); costos 11.4M; limitadas = GMF 450.000 + 387 10M + 25% de (100M−8M−10M)=20.5M → 30.95M ≤ cap 52.8M; extra 72×2 UVT = 7.171.056; RLG = 82.478.944; dividendos: 35%×10M=3.5M, base = 82.478.944+30M+6.5M = 118.978.944 → imp241 = (base − 1.700 UVT)×28% + 116 UVT = 15.386.464; descuento 254-1: 36.5M < 54.280.910 → 0; imp neto = 18.886.464; anticipo = 75% − 7.54M = 6.624.848; saldo = 17.971.312.
 
 - [ ] **Step 3: Commit**
 
