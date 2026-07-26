@@ -46,12 +46,13 @@ class Traza:
         self.nodos: dict[str, Nodo] = {}
         self.flags: list[Flag] = []
 
-    def nodo(self, codigo: str, etiqueta: str, valor, formula: str,
+    def nodo(self, codigo: str, etiqueta: str, valor: int, formula: str,
              insumos=(), regla: str | None = None) -> int:
-        v = int(valor)
-        self.nodos[codigo] = Nodo(codigo=codigo, etiqueta=etiqueta, valor=v,
+        if codigo in self.nodos:
+            raise ValueError(f"Código de nodo duplicado: {codigo}")
+        self.nodos[codigo] = Nodo(codigo=codigo, etiqueta=etiqueta, valor=valor,
                                   formula=formula, insumos=list(insumos), regla=regla)
-        return v
+        return valor
 
     def flag(self, codigo: str, mensaje: str,
              severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia") -> None:
