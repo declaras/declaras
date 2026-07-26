@@ -18,6 +18,7 @@ from declaras.domain.models import (
     IdDocumentKind,
     Job,
     JobStatus,
+    StepState,
     TaxpayerRef,
 )
 from declaras.domain.tax_calendar import default_tax_year
@@ -117,11 +118,23 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class StepResponse(BaseModel):
+    """Un paso del trabajo, para poder mostrar en que va mientras corre."""
+
+    key: str
+    label: str
+    state: StepState
+    detail: str | None = None
+
+
 class ExtractionResponse(BaseModel):
     """Estado completo de una extraccion. Es la respuesta que el agente consulta."""
 
     job_id: UUID
     status: JobStatus
+    # En que va, paso a paso. Se publica mientras el trabajo corre, no solo al final: contra el
+    # portal real tarda cerca de medio minuto, y una pantalla quieta no dice si esta vivo.
+    progress: list[StepResponse] = Field(default_factory=list)
     attempts: int
     created_at: datetime
     updated_at: datetime
@@ -141,6 +154,7 @@ class ExtractionResponse(BaseModel):
         return cls(
             job_id=job.id,
             status=job.status,
+            progress=[StepResponse(**paso.model_dump()) for paso in job.progress],
             attempts=job.attempts,
             created_at=job.created_at,
             updated_at=job.updated_at,

@@ -177,3 +177,57 @@ async def test_se_puede_pedir_un_anio_anterior_explicito(client):
     created = await client.post(BASE, json=payload("ok", tax_year=2023, doc_types=["RUT"]))
     final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
     assert final["taxpayer"]["tax_year"] == 2023
+
+
+# ─────── en que va el trabajo ───────
+#
+# Contra el portal real una extraccion tarda cerca de medio minuto. Sin decir en que va, quien la
+# lanza mira una pantalla quieta y no sabe si funciona, si la clave estaba bien o si se colgo.
+
+
+def _pasos(respuesta) -> dict[str, str]:
+    return {p["key"]: p["state"] for p in respuesta["progress"]}
+
+
+async def test_los_pasos_se_declaran_completos_desde_el_principio(client):
+    """Quien espera tiene que poder ver cuanto falta, y una lista que crece sola no lo dice."""
+    created = await client.post(BASE, json=payload("clave-buena"))
+    en_curso = created.json()
+
+    esperados = ["login", "RUT", "EXOGENA", "PRIOR_RETURN", "SUGGESTED_RETURN", "EINVOICE_SUMMARY"]
+    assert [p["key"] for p in en_curso["progress"]] == esperados
+    # Y con nombre en lenguaje de la persona, no con el codigo del documento.
+    assert en_curso["progress"][1]["label"] == "Tu RUT"
+
+
+async def test_al_terminar_todos_los_pasos_quedan_hechos(client):
+    created = await client.post(BASE, json=payload("clave-buena"))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED")
+
+    assert set(_pasos(final).values()) == {"DONE"}
+
+
+async def test_un_documento_que_la_dian_no_tiene_no_se_marca_como_falla(client):
+    """Le pasa a quien declara por primera vez. Marcarlo en rojo asusta sin motivo: se distingue
+    "no hay" de "se rompio"."""
+    created = await client.post(BASE, json=payload("clave-noexo"))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED")
+
+    pasos = _pasos(final)
+    assert pasos["EXOGENA"] == "EMPTY"
+    assert pasos["RUT"] == "DONE"
+    assert "FAILED" not in pasos.values()
+    # Y el paso dice por que quedo vacio, sin que haya que ir a buscar la falla aparte.
+    exogena = next(p for p in final["progress"] if p["key"] == "EXOGENA")
+    assert exogena["detail"]
+
+
+async def test_si_la_clave_esta_mal_se_ve_en_que_paso_se_cayo(client):
+    """Era la queja concreta: la pantalla no decia ni si la clave era correcta."""
+    created = await client.post(BASE, json=payload("clave-bad"))
+    final = await wait_for_status(client, created.json()["job_id"], "FAILED", "SUCCEEDED")
+
+    pasos = _pasos(final)
+    assert pasos["login"] == "FAILED"
+    assert pasos["RUT"] == "PENDING", "no se intento nada despues de no poder entrar"
+    assert final["error"]["code"] == "DIAN_INVALID_CREDENTIALS"

@@ -42,7 +42,7 @@ class DeclarasError(Exception):
 class ValidationError(DeclarasError):
     code = "VALIDATION_ERROR"
     http_status = 422
-    default_message = "Los datos enviados no son validos."
+    default_message = "Los datos enviados no son válidos."
 
 
 class JobNotFoundError(DeclarasError):
@@ -54,7 +54,7 @@ class JobNotFoundError(DeclarasError):
 class JobStateConflictError(DeclarasError):
     code = "JOB_STATE_CONFLICT"
     http_status = 409
-    default_message = "El trabajo no esta en un estado que permita esta operacion."
+    default_message = "El trabajo no está en un estado que permita esta operación."
 
 
 class DocumentNotFoundError(DeclarasError):
@@ -73,7 +73,7 @@ class UnsupportedDocumentTypeError(DeclarasError):
 
     code = "UNSUPPORTED_DOCUMENT_TYPE"
     http_status = 422
-    default_message = "Todavia no hay lector para esa clase de documento."
+    default_message = "Todavía no hay lector para esa clase de documento."
 
 
 class DocumentUnreadableError(DeclarasError):
@@ -83,7 +83,7 @@ class DocumentUnreadableError(DeclarasError):
     code = "DOCUMENT_UNREADABLE"
     http_status = 422
     default_message = (
-        "El documento no se pudo leer: puede estar corrupto o no ser del formato esperado."
+        "El documento no se pudo leer. Puede estar dañado o no ser del formato esperado."
     )
 
 
@@ -95,7 +95,7 @@ class DianError(DeclarasError):
 
     code = "DIAN_ERROR"
     http_status = 502
-    default_message = "Falla al interactuar con el portal de la DIAN."
+    default_message = "Algo falló al hablar con el portal de la DIAN."
 
 
 class DianInvalidCredentialsError(DianError):
@@ -108,7 +108,7 @@ class DianInvalidCredentialsError(DianError):
     code = "DIAN_INVALID_CREDENTIALS"
     http_status = 401
     retryable = False
-    default_message = "La DIAN rechazo el usuario o la clave."
+    default_message = "La DIAN rechazó el usuario o la clave."
 
 
 class DianLoginAttemptsExhaustedError(DianError):
@@ -118,7 +118,7 @@ class DianLoginAttemptsExhaustedError(DianError):
     http_status = 429
     retryable = False
     default_message = (
-        "Se alcanzo el limite de intentos que permitimos para proteger la cuenta. "
+        "Se alcanzó el límite de intentos que permitimos para proteger la cuenta. "
         "Verifica la clave antes de volver a intentar."
     )
 
@@ -127,7 +127,7 @@ class DianAccountLockedError(DianError):
     code = "DIAN_ACCOUNT_LOCKED"
     http_status = 423
     retryable = False
-    default_message = "La cuenta esta bloqueada en el portal de la DIAN."
+    default_message = "La cuenta está bloqueada en el portal de la DIAN."
 
 
 class DianIdentityChallengeError(DianError):
@@ -140,35 +140,35 @@ class DianIdentityChallengeError(DianError):
     code = "DIAN_IDENTITY_CHALLENGE"
     http_status = 409
     retryable = False
-    default_message = "El portal solicito una verificacion de identidad."
+    default_message = "El portal pidió verificar la identidad del titular."
 
 
 class DianPortalUnavailableError(DianError):
     code = "DIAN_PORTAL_UNAVAILABLE"
     http_status = 503
     retryable = True
-    default_message = "El portal de la DIAN no esta disponible."
+    default_message = "El portal de la DIAN no está disponible."
 
 
 class DianTimeoutError(DianError):
     code = "DIAN_PORTAL_TIMEOUT"
     http_status = 504
     retryable = True
-    default_message = "El portal de la DIAN no respondio en el tiempo esperado."
+    default_message = "El portal de la DIAN no respondió en el tiempo esperado."
 
 
 class DianRateLimitedError(DianError):
     code = "DIAN_RATE_LIMITED"
     http_status = 429
     retryable = True
-    default_message = "El portal esta limitando las consultas."
+    default_message = "El portal está limitando las consultas."
 
 
 class DianSessionExpiredError(DianError):
     code = "DIAN_SESSION_EXPIRED"
     http_status = 440
     retryable = True
-    default_message = "La sesion en el portal expiro."
+    default_message = "La sesión en el portal se venció."
 
 
 class DianLayoutChangedError(DianError):
@@ -181,7 +181,7 @@ class DianLayoutChangedError(DianError):
     code = "DIAN_LAYOUT_CHANGED"
     http_status = 502
     retryable = False
-    default_message = "El portal de la DIAN cambio y el conector necesita ajuste."
+    default_message = "El portal de la DIAN cambió y hay que ajustar el conector."
 
 
 class DianDocumentUnavailableError(DianError):
@@ -190,7 +190,7 @@ class DianDocumentUnavailableError(DianError):
     code = "DIAN_DOCUMENT_UNAVAILABLE"
     http_status = 404
     retryable = False
-    default_message = "El documento no esta disponible en el portal."
+    default_message = "El documento no está disponible en el portal."
 
 
 # ─────────────────────────── Infraestructura ───────────────────────────
@@ -200,7 +200,7 @@ class StorageError(DeclarasError):
     code = "STORAGE_FAILURE"
     http_status = 500
     retryable = True
-    default_message = "No se pudo almacenar o leer el documento."
+    default_message = "No se pudo guardar o leer el documento."
 
 
 # ─────────────────────────── Errores del expediente ───────────────────────────
@@ -209,19 +209,19 @@ class StorageError(DeclarasError):
 class CaseNotFoundError(DeclarasError):
     code = "CASE_NOT_FOUND"
     http_status = 404
-    default_message = "El expediente solicitado no existe."
+    default_message = "La declaración solicitada no existe."
 
 
 class CaseAlreadyExistsError(DeclarasError):
     code = "CASE_ALREADY_EXISTS"
     http_status = 409
-    default_message = "Ya existe un expediente de este cliente para ese anio gravable."
+    default_message = "Ya existe una declaración de esa persona para ese año gravable."
 
 
 class FlagNotFoundError(DeclarasError):
     code = "FLAG_NOT_FOUND"
     http_status = 404
-    default_message = "El flag solicitado no existe."
+    default_message = "El pendiente solicitado no existe."
 
 
 class TaxpayerMismatchError(DeclarasError):
@@ -233,4 +233,4 @@ class TaxpayerMismatchError(DeclarasError):
 
     code = "TAXPAYER_MISMATCH"
     http_status = 409
-    default_message = "La informacion pertenece a otro contribuyente o a otro anio gravable."
+    default_message = "La información pertenece a otra persona o a otro año gravable."

@@ -69,3 +69,37 @@ def test_hay_avisos_que_probar():
         "REPORTED_TO_ANOTHER_PERSON",
         "FORM_ARITHMETIC_MISMATCH",
     }
+
+
+# ─────── los mensajes de las fallas ───────
+#
+# El mensaje por defecto de cada falla tambien lo lee una persona: sale en la pantalla cuando
+# algo no funciona, que es justo cuando peor cae leer una nota de desarrollador. Estaban todos
+# escritos sin tildes, como si fueran comentarios del codigo.
+
+
+def _todas_las_fallas():
+    from declaras.domain import errors
+
+    return [
+        clase
+        for clase in vars(errors).values()
+        if isinstance(clase, type)
+        and issubclass(clase, errors.DeclarasError)
+        and clase.default_message
+    ]
+
+
+@pytest.mark.parametrize("falla", _todas_las_fallas(), ids=lambda c: c.__name__)
+def test_la_falla_se_explica_en_espanol_correcto(falla):
+    mensaje = falla.default_message
+    assert mensaje[0].isupper(), f"empieza en minúscula: {mensaje!r}"
+    assert mensaje.rstrip().endswith("."), f"no termina en punto: {mensaje!r}"
+    assert _IDENTIFICADOR.search(mensaje) is None, f"filtra un nombre del código: {mensaje!r}"
+
+
+def test_ninguna_falla_habla_de_expedientes_ni_de_flags():
+    """Vocabulario interno que no significa nada para quien tiene que declarar."""
+    for falla in _todas_las_fallas():
+        for palabra in ("expediente", "flag", "job "):
+            assert palabra not in falla.default_message.lower(), falla.__name__

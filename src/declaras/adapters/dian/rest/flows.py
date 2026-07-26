@@ -113,20 +113,40 @@ async def download_einvoice_summary(ctx: PortalContext, taxpayer: TaxpayerRef) -
     )
 
 
+# Como se llama cada estado de una declaracion cuando hay que explicarselo a alguien.
+_ESTADO_LEGIBLE = {DIAN_API.state_filed: "presentada", DIAN_API.state_pending: "en borrador"}
+
+
 async def _find_declaration(
     ctx: PortalContext, *, year: int, state: str, doc_type: DocumentType
 ) -> str:
-    """Busca en la API el id de la declaracion del anio y estado indicados."""
-    payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
+    """Busca en la API el id de la declaracion del anio y estado indicados.
+
+    La API responde 404, y no una lista vacia, cuando la persona no tiene ninguna declaracion en
+    ese estado. Es el caso de quien declara por primera vez, asi que no es una falla: se traduce
+    al mismo "no esta disponible" que cuando la lista existe pero no trae ese anio.
+    """
+    como_se_llama = _ESTADO_LEGIBLE.get(state, state)
+    try:
+        payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
+    except DianDocumentUnavailableError as exc:
+        raise DianDocumentUnavailableError(
+            f"la DIAN no tiene ninguna declaración {como_se_llama} a nombre del contribuyente",
+            doc_type=doc_type.value,
+            tax_year=year,
+        ) from exc
+
     listado = (payload or {}).get("listadoFormularios", {}).get("infoFormularios", [])
+    anios = sorted({i.get("anio") for i in listado if i.get("anio")}, reverse=True)
     for item in listado:
         if item.get("anio") == year:
             return str(item["identificador"]["id"])
+    tiene = f"; sí la tiene de {', '.join(str(a) for a in anios)}" if anios else ""
     raise DianDocumentUnavailableError(
-        f"no hay declaracion {state} del anio gravable {year}",
+        f"la DIAN no tiene la declaración {como_se_llama} del año gravable {year}{tiene}",
         doc_type=doc_type.value,
         tax_year=year,
-        available_years=sorted({i.get("anio") for i in listado if i.get("anio")}),
+        available_years=anios,
     )
 
 

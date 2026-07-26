@@ -24,7 +24,10 @@ import httpx
 
 from declaras.adapters.dian.endpoints import DIAN_API
 from declaras.domain.errors import (
+    DianDocumentUnavailableError,
+    DianError,
     DianPortalUnavailableError,
+    DianRateLimitedError,
     DianSessionExpiredError,
     DianTimeoutError,
 )
@@ -33,6 +36,33 @@ from declaras.observability import get_logger
 log = get_logger(__name__)
 
 _SESSION_COOKIE = "DIAN-MUISCA"
+
+
+def _raise_for_status(response: httpx.Response, *, url: str) -> None:
+    """Traduce la respuesta de la API a un error del dominio.
+
+    Sin esto, cualquier codigo distinto de 2xx sale como una excepcion de la libreria HTTP, que
+    nadie reconoce como una falla de la DIAN y termina reportada como error interno. Paso con un
+    contribuyente que nunca habia declarado: la API responde 404 al preguntar por su declaracion
+    presentada, la extraccion entera se cayo con "INTERNAL_ERROR" y el texto crudo de httpx, y
+    quien la lanzo no supo ni si la clave estaba bien.
+
+    Un 404 aqui casi nunca es un error: es la DIAN diciendo que no tiene ese documento.
+    """
+    codigo = response.status_code
+    if codigo < 400:
+        return
+    if codigo == httpx.codes.UNAUTHORIZED:
+        raise DianSessionExpiredError("el token de la API ya no es valido")
+    if codigo == httpx.codes.NOT_FOUND:
+        raise DianDocumentUnavailableError("la DIAN no tiene ese documento", url=url, status=codigo)
+    if codigo == httpx.codes.TOO_MANY_REQUESTS:
+        raise DianRateLimitedError("la API de la DIAN esta limitando las consultas")
+    if codigo >= 500:
+        raise DianPortalUnavailableError(
+            "la API de la DIAN respondio con un error", url=url, status=codigo
+        )
+    raise DianError(f"la API de la DIAN rechazo la consulta ({codigo})", url=url, status=codigo)
 
 
 def build_digest(cookie_value: str) -> str:
@@ -90,9 +120,7 @@ class DianApiClient:
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
 
-        if response.status_code == httpx.codes.UNAUTHORIZED:
-            raise DianSessionExpiredError("el token de la API ya no es valido")
-        response.raise_for_status()
+        _raise_for_status(response, url=url)
         return response.json()
 
     async def get_bytes(self, path: str) -> tuple[bytes, httpx.Headers]:
@@ -107,9 +135,7 @@ class DianApiClient:
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
 
-        if response.status_code == httpx.codes.UNAUTHORIZED:
-            raise DianSessionExpiredError("el token de la API ya no es valido")
-        response.raise_for_status()
+        _raise_for_status(response, url=url)
         return response.content, response.headers
 
     def _headers(self) -> dict[str, str]:

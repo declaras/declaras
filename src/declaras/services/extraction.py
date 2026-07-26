@@ -16,6 +16,7 @@ from uuid import UUID
 from declaras.config import Settings
 from declaras.domain.errors import (
     DeclarasError,
+    DianDocumentUnavailableError,
     DianError,
     DianInvalidCredentialsError,
     DianSessionExpiredError,
@@ -26,12 +27,16 @@ from declaras.domain.models import (
     ChallengeAnswer,
     DianCredentials,
     DocumentFailure,
+    DocumentType,
     ExtractionRequest,
     ExtractionResult,
     Job,
     JobKind,
     JobStatus,
+    JobStep,
+    StepState,
     StoredDocument,
+    document_label,
 )
 from declaras.domain.ports import (
     DianConnector,
@@ -78,6 +83,13 @@ class ExtractionService:
         job = await self._jobs.create(
             kind=JobKind.DIAN_EXTRACTION, request=request.model_dump(mode="json")
         )
+        # El plan se publica al encolar, no al empezar a trabajar: los pasos se conocen desde
+        # que se hace la peticion, y asi la pantalla los pinta completos desde el primer
+        # instante en vez de irlos haciendo aparecer.
+        pasos = _plan_de_trabajo(request)
+        await self._publicar(job.id, pasos)
+        job = job.model_copy(update={"progress": pasos})
+
         await self._vault.put(job.id, credentials)
         log.info(
             "extraction.enqueued",
@@ -115,17 +127,21 @@ class ExtractionService:
         """Ejecuta o retoma un job. La invoca el worker."""
         request = ExtractionRequest.model_validate(job.request)
         started_at = datetime.now(UTC)
+        # El plan ya se publico al encolar; al retomar un job parqueado se conserva lo andado.
+        pasos = list(job.progress) or _plan_de_trabajo(request)
 
         try:
-            session = await self._resume_or_login(job, request)
+            session = await self._resume_or_login(job, request, pasos)
             if session is None:
                 return  # parqueado esperando al contribuyente
-            result = await self._collect(job, request, session)
+            result = await self._collect(job, request, session, pasos)
         except DeclarasError as exc:
+            await self._publicar(job.id, _marcar_fallido(pasos, exc.message))
             await self._fail(job, exc)
             return
         except Exception as exc:  # pragma: no cover - red de seguridad
             log.exception("extraction.unexpected_error", job_id=str(job.id))
+            await self._publicar(job.id, _marcar_fallido(pasos, "algo salió mal"))
             await self._fail(job, DeclarasError(str(exc)[:200]))
             return
 
@@ -134,14 +150,21 @@ class ExtractionService:
 
     # ─────────────────────────── pasos internos ───────────────────────────
 
-    async def _resume_or_login(self, job: Job, request: ExtractionRequest) -> DianSession | None:
+    async def _resume_or_login(
+        self, job: Job, request: ExtractionRequest, pasos: list[JobStep]
+    ) -> DianSession | None:
         """Reusa la sesion parqueada si existe; si no, autentica desde cero."""
         session = await self._registry.get(job.id)
         if session is not None:
             if session.pending_challenge is not None:
                 return None
             log.info("extraction.session_resumed", job_id=str(job.id))
+            _avanzar(pasos, _PASO_ENTRAR, StepState.DONE)
+            await self._publicar(job.id, pasos)
             return session
+
+        _avanzar(pasos, _PASO_ENTRAR, StepState.RUNNING)
+        await self._publicar(job.id, pasos)
 
         credentials = await self._vault.get(job.id)
         if credentials is None:
@@ -166,13 +189,18 @@ class ExtractionService:
         await self._registry.put(job.id, session)
 
         if session.pending_challenge is not None:
+            _avanzar(pasos, _PASO_ENTRAR, StepState.RUNNING, "la DIAN pidió verificar tu identidad")
+            await self._publicar(job.id, pasos)
             await self._jobs.mark_awaiting_challenge(job.id, challenge=session.pending_challenge)
             log.info("extraction.awaiting_challenge", job_id=str(job.id))
             return None
+
+        _avanzar(pasos, _PASO_ENTRAR, StepState.DONE)
+        await self._publicar(job.id, pasos)
         return session
 
     async def _collect(
-        self, job: Job, request: ExtractionRequest, session: DianSession
+        self, job: Job, request: ExtractionRequest, session: DianSession, pasos: list[JobStep]
     ) -> ExtractionResult:
         """Descarga y almacena cada documento. Una falla no cancela las demas."""
         documents: list[StoredDocument] = []
@@ -181,6 +209,8 @@ class ExtractionService:
         await self._capture_evidence(job, request, session, label="post-login")
 
         for doc_type in request.doc_types:
+            _avanzar(pasos, doc_type.value, StepState.RUNNING)
+            await self._publicar(job.id, pasos)
             try:
                 raw = await session.download(doc_type, request.taxpayer)
                 stored = await self._store.put(
@@ -202,11 +232,20 @@ class ExtractionService:
                         retryable=exc.retryable,
                     )
                 )
-                await self._heartbeat(job.id)
+                # Que la DIAN no tenga un documento no es una falla del proceso: le pasa a quien
+                # declara por primera vez, y marcarlo en rojo asusta sin motivo.
+                estado = (
+                    StepState.EMPTY
+                    if isinstance(exc, DianDocumentUnavailableError)
+                    else StepState.FAILED
+                )
+                _avanzar(pasos, doc_type.value, estado, exc.message)
+                await self._publicar(job.id, pasos)
                 if isinstance(exc, DianSessionExpiredError):
                     raise
             else:
-                await self._heartbeat(job.id)
+                _avanzar(pasos, doc_type.value, StepState.DONE)
+                await self._publicar(job.id, pasos)
 
         if not documents and failures:
             # Nada se logro: es una falla del job, no una extraccion parcial.
@@ -272,8 +311,19 @@ class ExtractionService:
         if not keep_credentials:
             await self._vault.discard(job_id)
 
-    async def _heartbeat(self, job_id: UUID) -> None:
-        await self._jobs.heartbeat(job_id, lease_ttl_s=self._settings.worker_lease_ttl_s)
+    async def _publicar(self, job_id: UUID, pasos: list[JobStep]) -> None:
+        """Deja escrito en que va el trabajo.
+
+        Publicar el avance tambien renueva el lease del worker, asi que reemplaza al latido que
+        habia antes: mientras el trabajo reporta que avanza, no hay razon para que otro lo
+        reclame. Nunca tumba el job: si no se puede escribir el avance, el trabajo sigue.
+        """
+        try:
+            await self._jobs.update_progress(
+                job_id, progress=[paso.model_dump(mode="json") for paso in pasos]
+            )
+        except Exception as exc:  # pragma: no cover - el avance nunca tumba el job
+            log.warning("extraction.progress_failed", job_id=str(job_id), error=str(exc)[:160])
 
     async def _maybe_notify(self, request: ExtractionRequest, job: Job) -> None:
         if not request.callback_url:
@@ -287,3 +337,51 @@ class ExtractionService:
                 "error": job.error,
             },
         )
+
+
+# ─────────────────────────── el plan de trabajo ───────────────────────────
+#
+# Una extraccion contra el portal real tarda cerca de medio minuto. Sin decir en que va, quien
+# la lanza mira una pantalla quieta y no sabe si esta funcionando, si la clave estaba bien o si
+# se colgo. Los pasos se nombran como los entiende quien espera, no como se llaman adentro.
+
+_PASO_ENTRAR = "login"
+_ETIQUETAS = {
+    DocumentType.RUT: "Tu RUT",
+    DocumentType.EXOGENA: "Lo que otros reportaron a tu nombre",
+    DocumentType.EINVOICE_SUMMARY: "Tus facturas electrónicas",
+    DocumentType.PRIOR_RETURN: "Tu declaración del año pasado",
+    DocumentType.SUGGESTED_RETURN: "El borrador que la DIAN te preparó",
+}
+
+
+def _plan_de_trabajo(request: ExtractionRequest) -> list[JobStep]:
+    """Los pasos que va a dar el trabajo, todos visibles desde el principio.
+
+    Se declaran completos y en pendiente antes de empezar, no se van agregando: quien espera
+    tiene que poder ver cuanto falta, y una lista que crece sola no dice cuanto falta.
+    """
+    pasos = [JobStep(key=_PASO_ENTRAR, label="Entrar al portal de la DIAN")]
+    pasos += [
+        JobStep(key=doc.value, label=_ETIQUETAS.get(doc, document_label(doc.value).capitalize()))
+        for doc in request.doc_types
+    ]
+    return pasos
+
+
+def _avanzar(
+    pasos: list[JobStep], key: str, state: StepState, detail: str | None = None
+) -> list[JobStep]:
+    for indice, paso in enumerate(pasos):
+        if paso.key == key:
+            pasos[indice] = paso.as_(state, detail)
+            break
+    return pasos
+
+
+def _marcar_fallido(pasos: list[JobStep], detail: str) -> list[JobStep]:
+    """Lo que estaba en curso cuando se cayo el trabajo es lo que fallo."""
+    for indice, paso in enumerate(pasos):
+        if paso.state is StepState.RUNNING:
+            pasos[indice] = paso.as_(StepState.FAILED, detail)
+    return pasos

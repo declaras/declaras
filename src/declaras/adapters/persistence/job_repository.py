@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from declaras.adapters.persistence.tables import JobRow
 from declaras.domain.errors import JobNotFoundError
-from declaras.domain.models import IdentityChallenge, Job, JobKind, JobStatus
+from declaras.domain.models import IdentityChallenge, Job, JobKind, JobStatus, JobStep
 
 _CLAIM_RETRIES = 3
 
@@ -41,6 +41,7 @@ def _to_domain(row: JobRow) -> Job:
         result=row.result,
         error=row.error,
         challenge=IdentityChallenge.model_validate(row.challenge) if row.challenge else None,
+        progress=[JobStep.model_validate(paso) for paso in row.progress or []],
         attempts=row.attempts,
         created_at=_as_utc(row.created_at) or _utcnow(),
         updated_at=_as_utc(row.updated_at) or _utcnow(),
@@ -112,6 +113,11 @@ class SqlJobRepository:
         await self._update(
             job_id, leased_until=now + timedelta(seconds=lease_ttl_s), updated_at=now
         )
+
+    async def update_progress(self, job_id: UUID, *, progress: list[dict[str, Any]]) -> None:
+        # Publicar el avance tambien renueva el lease: mientras el trabajo reporta que sigue
+        # vivo, no hay razon para que otro worker lo reclame.
+        await self._update(job_id, progress=progress, updated_at=_utcnow())
 
     async def mark_succeeded(self, job_id: UUID, *, result: dict[str, Any]) -> Job:
         return await self._update(

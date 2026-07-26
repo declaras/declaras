@@ -70,6 +70,35 @@ class JobStatus(StrEnum):
         return self in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
 
 
+class StepState(StrEnum):
+    """En que va cada paso de un trabajo.
+
+    `EMPTY` no es una falla: significa que se consulto y no habia nada que traer. A quien
+    declara por primera vez la DIAN no le tiene declaracion del anio anterior, y eso es normal.
+    Sin este estado, lo normal se reporta como error y asusta sin motivo.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    EMPTY = "EMPTY"
+    FAILED = "FAILED"
+
+
+class JobStep(BaseModel):
+    """Un paso del trabajo, con nombre en lenguaje de la persona que lo esta esperando."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str
+    state: StepState = StepState.PENDING
+    detail: str | None = None
+
+    def as_(self, state: StepState, detail: str | None = None) -> Self:
+        return self.model_copy(update={"state": state, "detail": detail})
+
+
 class ChallengeKind(StrEnum):
     """Lo que el portal puede pedir y solo el contribuyente puede responder."""
 
@@ -221,6 +250,9 @@ class Job(BaseModel):
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     challenge: IdentityChallenge | None = None
+    # En que va el trabajo, paso a paso. Un job de extraccion tarda medio minuto contra el
+    # portal real, y sin esto quien espera no sabe si esta funcionando ni en que punto va.
+    progress: list[JobStep] = Field(default_factory=list)
     attempts: int = 0
     created_at: datetime
     updated_at: datetime
