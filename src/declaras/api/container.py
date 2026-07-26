@@ -20,6 +20,7 @@ from declaras.adapters.persistence.job_repository import SqlJobRepository
 from declaras.adapters.persistence.login_guard import SqlLoginAttemptGuard
 from declaras.adapters.storage.factory import build_document_store
 from declaras.config import Settings
+from declaras.documents.service import DocumentReaderService
 from declaras.domain.ports import DianConnector, DocumentStore, JobRepository, LoginAttemptGuard
 from declaras.observability import get_logger
 from declaras.services.credential_vault import InMemoryCredentialVault
@@ -43,6 +44,7 @@ class Container:
     registry: InMemorySessionRegistry
     extraction: ExtractionService
     runner: JobRunner
+    document_reader: DocumentReaderService
 
     @classmethod
     def build(cls, settings: Settings) -> Container:
@@ -66,6 +68,7 @@ class Container:
             notifier=WebhookNotifier(),
             settings=settings,
         )
+        document_reader = DocumentReaderService()
         runner = JobRunner(
             jobs=jobs,
             extraction=extraction,
@@ -84,6 +87,7 @@ class Container:
             registry=registry,
             extraction=extraction,
             runner=runner,
+            document_reader=document_reader,
         )
 
     async def startup(self) -> None:

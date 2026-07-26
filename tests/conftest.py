@@ -34,8 +34,14 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
-    app = create_app(settings)
+async def app(settings: Settings):
+    """La app ya construida (sin arrancar): la comparten `client` y `container` para que
+    ambos vean el mismo contenedor de dependencias."""
+    return create_app(settings)
+
+
+@pytest.fixture
+async def client(app) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with (
         app.router.lifespan_context(app),
@@ -46,6 +52,13 @@ async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
         ) as http,
     ):
         yield http
+
+
+@pytest.fixture
+def container(app, client: AsyncClient):
+    """El contenedor de dependencias de la app ya arrancada (`client` la arranca via
+    lifespan), para pruebas que necesitan tocar un servicio directamente."""
+    return app.state.container
 
 
 async def wait_until(

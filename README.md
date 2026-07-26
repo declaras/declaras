@@ -281,6 +281,25 @@ ISO-8859-1, asi que los nombres con tildes llegan con caracteres de reemplazo. E
 defecto del portal, no del conector: los bytes se almacenan tal cual llegan y el parser
 debe decodificar como `latin-1` cuando encuentre secuencias invalidas.
 
+## Lectura de documentos
+
+Ademas del conector, hay un servicio que convierte cada documento (del portal o subido
+por el cliente) en valores estructurados con su confianza y procedencia. Dos familias de
+lectores: deterministicos (XLSX y PDF del portal, sin IA) y por vision (fotos del
+cliente, pendiente de implementar). Decision y hallazgos completos en
+[ADR 0005](docs/adr/0005-lectura-de-documentos-deterministica-vs-vision.md).
+
+```
+GET  /v1/documents/types                     tipos con lector disponible
+POST /v1/documents/read         (multipart)  lee un archivo subido directamente
+POST /v1/documents/read-stored  (json)       lee un documento que el conector ya bajo
+```
+
+Documentos con lector: `EXOGENA` (XLSX, incluye el renglon del 210 que la propia DIAN
+asigna a cada valor reportado), `EINVOICE_SUMMARY` (XLSX, agrega la base de la deduccion
+del 1% ya filtrada por medio de pago) y `RUT` (PDF sin campos de formulario, lectura
+posicional con confianza declarada como baja).
+
 ## Pendiente antes de produccion
 
 - [ ] **Calibrar los descargadores de documentos** contra una sesion autenticada. El

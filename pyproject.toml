@@ -14,6 +14,9 @@ dependencies = [
     "structlog>=24.4",
     "tenacity>=9.0",
     "httpx>=0.28",
+    "openpyxl>=3.1.5",
+    "pypdf>=6.14.2",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +29,7 @@ dev = [
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
     "mypy>=1.14",
+    "fpdf2>=2.8.7",
 ]
 
 [build-system]
@@ -50,6 +54,9 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 # Los scripts de calibracion incluyen texto copiado del portal (con espacios duros)
 # y JS embebido; no se les exige el mismo rigor que al paquete.
 "scripts/*" = ["RUF001", "E501"]
+# FastAPI exige File()/Form() como valor por defecto de los parametros: es el patron
+# idiomatico del framework, no una funcion que se ejecuta por accidente.
+"src/declaras/api/routers/documents_read.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -58,6 +65,6 @@ files = ["src/declaras"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# El extra gcs no siempre esta instalado y la libreria no trae stubs.
-module = ["google.cloud.*"]
+# Librerias sin stubs de tipos.
+module = ["google.cloud.*", "openpyxl.*"]
 ignore_missing_imports = true

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
+from declaras.documents.models import DocumentReading
 from declaras.domain.models import (
     DianCredentials,
     DocumentType,
@@ -166,3 +167,51 @@ class HealthResponse(BaseModel):
     env: str
     dian_adapter: str
     worker_enabled: bool
+
+
+class ReadStoredDocumentRequest(BaseModel):
+    """Referencia de un documento que el conector DIAN ya descargo."""
+
+    storage_uri: str = Field(examples=["file://cc-abc123/2025/exogena/f64a0655.xlsx"])
+    doc_type: str = Field(examples=["EXOGENA"])
+
+
+class ExtractedFieldResponse(BaseModel):
+    name: str
+    value: Any
+    confidence: float
+    source: str | None = None
+    unit: str | None = None
+
+
+class ExtractedRowResponse(BaseModel):
+    values: dict[str, Any]
+    source: str | None = None
+
+
+class ReadingWarningResponse(BaseModel):
+    code: str
+    message: str
+    source: str | None = None
+
+
+class DocumentReadingResponse(BaseModel):
+    """Resultado de leer un documento: valores con su procedencia y confianza."""
+
+    doc_type: str
+    parser: str
+    content_sha256: str
+    fields: list[ExtractedFieldResponse]
+    rows: list[ExtractedRowResponse]
+    warnings: list[ReadingWarningResponse]
+
+    @classmethod
+    def from_reading(cls, reading: DocumentReading) -> DocumentReadingResponse:
+        return cls(
+            doc_type=reading.doc_type,
+            parser=reading.parser,
+            content_sha256=reading.content_sha256,
+            fields=[ExtractedFieldResponse(**f.model_dump()) for f in reading.fields],
+            rows=[ExtractedRowResponse(**r.model_dump()) for r in reading.rows],
+            warnings=[ReadingWarningResponse(**w.model_dump()) for w in reading.warnings],
+        )
