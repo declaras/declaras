@@ -154,7 +154,8 @@ Función pura: `liquidar(caso, parametros, elecciones) → Liquidacion`.
 
 **Cédula de dividendos**:
 - *No gravados*: se suman a la base de tabla 241 (junto con general + pensiones). Luego descuento art. 254-1 = 19% marginal sobre la porción de dividendos que exceda 1.090 UVT (resta del impuesto, no de la base).
-- *Gravados*: primer componente al 35%; el neto restante se suma a la base de tabla 241 y participa también del descuento 254-1.
+- *Gravados*: primer componente al 35%; el neto restante se suma a la base de tabla 241 y participa también del descuento 254-1 (interpretación I-3: la base del 254-1 toma los gravados NETOS del 35%, art. 242 inc. 2 — validar con contador).
+- Tope art. 258 ET: el descuento por donaciones (art. 257) no puede exceder el 25% del impuesto a cargo — el motor lo señala con flag (v1) en el cierre.
 
 **Créditos y cierre**: impuesto según tabla(s) − descuentos (254-1, 25% donaciones ESAL certificadas) − retenciones (todas las fuentes) − anticipo pagado − saldo a favor anterior + anticipo año siguiente → saldo a pagar / a favor.
 
