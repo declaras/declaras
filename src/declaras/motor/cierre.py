@@ -35,11 +35,16 @@ def cerrar(caso: CasoTributario, p: ParametrosAnio, t: Traza, impuesto_neto: int
         insumos=["IMPUESTO_NETO", "RETENCIONES"], regla="art. 807 ET",
     )
 
+    # Los dos últimos términos no son nodos del 210 (vienen de creditos), así que la
+    # fórmula los interpola con su valor: sin eso el saldo no se puede recomponer.
+    pagado = caso.creditos.anticipo_pagado
+    favor_anterior = caso.creditos.saldo_favor_anterior
     t.nodo(
         "SALDO", "Saldo a pagar (+) o a favor (−)",
-        impuesto_neto + anticipo - retenciones
-        - caso.creditos.anticipo_pagado - caso.creditos.saldo_favor_anterior,
-        "IMPUESTO_NETO + ANTICIPO_SIGUIENTE − RETENCIONES − anticipo pagado − saldo a favor anterior",
+        impuesto_neto + anticipo - retenciones - pagado - favor_anterior,
+        f"impuesto neto {impuesto_neto:,} + anticipo siguiente {anticipo:,} "
+        f"− retenciones {retenciones:,} − anticipo pagado {pagado:,} "
+        f"− saldo a favor anterior {favor_anterior:,}",
         insumos=["IMPUESTO_NETO", "ANTICIPO_SIGUIENTE", "RETENCIONES"],
     )
 
