@@ -89,3 +89,33 @@ def g3() -> CasoTributario:
             gmf_pagado=_md(900_000)),
         creditos=Creditos(anios_previos_declarando=2),
     )
+
+
+def g4() -> CasoTributario:
+    """No obligado: ingresos y patrimonio bajo todos los topes, impuesto 0."""
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="14", nombre="G4 No Obligado"),
+        laborales=[IngresoLaboral(
+            empleador_nit="900999000", empleador_nombre="Pyme SAS",
+            salarios=30_000_000, aportes_salud=1_200_000,
+            aportes_pension=1_200_000, retencion=0, fuente=FX)],
+    )
+
+
+def g5() -> CasoTributario:
+    """Pensionado con mesada no uniforme (retroactivo en diciembre) + créditos.
+
+    Mata tres mutantes: exención pensional anual en vez de mensual,
+    anticipo siempre-75% y anticipo sin rama promedio.
+    """
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="15", nombre="G5 Retroactivo"),
+        pensiones=[IngresoPension(
+            pagador="Colpensiones",
+            mesadas=[40_000_000] * 11 + [160_000_000],
+            retencion=1_000_000, fuente=FX)],
+        creditos=Creditos(anios_previos_declarando=1,
+                          impuesto_neto_anio_anterior=10_000_000,
+                          anticipo_pagado=2_000_000,
+                          saldo_favor_anterior=500_000),
+    )

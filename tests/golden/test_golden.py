@@ -2,7 +2,7 @@
 from declaras.motor import Elecciones
 from declaras.optimizador import optimizar
 from declaras.parametros import cargar
-from tests.golden.casos import g0, g1, g2, g3
+from tests.golden.casos import g0, g1, g2, g3, g4, g5
 
 P = cargar(2025)
 
@@ -50,3 +50,26 @@ def test_g3_capital_y_dividendos():
     assert liq.valor("RETENCIONES") == 7_540_000
     assert liq.valor("ANTICIPO_SIGUIENTE") == 6_624_848
     assert liq.valor("SALDO") == 17_971_312
+
+
+def test_g4_no_obligado():
+    liq = optimizar(g4(), P).liquidacion
+    assert liq.valor("OBLIGADO_DECLARAR") == 0     # ningún tope superado
+    assert liq.tiene_flag("NO_OBLIGADO")
+    assert liq.valor("IMPUESTO_NETO") == 0         # RLG 20.7M < 1.090 UVT
+    assert liq.valor("SALDO") == 0
+
+
+def test_g5_pension_no_uniforme_y_anticipo_promedio():
+    liq = optimizar(g5(), P).liquidacion
+    # Exención POR MES (1.000 UVT/mesada): solo diciembre grava 160M − 49.799.000.
+    # La variante anual (600M − 12.000 UVT) daría 2.412.000 → impuesto 0.
+    assert liq.valor("RLG_PENSIONES") == 110_201_000
+    assert liq.valor("IMPUESTO_NETO") == 12_928_640    # 28% + 116 UVT
+    # Año 2 (1 previo): tasa 50% sobre min(actual, promedio dos años) − retenciones
+    # = 50% × 11.464.320 − 1.000.000. Con 75% daría 7.598.240; sin promedio 5.464.320.
+    assert liq.valor("ANTICIPO_SIGUIENTE") == 4_732_160
+    assert liq.valor("RETENCIONES") == 1_000_000
+    # 12.928.640 − 1.000.000 + 4.732.160 − anticipo pagado 2M − saldo favor 500K
+    assert liq.valor("SALDO") == 14_160_800
+    assert liq.valor("OBLIGADO_DECLARAR") == 1         # ingresos 600M > 1.400 UVT
