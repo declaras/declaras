@@ -86,6 +86,7 @@ def _document_from_row(row: CaseDocumentRow) -> CaseDocument:
         added_at=_as_utc(row.added_at) or _utcnow(),
         reading=DocumentReading.model_validate(row.reading_json) if row.reading_json else None,
         extraction_job_id=UUID(row.extraction_job_id) if row.extraction_job_id else None,
+        superseded_at=_as_utc(row.superseded_at),
     )
 
 
@@ -243,10 +244,12 @@ class SqlCaseRepository:
                 )
             ).scalars()
 
+            todos = [_document_from_row(d) for d in documents]
             return CaseDetail(
                 case=_case_from_row(case_row),
                 client=_client_from_row(client_row),
-                documents=[_document_from_row(d) for d in documents],
+                documents=[d for d in todos if d.superseded_at is None],
+                superseded_documents=[d for d in todos if d.superseded_at is not None],
                 flags=[_flag_from_row(f) for f in flags],
                 events=[_event_from_row(e) for e in events],
             )
@@ -310,6 +313,27 @@ class SqlCaseRepository:
             row.reading_json = reading.model_dump(mode="json")
             await session.flush()
             return _document_from_row(row)
+
+    async def supersede_documents(
+        self, *, case_id: UUID, doc_type: str, source: CaseDocumentSource
+    ) -> list[CaseDocument]:
+        now = _utcnow()
+        async with self._sessions() as session, session.begin():
+            rows = (
+                await session.execute(
+                    select(CaseDocumentRow).where(
+                        CaseDocumentRow.case_id == str(case_id),
+                        CaseDocumentRow.doc_type == doc_type,
+                        CaseDocumentRow.source == source.value,
+                        CaseDocumentRow.superseded_at.is_(None),
+                    )
+                )
+            ).scalars()
+            reemplazados = list(rows)
+            for row in reemplazados:
+                row.superseded_at = now
+            await session.flush()
+            return [_document_from_row(r) for r in reemplazados]
 
     async def add_flag(
         self,

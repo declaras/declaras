@@ -82,6 +82,9 @@ class CaseDocument(BaseModel):
     content_sha256: str
     added_at: datetime
     reading: DocumentReading | None = None
+    # Una consulta mas reciente trajo este mismo documento y lo reemplazo. Se conserva
+    # para la auditoria, pero no es el vigente.
+    superseded_at: datetime | None = None
     # Referencia al job de extraccion DIAN, cuando el origen es el portal: permite volver
     # a consultar el detalle completo de esa extraccion (incluidas sus fallas parciales).
     extraction_job_id: UUID | None = None
@@ -130,11 +133,16 @@ class CaseEvent(BaseModel):
 
 class CaseDetail(BaseModel):
     """El expediente completo, listo para la consola del contador: caso, cliente,
-    documentos con su lectura, flags y bitacora, todo en una sola consulta."""
+    documentos con su lectura, flags y bitacora, todo en una sola consulta.
+
+    `documents` trae solo los vigentes. Los reemplazados por una consulta posterior siguen
+    en la base y en la bitacora, y se consultan por `superseded_documents`.
+    """
 
     case: Case
     client: Client
     documents: list[CaseDocument] = Field(default_factory=list)
+    superseded_documents: list[CaseDocument] = Field(default_factory=list)
     flags: list[CaseFlag] = Field(default_factory=list)
     events: list[CaseEvent] = Field(default_factory=list)
 

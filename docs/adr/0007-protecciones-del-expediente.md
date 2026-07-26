@@ -67,6 +67,29 @@ cursor no se desincronizo. Si difieren, se emite el aviso `RUT_ID_MISMATCH`.
   pasaba un `case_id`, asi que el nombre mentia; `scope_id` describe lo que realmente es
   (el id que agrupa la evidencia de la operacion, sea un job o un expediente).
 
+## Cuarta falla, encontrada al usar la consola con datos reales
+
+**Reconsultar la DIAN duplicaba los documentos.** La proteccion de idempotencia cubria el
+caso de vincular el MISMO job dos veces, y ademas omitia documentos cuyo par (tipo, hash
+del contenido) ya estuviera en el expediente. Eso resulto insuficiente por una razon que
+solo se ve con archivos reales: **la DIAN incrusta la fecha de generacion dentro del
+archivo** (el RUT trae "Fecha generacion documento PDF" y la exogena trae "Fecha Reporte"),
+asi que cada descarga del mismo documento tiene un hash distinto y la comparacion por
+contenido nunca acierta.
+
+Y reconsultar no es un caso raro: es lo normal. El contador vuelve a consultar cuando la
+DIAN ya publico la exogena, o cuando el cliente actualizo su RUT. Con la dedup por hash, el
+expediente terminaba con dos RUT, dos exogenas y los avisos duplicados, sin forma de saber
+cual documento era el vigente.
+
+Correccion: los documentos del portal se **reemplazan**, no se acumulan. Al vincular una
+consulta nueva, los documentos vigentes de ese mismo tipo se marcan `superseded_at` y el
+nuevo queda como el unico vigente. La copia anterior no se borra (la DIAN puede preguntar
+hasta tres anios despues, y la bitacora debe poder reconstruir que se vio en cada momento):
+queda en `CaseDetail.superseded_documents`. Los avisos que apuntaban al documento
+reemplazado se resuelven solos con una nota, porque un aviso sobre un documento que ya no
+es el vigente solo ensucia la lista de pendientes.
+
 ## Leccion que queda
 
 Un servicio que recibe identificadores de dos agregados distintos (un expediente y un job)

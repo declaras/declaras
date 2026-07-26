@@ -70,13 +70,18 @@ def _job_for(taxpayer: TaxpayerRef, documents: list[StoredDocument]) -> Job:
     )
 
 
-async def _stored_exogena(store, *, id_number: str, tax_year: int = 2025) -> StoredDocument:
+async def _stored_exogena(
+    store, *, id_number: str, tax_year: int = 2025, nombre: str | None = None
+) -> StoredDocument:
+    """El nombre permite variar el contenido, para simular dos descargas distintas del
+    mismo documento: es lo que hace el portal, porque incrusta la fecha de generacion."""
+    extras = {"taxpayer_name": nombre} if nombre else {}
     return await store.put(
         taxpayer=TaxpayerRef(id_number=id_number, tax_year=tax_year),
         document=RawDocument(
             doc_type=DocumentType.EXOGENA,
             filename="e.xlsx",
-            content=build_exogena_xlsx(id_number=id_number),
+            content=build_exogena_xlsx(id_number=id_number, **extras),
         ),
         scope_id=uuid4(),
     )
@@ -127,19 +132,65 @@ async def test_vincular_el_mismo_job_dos_veces_no_duplica_nada(service):
     assert len(segundo.events) == len(primero.events), "tampoco se duplica la bitacora"
 
 
-async def test_dos_jobs_distintos_con_el_mismo_documento_no_lo_duplican(service):
-    """Si se re-extrae y el portal devuelve el mismo archivo byte a byte, el expediente
-    no debe terminar con el documento dos veces."""
+async def test_reconsultar_la_dian_reemplaza_el_documento_en_vez_de_duplicarlo(service):
+    """Reconsultar es normal: el contador vuelve cuando la DIAN ya publicó la exógena.
+
+    No se puede deduplicar por hash del contenido, porque la DIAN incrusta la fecha de
+    generación dentro del archivo y cada descarga del mismo documento tiene un hash
+    distinto. El expediente debe quedar con un vigente por tipo, y el anterior conservado
+    para auditoría.
+    """
     svc, store = service
     case = await svc.open_case(id_kind=IdDocumentKind.CC, id_number=CLIENT_ID_NUMBER, tax_year=2025)
     taxpayer = TaxpayerRef(id_number=CLIENT_ID_NUMBER, tax_year=2025)
-    doc = await _stored_exogena(store, id_number=CLIENT_ID_NUMBER)
 
-    await svc.link_extraction_result(case_id=case.case.id, extraction_job=_job_for(taxpayer, [doc]))
-    segundo = await svc.link_extraction_result(
-        case_id=case.case.id, extraction_job=_job_for(taxpayer, [doc])
+    primera = await _stored_exogena(store, id_number=CLIENT_ID_NUMBER, nombre="PRIMERA")
+    segunda = await _stored_exogena(store, id_number=CLIENT_ID_NUMBER, nombre="SEGUNDA")
+    assert primera.sha256 != segunda.sha256, "cada descarga del portal difiere byte a byte"
+
+    await svc.link_extraction_result(
+        case_id=case.case.id, extraction_job=_job_for(taxpayer, [primera])
     )
-    assert len(segundo.documents) == 1
+    final = await svc.link_extraction_result(
+        case_id=case.case.id, extraction_job=_job_for(taxpayer, [segunda])
+    )
+
+    vigentes = [d for d in final.documents if d.doc_type == "EXOGENA"]
+    assert len(vigentes) == 1, "solo un documento vigente por tipo"
+    assert vigentes[0].reading is not None
+    assert vigentes[0].reading.field("taxpayer_name") == "SEGUNDA", "el vigente es el nuevo"
+    assert len(final.superseded_documents) == 1, "el anterior se conserva, no se borra"
+
+
+async def test_los_avisos_del_documento_reemplazado_se_cierran_solos(service):
+    """Un aviso sobre un documento que ya no es el vigente solo ensucia la lista de
+    pendientes del contador."""
+    svc, store = service
+    case = await svc.open_case(id_kind=IdDocumentKind.CC, id_number=CLIENT_ID_NUMBER, tax_year=2025)
+    taxpayer = TaxpayerRef(id_number=CLIENT_ID_NUMBER, tax_year=2025)
+
+    # una exogena sin conceptos reportados genera el aviso NO_REPORTED_ITEMS
+    vacia = await store.put(
+        taxpayer=taxpayer,
+        document=RawDocument(
+            doc_type=DocumentType.EXOGENA,
+            filename="e.xlsx",
+            content=build_exogena_xlsx(id_number=CLIENT_ID_NUMBER, detail_rows=[]),
+        ),
+        scope_id=uuid4(),
+    )
+    primero = await svc.link_extraction_result(
+        case_id=case.case.id, extraction_job=_job_for(taxpayer, [vacia])
+    )
+    assert any(f.code == "NO_REPORTED_ITEMS" for f in primero.open_flags)
+
+    completa = await _stored_exogena(store, id_number=CLIENT_ID_NUMBER, nombre="CON DATOS")
+    final = await svc.link_extraction_result(
+        case_id=case.case.id, extraction_job=_job_for(taxpayer, [completa])
+    )
+    assert not any(f.code == "NO_REPORTED_ITEMS" for f in final.open_flags)
+    resuelto = next(f for f in final.flags if f.code == "NO_REPORTED_ITEMS")
+    assert "reemplaz" in (resuelto.resolution_note or "")
 
 
 async def test_un_documento_ilegible_genera_flag_bloqueante(service):

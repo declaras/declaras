@@ -69,6 +69,16 @@ class CaseRepository(Protocol):
 
     async def attach_reading(self, document_id: UUID, reading: DocumentReading) -> CaseDocument: ...
 
+    async def supersede_documents(
+        self, *, case_id: UUID, doc_type: str, source: CaseDocumentSource
+    ) -> list[CaseDocument]:
+        """Marca como reemplazados los documentos vigentes de ese tipo y origen.
+
+        Devuelve los que quedaron reemplazados, para poder cerrar sus flags: un aviso sobre
+        un documento que ya no es el vigente solo ensucia la lista de pendientes.
+        """
+        ...
+
     async def add_flag(
         self,
         *,

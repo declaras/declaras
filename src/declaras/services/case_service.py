@@ -124,14 +124,17 @@ class CaseService:
             )
             return detail
 
-        already_present = {(d.doc_type, d.content_sha256) for d in detail.documents}
-
         for stored in result.documents:
             if stored.doc_type.value == _EVIDENCE_DOC_TYPE:
                 continue  # es evidencia de auditoria, no un insumo del motor
-            if (stored.doc_type.value, stored.sha256) in already_present:
-                # Otro job ya trajo este mismo documento byte a byte: no se duplica.
-                continue
+
+            # Una consulta nueva reemplaza la anterior del mismo tipo. No se puede
+            # deduplicar por hash del contenido: la DIAN incrusta la fecha de generacion
+            # dentro del archivo, asi que cada descarga del MISMO documento tiene un hash
+            # distinto. Y reconsultar es normal (el contador vuelve cuando la DIAN ya
+            # publico la exogena), asi que acumular copias dejaria el expediente sin un
+            # documento vigente claro.
+            await self._supersede_previous(case_id, stored.doc_type.value)
 
             case_doc = await self._cases.add_document(
                 case_id=case_id,
@@ -275,6 +278,38 @@ class CaseService:
         for warning in reading.warnings:
             await self._flag_from_warning(case_id, case_doc.id, warning)
         await self._flag_if_identity_differs(case_id, case_doc, reading)
+
+    async def _supersede_previous(self, case_id: UUID, doc_type: str) -> None:
+        """Marca reemplazados los documentos del portal de ese tipo y cierra sus avisos.
+
+        El documento viejo se conserva (la DIAN puede preguntar hasta tres anios despues),
+        pero sus flags se resuelven solos: un aviso sobre un documento que ya no es el
+        vigente solo ensucia la lista de pendientes del contador.
+        """
+        reemplazados = await self._cases.supersede_documents(
+            case_id=case_id, doc_type=doc_type, source=CaseDocumentSource.DIAN_PORTAL
+        )
+        if not reemplazados:
+            return
+
+        detail = await self._require_detail(case_id)
+        ids_reemplazados = {d.id for d in reemplazados}
+        for flag in detail.open_flags:
+            if flag.source_document_id in ids_reemplazados:
+                await self._cases.resolve_flag(
+                    flag.id, note="El documento se reemplazó por una consulta más reciente."
+                )
+
+        await self._cases.add_event(
+            case_id=case_id,
+            kind="DOCUMENT_SUPERSEDED",
+            message=(
+                f"Una consulta más reciente reemplazó {document_label(doc_type)}; "
+                "la copia anterior se conserva para auditoría"
+            ),
+            payload={"doc_type": doc_type, "superseded": len(reemplazados)},
+        )
+        log.info("case.document_superseded", case_id=str(case_id), doc_type=doc_type)
 
     def _assert_same_taxpayer(self, detail: CaseDetail, result: ExtractionResult) -> None:
         """El expediente y la extraccion tienen que ser de la misma persona y anio.

@@ -78,6 +78,10 @@ class CaseDocumentRow(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     extraction_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reading_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Cuando una consulta mas reciente trae el mismo documento, el anterior no se borra:
+    # se marca reemplazado. La copia vieja sigue existiendo para la auditoria (la DIAN
+    # puede preguntar hasta tres anios despues), pero deja de contar como vigente.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CaseFlagRow(Base):
