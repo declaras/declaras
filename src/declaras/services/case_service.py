@@ -38,6 +38,7 @@ from declaras.domain.models import (
     JobStatus,
     RawDocument,
     TaxpayerRef,
+    document_label,
 )
 from declaras.domain.ports import DocumentStore
 from declaras.observability import get_logger
@@ -144,7 +145,10 @@ class CaseService:
             await self._cases.add_event(
                 case_id=case_id,
                 kind="DOCUMENT_LINKED",
-                message=f"{stored.doc_type.value} vinculado desde la extraccion DIAN",
+                message=(
+                    f"Se vinculó {document_label(stored.doc_type.value)} "
+                    "desde la consulta a la DIAN"
+                ),
                 payload={"filename": stored.filename, "job_id": str(extraction_job.id)},
             )
             await self._try_read_and_flag(
@@ -155,7 +159,10 @@ class CaseService:
             await self._cases.add_flag(
                 case_id=case_id,
                 code=failure.code,
-                message=f"No se pudo obtener {failure.doc_type.value}: {failure.message}",
+                message=(
+                    f"No se pudo obtener {document_label(failure.doc_type.value)}: "
+                    f"{failure.message}"
+                ),
                 severity=FlagSeverity.WARNING if failure.retryable else FlagSeverity.BLOCKING,
             )
 
@@ -163,7 +170,7 @@ class CaseService:
         await self._cases.add_event(
             case_id=case_id,
             kind="EXTRACTION_LINKED",
-            message="Extraccion DIAN vinculada al expediente",
+            message="Se vinculó la consulta a la DIAN con el expediente",
             payload={
                 "job_id": str(extraction_job.id),
                 "documents": len(result.documents),
@@ -205,7 +212,7 @@ class CaseService:
         await self._cases.add_event(
             case_id=case_id,
             kind="DOCUMENT_UPLOADED",
-            message=f"El cliente subio {doc_type}",
+            message=f"El cliente subió {doc_type.replace('_', ' ')}",
             payload={"filename": filename},
         )
         await self._try_read_and_flag(case_id=case_id, case_doc=case_doc, doc_type=doc_type)
@@ -227,7 +234,7 @@ class CaseService:
         await self._cases.add_event(
             case_id=case_id,
             kind="FLAG_RESOLVED",
-            message=f"Flag {flag.code} marcado como resuelto",
+            message=f"Se marcó como revisado: {flag.message}",
             payload={"flag_id": str(flag_id), "note": note},
         )
         return flag
@@ -258,7 +265,7 @@ class CaseService:
             await self._cases.add_flag(
                 case_id=case_id,
                 code=exc.code,
-                message=f"{doc_type} no se pudo leer: {exc.message}",
+                message=f"No se pudo leer {doc_type.replace('_', ' ')}: {exc.message}",
                 severity=FlagSeverity.BLOCKING,
                 source_document_id=case_doc.id,
             )
@@ -315,7 +322,7 @@ class CaseService:
             case_id=case_id,
             code="DOCUMENT_IDENTITY_MISMATCH",
             message=(
-                f"El documento esta a nombre de {document_id_number}, "
+                f"El documento está a nombre de {document_id_number}, "
                 f"pero el expediente es de {expected}"
             ),
             severity=FlagSeverity.BLOCKING,

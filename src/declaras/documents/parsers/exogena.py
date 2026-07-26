@@ -41,14 +41,16 @@ log = get_logger(__name__)
 
 PARSER_NAME = "exogena.xlsx.v1"
 
-# Posiciones del encabezado, verificadas contra el reporte real.
-_HEADER_CELLS = {
-    "cutoff_date": "C3",
-    "tax_year": "C4",
-    "id_kind_label": "C6",
-    "id_number": "C7",
-    "taxpayer_name": "C8",
-    "report_date": "H2",
+# Posiciones del encabezado, verificadas contra el reporte real. El segundo valor es como
+# se llama el campo en un aviso que lee una persona: los avisos no deben filtrar nombres
+# internos como "taxpayer_name".
+_HEADER_CELLS: dict[str, tuple[str, str]] = {
+    "cutoff_date": ("C3", "la fecha de corte"),
+    "tax_year": ("C4", "el año gravable"),
+    "id_kind_label": ("C6", "el tipo de documento"),
+    "id_number": ("C7", "el número de identificación"),
+    "taxpayer_name": ("C8", "el nombre del contribuyente"),
+    "report_date": ("H2", "la fecha del reporte"),
 }
 
 # Filas de los topes y su codigo, en el orden en que el portal los imprime.
@@ -114,13 +116,13 @@ def parse(content: bytes) -> DocumentReading:
 
 def _read_header(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[ExtractedField]:
     fields: list[ExtractedField] = []
-    for name, cell in _HEADER_CELLS.items():
+    for name, (cell, label) in _HEADER_CELLS.items():
         raw = sheet[cell].value
         if raw is None:
             warnings.append(
                 ReadingWarning(
                     code="HEADER_FIELD_MISSING",
-                    message=f"el reporte no trae {name}",
+                    message=f"El reporte de la DIAN no trae {label}",
                     source=cell,
                 )
             )
@@ -132,7 +134,10 @@ def _read_header(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[Extra
             warnings.append(
                 ReadingWarning(
                     code="TEXT_ENCODING_DAMAGED",
-                    message=f"{name} llega con caracteres ilegibles por el portal",
+                    message=(
+                        f"El portal entregó {label} con caracteres ilegibles. "
+                        "Es un defecto conocido de la DIAN, no del documento."
+                    ),
                     source=cell,
                 )
             )

@@ -36,6 +36,23 @@ class DocumentType(StrEnum):
     CLIENT_DOCUMENT = "CLIENT_DOCUMENT"
 
 
+# Nombre legible de cada tipo de documento, para los mensajes que ve una persona.
+DOCUMENT_TYPE_LABELS: dict[str, str] = {
+    DocumentType.RUT: "el RUT",
+    DocumentType.EXOGENA: "la información exógena",
+    DocumentType.PRIOR_RETURN: "la declaración del año anterior",
+    DocumentType.SUGGESTED_RETURN: "el borrador sugerido por la DIAN",
+    DocumentType.EINVOICE_SUMMARY: "el resumen de facturas electrónicas",
+    DocumentType.EVIDENCE: "la evidencia de auditoría",
+    DocumentType.CLIENT_DOCUMENT: "un documento del cliente",
+}
+
+
+def document_label(doc_type: str) -> str:
+    """Nombre legible de un tipo de documento, o el propio codigo si no se conoce."""
+    return DOCUMENT_TYPE_LABELS.get(doc_type, doc_type.replace("_", " ").lower())
+
+
 class JobKind(StrEnum):
     DIAN_EXTRACTION = "DIAN_EXTRACTION"
 

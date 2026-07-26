@@ -190,7 +190,8 @@ async def test_una_falla_de_extraccion_se_reporta_como_flag(service):
     updated = await svc.link_extraction_result(case_id=detail.case.id, extraction_job=job)
     flag = updated.open_flags[0]
     assert flag.severity is FlagSeverity.BLOCKING
-    assert "EXOGENA" in flag.message
+    assert "exógena" in flag.message, "el mensaje debe nombrar el documento en lenguaje llano"
+    assert "aun no publicada" in flag.message
 
 
 async def test_una_falla_reintentable_es_solo_una_advertencia_no_bloqueante(service):

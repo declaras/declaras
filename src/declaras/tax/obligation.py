@@ -35,11 +35,13 @@ THRESHOLD_LIMITS_IN_UVT: dict[ThresholdCode, float] = {
     ThresholdCode.COMPRAS: 1_400,
 }
 
-# Como explicarle cada tope a una persona, sin jerga.
+# Como explicarle cada tope a una persona, sin jerga. Es texto que ve el usuario, asi que
+# va con la ortografia correcta (los comentarios y nombres del codigo van sin tildes, pero
+# el contenido que se muestra, no).
 THRESHOLD_LABELS: dict[ThresholdCode, str] = {
-    ThresholdCode.INGRESOS: "Ingresos brutos del anio",
+    ThresholdCode.INGRESOS: "Ingresos brutos del año",
     ThresholdCode.PATRIMONIO: "Patrimonio bruto al 31 de diciembre",
-    ThresholdCode.CONSUMO_TARJETA: "Consumos con tarjeta de credito",
+    ThresholdCode.CONSUMO_TARJETA: "Consumos con tarjeta de crédito",
     ThresholdCode.MOVIMIENTOS: "Consignaciones y movimientos en cuentas",
     ThresholdCode.COMPRAS: "Compras y consumos totales",
 }
