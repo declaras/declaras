@@ -328,6 +328,21 @@ otro contribuyente ni de otro anio, vincular dos veces el mismo job es inofensiv
 documento ilegible genera flag bloqueante (distinto de un tipo que aun no tiene lector), y
 un documento a nombre de otra persona frena el expediente.
 
+## Resumen del expediente y semilla del motor tributario
+
+`GET /v1/cases/{id}/summary` devuelve lo que el sistema ya sabe, derivado de lo que leyo:
+los cinco topes de obligacion con el valor que la DIAN reporta contra el limite legal del
+anio, el agregado por renglon del formulario 210 (usando la asignacion que la propia DIAN
+hace de cada valor reportado) y la base de la deduccion del 1% de facturas electronicas.
+No calcula el impuesto: organiza y compara con la ley lo que los documentos dicen.
+
+El modulo `declaras/tax` es la base de ese calculo: tabla de UVT por anio (nunca una sola
+constante, porque siempre conviven dos: la del anio que se declara y la del anio en curso)
+y los topes del articulo 592. La conversion de UVT a pesos **no redondea**, porque los
+topes oficiales son la multiplicacion exacta: 1.400 UVT del anio gravable 2025 son
+$69.718.600, y redondear al millar inflaria el limite lo suficiente para que alguien
+apenas por encima del tope apareciera como no obligado.
+
 ## Pendiente antes de produccion
 
 - [ ] **Calibrar los descargadores de documentos** contra una sesion autenticada. El

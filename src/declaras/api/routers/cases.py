@@ -22,6 +22,7 @@ from declaras.api.case_schemas import (
 )
 from declaras.api.deps import ApiKeyDep, ContainerDep
 from declaras.domain.errors import JobNotFoundError
+from declaras.services.case_summary import CaseSummary, build_summary
 
 router = APIRouter(prefix="/v1", tags=["cases"])
 
@@ -79,6 +80,16 @@ async def list_cases(
 async def get_case(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> CaseDetailResponse:
     detail = await container.case_service.get_detail(case_id)
     return CaseDetailResponse.from_domain(detail, download_url_builder=_download_url)
+
+
+@router.get(
+    "/cases/{case_id}/summary",
+    response_model=CaseSummary,
+    summary="Resumen de lo que el sistema ya sabe del expediente",
+)
+async def get_case_summary(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> CaseSummary:
+    detail = await container.case_service.get_detail(case_id)
+    return build_summary(detail)
 
 
 @router.post(
