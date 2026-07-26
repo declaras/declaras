@@ -1142,7 +1142,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `tests/test_pensiones.py`
 
 **Interfaces:**
-- Produces: `rlg_pensiones(caso, p, t) -> int` — registra `RLG_PENSIONES`. Exención de `pension_exenta_uvt_mes` (1.000 UVT) **por mes**: gravado = Σ max(0, mesada_m − 1.000 UVT).
+- Produces: `rlg_pensiones(caso, p, t) -> int` — registra `RLG_PENSIONES`. Exención de `pension_exenta_uvt_mes` (1.000 UVT) **por mes y por contribuyente** (interpretación I-2, art. 206-5: el tope es del contribuyente, no de cada pagador): gravado = Σ_mes max(0, Σ_pagadores mesada_mes − 1.000 UVT).
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
