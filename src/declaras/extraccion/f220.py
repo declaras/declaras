@@ -48,6 +48,15 @@ Reglas que no puedes violar:
    escaneado borroso o el formato es atípico)."""
 
 
+def id_documento(pdf_bytes: bytes) -> str:
+    """Identidad del PDF: sha256 truncado. El mismo documento da el mismo id.
+
+    Es la clave de deduplicación: quien recibe el archivo puede saber si ya lo procesó
+    ANTES de gastar una llamada al modelo, y `Fuente.ref` queda apuntando al mismo id.
+    """
+    return hashlib.sha256(pdf_bytes).hexdigest()[:12]
+
+
 class Extraccion220(BaseModel):
     # 7-8 dígitos = NIT de persona natural (cédula), empleador legítimo y masivo.
     empleador_nit: str = Field(pattern=r"^\d{7,10}$")
@@ -159,7 +168,7 @@ def extraer_220(
             "regístralas como IngresoPension, no laboral"
         )
 
-    doc_id = hashlib.sha256(pdf_bytes).hexdigest()[:12]
+    doc_id = id_documento(pdf_bytes)
     return IngresoLaboral(
         empleador_nit=ext.empleador_nit,
         empleador_nombre=ext.empleador_nombre,

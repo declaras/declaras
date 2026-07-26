@@ -9,8 +9,11 @@ from pydantic import ValidationError
 
 from declaras.caso import CasoTributario
 
-# El id termina en un nombre de archivo, así que el alfabeto es cerrado: hex. Sin esto,
-# `GET /casos/..%2F..%2Fetc%2Fpasswd` construye una ruta fuera del almacén.
+# Alfabeto cerrado (hex) porque el id termina siendo un nombre de archivo. El router ya
+# impide el traversal por `/` (un path param no lo matchea), así que esto NO es la defensa
+# del HTTP: es el contrato del módulo. Cubre a cualquier otro llamador (scripts, un
+# endpoint futuro, un id venido de un JSON) y los nombres raros que sí caen DENTRO del
+# almacén — `..secreto`, `.oculto`, `nul` — que no son casos y confundirían un listado.
 _ID_VALIDO = re.compile(r"[0-9a-f]{1,64}")
 
 
@@ -38,8 +41,20 @@ def ruta_documento(doc_id: str) -> Path:
 
 
 def _escribir(ruta: Path, contenido: bytes) -> None:
+    """Escribe atómico: temporal en el mismo directorio y `os.replace`.
+
+    Un `write_bytes` directo deja el archivo truncado si el proceso muere a mitad de
+    escritura, y un caso a medias no se puede leer nunca más. Con `os.replace` el caso
+    viejo sobrevive intacto o queda el nuevo completo, nunca un híbrido.
+    """
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    ruta.write_bytes(contenido)
+    # Nombre único: dos escrituras en paralelo no se pisan el temporal.
+    tmp = ruta.with_name(f".{ruta.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_bytes(contenido)
+        os.replace(tmp, ruta)  # atómico dentro del mismo filesystem
+    finally:
+        tmp.unlink(missing_ok=True)  # si el replace falló, no dejar basura
 
 
 def guardar(caso: CasoTributario) -> str:
@@ -60,6 +75,18 @@ def guardar_documento(doc_id: str, contenido: bytes) -> Path:
     ruta = ruta_documento(doc_id)
     _escribir(ruta, contenido)
     return ruta
+
+
+def existe(caso_id: str) -> bool:
+    """¿Hay archivo para este id? NO valida el contenido, a propósito.
+
+    Es el chequeo que necesita el `PUT`: el endpoint de reparación no puede exigir que
+    el caso viejo sea legible, porque un caso ilegible es justo lo que va a arreglar.
+    """
+    try:
+        return ruta_caso(caso_id).exists()
+    except KeyError:
+        return False
 
 
 def cargar(caso_id: str) -> CasoTributario:

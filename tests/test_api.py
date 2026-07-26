@@ -1,4 +1,7 @@
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +10,7 @@ import declaras.api.main as api_main
 from declaras.api import almacen
 from declaras.api.main import app
 from declaras.caso import Fuente, IngresoLaboral
+from declaras.extraccion import id_documento
 from tests.golden.casos import g1
 
 PDF = b"%PDF-fake"
@@ -35,12 +39,14 @@ class ExtractorFalso:
     """Doble de `extraer_220`: registra la llamada y devuelve o revienta a pedido.
 
     Con la firma completa (`anio_esperado`) a propósito: si el endpoint dejara de
-    pasar el año, el test que lo verifica falla en vez de pasar de largo.
+    pasar el año, el test que lo verifica falla en vez de pasar de largo. Sin `laboral`
+    explícito respeta el contrato del extractor real y sella `Fuente.ref` con
+    `id_documento(pdf)`, que es de donde sale la deduplicación.
     """
 
     def __init__(self, laboral: IngresoLaboral | None = None,
                  error: Exception | None = None):
-        self.laboral = laboral if laboral is not None else _laboral()
+        self.laboral = laboral
         self.error = error
         self.llamadas: list[dict] = []
 
@@ -49,7 +55,9 @@ class ExtractorFalso:
                               "client": client})
         if self.error is not None:
             raise self.error
-        return self.laboral
+        if self.laboral is not None:
+            return self.laboral
+        return _laboral(ref=id_documento(pdf_bytes))
 
 
 def _subir(cliente, caso_id: str, extractor: ExtractorFalso, monkeypatch):
@@ -116,12 +124,19 @@ def test_liquidar_devuelve_casillas_y_optimiza(cliente):
     assert isinstance(cuerpo["flags"], list)
 
 
+def test_crear_caso_de_anio_sin_parametros_es_422(cliente):
+    # El año se rechaza al crear, no tres pantallas después al liquidar.
+    r = cliente.post("/casos", json=g1().model_copy(update={"anio_gravable": 1999})
+                     .model_dump())
+    assert r.status_code == 422
+    assert "1999" in r.json()["detail"]
+
+
 def test_liquidar_anio_sin_parametros_es_422(cliente):
-    caso = g1()
-    caso.anio_gravable = 1999
-    caso_id = cliente.post("/casos", json=caso.model_dump()).json()["id"]
-    r = cliente.post(f"/casos/{caso_id}/liquidar")
+    # Defensa en profundidad: el caso pudo entrar al almacén antes de este chequeo.
     # Año sin tabla es un dato del caso, no una falla del servidor.
+    caso_id = almacen.guardar(g1().model_copy(update={"anio_gravable": 1999}))
+    r = cliente.post(f"/casos/{caso_id}/liquidar")
     assert r.status_code == 422
     assert "1999" in r.json()["detail"]
 
@@ -199,6 +214,48 @@ def test_advertencia_por_confianza_baja(cliente, monkeypatch, confianza, adviert
     assert len(r.json()["caso"]["laborales"]) == 2
 
 
+def test_subir_el_mismo_pdf_dos_veces_es_409(cliente, monkeypatch):
+    # Reprocesar el mismo certificado duplicaría el ingreso: el sha256 del PDF es la clave.
+    caso_id = _crear(cliente)
+    extractor = ExtractorFalso()
+    assert _subir(cliente, caso_id, extractor, monkeypatch).status_code == 200
+
+    r = _subir(cliente, caso_id, extractor, monkeypatch)
+    assert r.status_code == 409
+    assert id_documento(PDF) in r.json()["detail"]
+    assert len(extractor.llamadas) == 1  # ni siquiera gasta la segunda llamada al modelo
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 2
+
+
+def test_uploads_concurrentes_no_pierden_hechos(cliente, monkeypatch, tmp_path):
+    caso_id = _crear(cliente)
+    monkeypatch.setattr(api_main, "extraer_220", ExtractorFalso())
+
+    # Ensancha la ventana entre leer y escribir el caso. Sin candado los 4 hilos leen el
+    # mismo caso y la última escritura borra los otros tres hechos.
+    reemplazar_real = almacen.reemplazar
+
+    def _reemplazar_lento(cid, caso):
+        time.sleep(0.02)
+        reemplazar_real(cid, caso)
+
+    monkeypatch.setattr(api_main.almacen, "reemplazar", _reemplazar_lento)
+
+    pdfs = [PDF + b"-%d" % i for i in range(4)]  # 4 documentos DISTINTOS: ningún 409
+
+    def _subir_pdf(pdf: bytes):
+        return cliente.post(f"/casos/{caso_id}/documentos/220",
+                            files={"archivo": ("220.pdf", pdf, "application/pdf")})
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        codigos = [r.status_code for r in pool.map(_subir_pdf, pdfs)]
+
+    assert codigos == [200] * 4
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 5  # 1 de G1 + 4
+    for pdf in pdfs:
+        assert (tmp_path / "documentos" / f"{id_documento(pdf)}.pdf").read_bytes() == pdf
+
+
 def test_guarda_el_pdf_para_que_la_fuente_sea_resoluble(cliente, monkeypatch, tmp_path):
     caso_id = _crear(cliente)
     r = _subir(cliente, caso_id, ExtractorFalso(_laboral(ref="deadbeef1234")), monkeypatch)
@@ -270,14 +327,61 @@ def test_cargar_json_invalido_es_error_de_dominio(tmp_path, monkeypatch):
 
 def test_caso_corrupto_en_disco_es_422_no_500(cliente, tmp_path):
     caso_id = _crear(cliente)
+    _corromper(tmp_path, caso_id)
+    r = cliente.get(f"/casos/{caso_id}")
+    assert r.status_code == 422
+    assert "no se pudo leer" in r.json()["detail"]
+
+
+def _corromper(tmp_path, caso_id: str) -> None:
     ruta = tmp_path / "casos" / f"{caso_id}.json"
     datos = json.loads(ruta.read_text(encoding="utf-8"))
     datos["laborales"][0]["campo_que_ya_no_existe"] = 1
     ruta.write_text(json.dumps(datos), encoding="utf-8")
 
-    r = cliente.get(f"/casos/{caso_id}")
-    assert r.status_code == 422
-    assert "no se pudo leer" in r.json()["detail"]
+
+def test_put_repara_un_caso_ilegible(cliente, tmp_path):
+    # El PUT es la entrada manual Y la reparación: valida existencia por archivo, sin
+    # parsear el contenido viejo. Si exigiera cargarlo, el caso que hay que arreglar
+    # sería justo el único que no se puede arreglar.
+    caso_id = _crear(cliente)
+    _corromper(tmp_path, caso_id)
+    assert cliente.get(f"/casos/{caso_id}").status_code == 422
+
+    r = cliente.put(f"/casos/{caso_id}", json=g1().model_dump())
+    assert r.status_code == 200
+    assert cliente.get(f"/casos/{caso_id}").status_code == 200
+
+
+def test_escritura_no_deja_temporales(tmp_path, monkeypatch):
+    # La escritura es atómica (temporal + os.replace): el temporal no debe sobrevivir.
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    almacen.reemplazar(caso_id, g1())
+    assert [r.name for r in (tmp_path / "casos").iterdir()] == [f"{caso_id}.json"]
+
+
+class _OsQueFallaAlPublicar:
+    """`os` con el `replace` roto: simula el crash justo en el punto de publicación."""
+
+    environ = os.environ
+
+    def replace(self, *_a, **_k):
+        raise OSError("disco lleno")
+
+
+def test_fallo_al_publicar_deja_intacto_el_caso_anterior(tmp_path, monkeypatch):
+    # El escenario que justifica el os.replace: si la escritura muere a mitad, el caso
+    # viejo tiene que seguir completo y legible (con write_bytes directo quedaría trunco).
+    monkeypatch.setenv("DECLARAS_DATOS", str(tmp_path))
+    caso_id = almacen.guardar(g1())
+    monkeypatch.setattr(almacen, "os", _OsQueFallaAlPublicar())
+
+    with pytest.raises(OSError, match="disco lleno"):
+        almacen.reemplazar(caso_id, g1().model_copy(update={"anio_gravable": 2024}))
+
+    assert almacen.cargar(caso_id).anio_gravable == 2025  # el viejo, entero
+    assert [r.name for r in (tmp_path / "casos").iterdir()] == [f"{caso_id}.json"]
 
 
 def test_guardar_devuelve_ids_distintos(tmp_path, monkeypatch):

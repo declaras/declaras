@@ -1,10 +1,12 @@
+import threading
+
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict
 
 from declaras.api import almacen
 from declaras.caso import CasoTributario
-from declaras.extraccion import extraer_220
+from declaras.extraccion import extraer_220, id_documento
 from declaras.motor import Elecciones, Flag
 from declaras.optimizador import optimizar
 from declaras.parametros import ParametrosAnio
@@ -14,6 +16,13 @@ from declaras.render import borrador_html, casillas, memoria_markdown
 # Debajo de esto la extracción se muestra, pero se marca para revisión humana: el número
 # igual entra a un formulario tributario.
 CONFIANZA_MINIMA = 0.7
+
+# Serializa todo read-modify-write del almacén. FastAPI corre estos handlers síncronos en
+# un threadpool, así que dos subidas concurrentes leen el mismo caso, cada una agrega su
+# hecho y la última escritura borra la otra. Un lock de proceso basta acá (un solo worker,
+# demo monousuario) y la contención es nula; con varios workers hay que mover el candado
+# al filesystem o a la base.
+_CANDADO = threading.Lock()
 
 app = FastAPI(title="declaras — demo", version="0.1.0")
 
@@ -69,6 +78,7 @@ def _parametros(caso: CasoTributario) -> ParametrosAnio:
 
 @app.post("/casos", status_code=201)
 def crear_caso(caso: CasoTributario) -> CasoCreado:
+    _parametros(caso)  # año sin tabla: 422 al crear, no tres pantallas después
     return CasoCreado(id=almacen.guardar(caso))
 
 
@@ -79,8 +89,13 @@ def leer_caso(caso_id: str) -> CasoTributario:
 
 @app.put("/casos/{caso_id}")
 def reemplazar_caso(caso_id: str, caso: CasoTributario) -> CasoTributario:
-    _caso(caso_id)  # 404 si no existe
-    almacen.reemplazar(caso_id, caso)
+    with _CANDADO:
+        # Existencia por archivo, sin parsear el contenido viejo: el PUT es el endpoint
+        # que REPARA un caso ilegible (schema anterior, JSON a medias). Si exigiera
+        # cargarlo, el único caso que hay que arreglar sería el único que no se puede.
+        if not almacen.existe(caso_id):
+            raise HTTPException(404, f"Caso {caso_id} no existe")
+        almacen.reemplazar(caso_id, caso)
     return caso
 
 
@@ -114,19 +129,28 @@ def memoria(caso_id: str) -> str:
 
 @app.post("/casos/{caso_id}/documentos/220")
 def subir_220(caso_id: str, archivo: UploadFile) -> RespuestaUpload220:
-    caso = _caso(caso_id)
     pdf = archivo.file.read()
-    try:
-        # El año del caso es el testigo: el error más común es subir el 220 de otro año.
-        laboral = extraer_220(pdf, anio_esperado=caso.anio_gravable)
-    except ValueError as e:
-        # Todo lo que reporta el extractor es un problema del documento subido (no
-        # reconcilia, año equivocado, pensiones, varios certificados, no es PDF).
-        raise HTTPException(422, str(e)) from e
+    doc = id_documento(pdf)  # el sha256 del PDF ES la clave: mismo archivo, mismo id
+    with _CANDADO:
+        # Leer-modificar-escribir completo bajo el candado, extracción incluida: así el
+        # 409 y el append son la misma decisión (dos subidas del mismo PDF en paralelo no
+        # pasan las dos). Cuesta serializar la llamada al modelo, aceptable en la demo.
+        caso = _caso(caso_id)
+        if any(lab.fuente.ref == doc for lab in caso.laborales):
+            # Reprocesar el mismo certificado duplica el ingreso y el impuesto sale mal.
+            raise HTTPException(
+                409, f"Este 220 ya fue procesado para este caso (doc_id={doc})")
+        try:
+            # El año del caso es el testigo: el error más común es subir el de otro año.
+            laboral = extraer_220(pdf, anio_esperado=caso.anio_gravable)
+        except ValueError as e:
+            # Todo lo que reporta el extractor es un problema del documento subido (no
+            # reconcilia, año equivocado, pensiones, varios certificados, no es PDF).
+            raise HTTPException(422, str(e)) from e
 
-    almacen.guardar_documento(laboral.fuente.ref, pdf)
-    caso.laborales.append(laboral)
-    almacen.reemplazar(caso_id, caso)
+        almacen.guardar_documento(laboral.fuente.ref, pdf)
+        caso.laborales.append(laboral)
+        almacen.reemplazar(caso_id, caso)
 
     confianza = laboral.fuente.confianza
     advertencia = None
