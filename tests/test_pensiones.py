@@ -14,6 +14,16 @@ def _caso(mesadas):
     )
 
 
+def _caso_varios(*mesadas_por_pagador):
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="2", nombre="G2"),
+        pensiones=[
+            IngresoPension(pagador=f"Pagador {i}", mesadas=mesadas, fuente=FX)
+            for i, mesadas in enumerate(mesadas_por_pagador)
+        ],
+    )
+
+
 def test_mesada_bajo_tope_exenta_total():
     assert rlg_pensiones(_caso([10_000_000] * 12), P, Traza()) == 0
 
@@ -27,6 +37,13 @@ def test_mesadas_variables_mes_a_mes():
     # solo los meses que exceden 1.000 UVT gravan: 60M excede en 10.201.000
     mesadas = [40_000_000] * 11 + [60_000_000]
     assert rlg_pensiones(_caso(mesadas), P, Traza()) == 10_201_000
+
+
+def test_exencion_es_del_contribuyente_no_de_cada_pagador():
+    # dos pensiones concurrentes de 30M: el mes agrega 60M y el tope se resta UNA vez
+    # → (60.000.000 − 49.799.000) × 12 = 122.412.000 (por pagador habría dado 0)
+    caso = _caso_varios([30_000_000] * 12, [30_000_000] * 12)
+    assert rlg_pensiones(caso, P, Traza()) == 122_412_000
 
 
 def test_sin_pensiones():
