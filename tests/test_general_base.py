@@ -31,6 +31,18 @@ def test_solo_laboral():
     assert t.nodos["CAP_40"].valor == 44_160_000  # 40% < 1.340 UVT
 
 
+def test_cap_40_tope_1340_uvt():
+    """Ingresos netos > 166.826.650: manda el tope de 1.340 UVT, no el 40%."""
+    t = Traza()
+    alto = IngresoLaboral(
+        empleador_nit="900", empleador_nombre="ACME", salarios=200_000_000,
+        aportes_salud=8_000_000, aportes_pension=8_000_000, fuente=FX,
+    )
+    base_general(_caso(laborales=[alto]), P, t)
+    assert t.nodos["ING_NETOS_GENERAL"].valor == 184_000_000  # 40% = 73.600.000 > tope
+    assert t.nodos["CAP_40"].valor == 66_730_660  # 1.340 UVT × 49.799
+
+
 def test_rendimientos_con_ci_provisional():
     t = Traza()
     caso = _caso(rendimientos=[Rendimiento(entidad="Banco", valor=8_000_000,
