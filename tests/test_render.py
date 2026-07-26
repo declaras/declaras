@@ -1,11 +1,11 @@
 import pytest
 
-from declaras.caso import Contribuyente
+from declaras.caso import Contribuyente, IngresoLaboral
 from declaras.motor import Flag
 from declaras.optimizador import optimizar
 from declaras.parametros import cargar
 from declaras.render import ORDEN_CASILLAS, borrador_html, casillas, memoria_markdown
-from tests.golden.casos import g0, g1, g2, g3, g4, g5
+from tests.golden.casos import FX, g0, g1, g2, g3, g4, g5
 
 P = cargar(2025)
 
@@ -82,12 +82,29 @@ def test_memoria_escapa_identidad_del_contribuyente():
     caso = g1().model_copy(update={
         "contribuyente": Contribuyente(num_doc="9\n# 8", nombre=hostil)})
     md = memoria_markdown(optimizar(caso, P).liquidacion, caso)
-    encabezado = md.splitlines()[0]
-    assert "\n" not in encabezado and "Ana" in encabezado
+    # El nombre entero cabe en la primera línea: los \n internos se volvieron espacio
+    # (nombre y num_doc). Sin el colapso, "999" y el doc caerían en líneas aparte.
+    primera = md.split("\n", 1)[0]
+    assert primera.endswith(r"999 \<img src=x\> (CC 9 \# 8)")
+    assert r"Ana \#\# SALDO" in primera
     assert md.count("## SALDO") == 1  # la sección falsa no existe
     assert "**Valor:** 999" not in md
     assert r"\<img src=x\>" in md                    # el HTML llegó escapado
     assert "<" not in md.replace("\\<", "")          # y ninguno quedó crudo
+
+
+def test_memoria_escapa_los_mensajes_de_flag():
+    """Los mensajes de flag llevan nombres de terceros: empleador, pagador, entidad."""
+    hostil = 'ACME\n## SALDO — Saldo a pagar (+) o a favor (−)\n**Valor:** 999'
+    caso = g1().model_copy(update={"laborales": [IngresoLaboral(
+        empleador_nit="900111222", empleador_nombre=hostil, salarios=1_000_000,
+        aportes_salud=0, aportes_pension=0, retencion=5_000_000, fuente=FX)]})
+    liq = optimizar(caso, P).liquidacion
+    assert liq.tiene_flag("RETENCION_EXCEDE_INGRESO")  # retención 5M > base 1M
+    md = memoria_markdown(liq, caso)
+    assert md.count("## SALDO") == 1
+    assert "**Valor:** 999" not in md
+    assert r"ACME \#\# SALDO" in md  # colapsado y escapado dentro de la alerta
 
 
 def test_flags_del_motor_se_renderizan_con_severidad():
@@ -141,7 +158,9 @@ def test_html_imprimible():
     html = borrador_html(_liq(), g1())
     assert "<table" in html and "IMPUESTO_NETO" in html
     assert 'class="neg"' in html  # el saldo a favor de G1 va marcado
-    assert "<thead>" in html and "break-inside:avoid" in html  # paginación
+    assert "<thead>" in html and "<tbody>" in html
+    assert "tr{break-inside:avoid}" in html            # ninguna casilla partida
+    assert "thead{display:table-header-group}" in html  # encabezado por página
     assert "http://" not in html and "https://" not in html  # autocontenido
 
 

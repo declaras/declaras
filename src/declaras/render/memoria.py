@@ -11,11 +11,13 @@ _BOOLEANAS = frozenset({"OBLIGADO_DECLARAR"})
 _MD_ESPECIALES = str.maketrans({c: "\\" + c for c in "\\#*_[]<>|`"})
 
 
-def _md_identidad(x: object) -> str:
-    """Escapa identidad del contribuyente: llega de extracción LLM y del API.
+def _md_texto(x: object) -> str:
+    """Escapa texto no confiable: llega de extracción LLM y del API.
 
-    Colapsa todo whitespace — un `\\n` en el nombre fabricaría una sección falsa de
-    la memoria — y luego escapa los metacaracteres.
+    Cubre la identidad del contribuyente y los mensajes de flag, que interpolan
+    nombres de terceros (`empleador_nombre`, `pagador`, `entidad`, `sociedad_nombre`,
+    `inmueble`). Colapsa todo whitespace — un `\\n` fabricaría una sección falsa de la
+    memoria — y luego escapa los metacaracteres.
     """
     return " ".join(str(x).split()).translate(_MD_ESPECIALES)
 
@@ -56,8 +58,8 @@ def memoria_markdown(liq: Liquidacion, caso: CasoTributario) -> str:
     _verificar_pareja(liq, caso)
     c = caso.contribuyente
     lineas = [
-        f"# Memoria de cálculo — {_md_identidad(c.nombre)} "
-        f"({_md_identidad(c.tipo_doc)} {_md_identidad(c.num_doc)})",
+        f"# Memoria de cálculo — {_md_texto(c.nombre)} "
+        f"({_md_texto(c.tipo_doc)} {_md_texto(c.num_doc)})",
         "",
         f"Año gravable {liq.anio_gravable} · elecciones: "
         f"art387={'sí' if liq.elecciones.usar_387 else 'no'}, "
@@ -76,5 +78,6 @@ def memoria_markdown(liq: Liquidacion, caso: CasoTributario) -> str:
     if liq.flags:
         lineas += ["## Alertas", ""]
         for fl in liq.flags:
-            lineas.append(f"- **[{fl.severidad}] {fl.codigo}**: {fl.mensaje}")
+            lineas.append(
+                f"- **[{fl.severidad}] {fl.codigo}**: {_md_texto(fl.mensaje)}")
     return "\n".join(lineas)
