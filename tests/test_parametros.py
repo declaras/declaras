@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from declaras import parametros
-from declaras.dinero import pesos
+from declaras.dinero import pesos, porcentaje
 from declaras.parametros import ParametrosAnio, cargar
 from declaras.parametros.tabla import impuesto_tabla_241
 
@@ -24,6 +24,24 @@ def test_pesos_half_up():
     assert pesos(373994.25) == 373994
     assert pesos(0.5) == 1
     assert pesos(10) == 10
+
+
+def test_porcentaje_exacto_en_la_frontera():
+    """Multiplica en Decimal, así que el producto que cae en ,50 sube de verdad.
+
+    Los dos casos con 0,35 son los que discriminan: con `pesos(monto * tarifa)`
+    (float primero) darían un peso menos, porque 0,35 no es exacto en binario y el
+    producto aterriza en ...,4999. Con 0,19 y 0,25 el float coincide, pero los dejo
+    como cobertura de la frontera ,50 por si cambia la tarifa del YAML.
+    """
+    assert porcentaje(89_844_110, 0.35) == 31_445_439  # exacto 31.445.438,50 → sube
+    assert porcentaje(90, 0.35) == 32                  # exacto 31,50 → sube
+    assert porcentaje(50, 0.19) == 10                  # exacto 9,50 → sube
+    assert porcentaje(2, 0.25) == 1                    # exacto 0,50 → sube
+    # Casos sin frontera: coincide con la aritmética obvia.
+    assert porcentaje(10_000_000, 0.35) == 3_500_000
+    assert porcentaje(25_719_090, 0.19) == 4_886_627
+    assert porcentaje(0, 0.35) == 0
 
 
 def test_carga_ag2025():

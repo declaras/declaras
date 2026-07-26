@@ -1,4 +1,6 @@
-from declaras.caso import CasoTributario, Contribuyente, Dividendo, Fuente
+from declaras.caso import (
+    Beneficios, CasoTributario, Contribuyente, Dividendo, Donacion, Fuente,
+)
 from declaras.motor.impuesto import impuesto_total
 from declaras.motor.traza import Traza
 from declaras.parametros import cargar
@@ -7,9 +9,10 @@ FX = Fuente.fixture("test")
 P = cargar(2025)
 
 
-def _caso(dividendos=()):
+def _caso(dividendos=(), donaciones=()):
     return CasoTributario(contribuyente=Contribuyente(num_doc="3", nombre="G3"),
-                          dividendos=list(dividendos))
+                          dividendos=list(dividendos),
+                          beneficios=Beneficios(donaciones_esal=list(donaciones)))
 
 
 def test_sin_dividendos_solo_tabla():
@@ -40,3 +43,48 @@ def test_descuento_254_1_sobre_umbral():
     assert t.nodos["IMPUESTO_241"].valor == 18_472_360
     assert t.nodos["DESCUENTO_254_1"].valor == 4_886_627
     assert v == 13_585_733
+
+
+def test_imp_div_35_no_pierde_el_peso_de_la_frontera():
+    """El 35% de este monto cae exacto en ,50 y debe subir (half-up).
+
+    Multiplicar en float primero da 31.445.438: 0,35 no es exacto en binario y el
+    producto aterriza en 31.445.438,499... El camino Decimal da los 31.445.438,50
+    reales, que half-up sube. Ver `dinero.porcentaje`.
+    """
+    div = Dividendo(sociedad_nit="800", sociedad_nombre="Soc SA",
+                    gravados=89_844_110, fuente=FX)
+    t = Traza()
+    impuesto_total(_caso([div]), P, t, rlg_general=0, rlg_pensiones=0)
+    assert t.nodos["IMP_DIV_35"].valor == 31_445_439
+
+
+def test_donaciones_certificadas_descuentan_25():
+    """Solo la certificada entra: 25% × 4M = 1M (no 25% × 12M)."""
+    donaciones = [Donacion(entidad="Fundación A", valor=4_000_000, certificada=True, fuente=FX),
+                  Donacion(entidad="Fundación B", valor=8_000_000, certificada=False, fuente=FX)]
+    t = Traza()
+    v = impuesto_total(_caso(donaciones=donaciones), P, t,
+                       rlg_general=62_154_472, rlg_pensiones=0)
+    assert t.nodos["DESCUENTO_DONACIONES"].valor == 1_000_000
+    assert v == 495_977  # 1.495.977 − 1.000.000
+
+
+def test_donacion_no_certificada_no_descuenta():
+    donaciones = [Donacion(entidad="Fundación B", valor=8_000_000, certificada=False, fuente=FX)]
+    t = Traza()
+    v = impuesto_total(_caso(donaciones=donaciones), P, t,
+                       rlg_general=62_154_472, rlg_pensiones=0)
+    assert t.nodos["DESCUENTO_DONACIONES"].valor == 0
+    assert v == 1_495_977
+
+
+def test_descuentos_mayores_que_el_impuesto_pisan_en_cero():
+    """El descuento se registra completo; lo que no baja de 0 es el impuesto neto."""
+    donaciones = [Donacion(entidad="Fundación A", valor=20_000_000, certificada=True, fuente=FX)]
+    t = Traza()
+    v = impuesto_total(_caso(donaciones=donaciones), P, t,
+                       rlg_general=62_154_472, rlg_pensiones=0)
+    assert t.nodos["DESCUENTO_DONACIONES"].valor == 5_000_000  # 25% × 20M, sin recortar
+    assert t.nodos["IMPUESTO_241"].valor == 1_495_977
+    assert v == 0  # max(0, 1.495.977 − 5.000.000)
