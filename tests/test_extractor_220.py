@@ -51,6 +51,8 @@ def test_envia_pdf_como_documento_base64():
     assert contenido[0]["type"] == "document"
     assert contenido[0]["source"]["media_type"] == "application/pdf"
     assert llamada["output_format"] is Extraccion220
+    # Ancla contra regresión de truncado: thinking y respuesta comparten el presupuesto.
+    assert llamada["max_tokens"] >= 8192
 
 
 # Un valor DISTINTO por campo: si el constructor cruza dos campos (p. ej. salud con
