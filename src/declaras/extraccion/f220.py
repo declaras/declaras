@@ -40,8 +40,8 @@ cambia entre años del formato, las etiquetas no.
 Reglas que no puedes violar:
 1. Cada peso del certificado se cuenta EXACTAMENTE una vez entre salarios,
    cesantias_e_intereses, prima, bonificaciones y pensiones_de_jubilacion: ni se
-   duplica ni se omite. Las pensiones de jubilación, invalidez o vejez van SOLO en
-   pensiones_de_jubilacion, nunca dobladas dentro de bonificaciones.
+   duplica ni se omite. Las pensiones de jubilación, invalidez o vejez van
+   SOLO en pensiones_de_jubilacion, nunca dobladas dentro de bonificaciones.
 2. Los valores van en pesos completos, sin puntos ni separadores. Si el certificado
    indica "cifras en miles", multiplica por 1.000.
 3. confianza: tu confianza global 0.0-1.0 en la extracción (baja si el PDF es
@@ -125,16 +125,8 @@ def extraer_220(
             "procesa uno a la vez"
         )
 
-    if ext.pensiones_de_jubilacion > 0:
-        # La pensión se exime POR MES (IngresoPension.mesadas), no anual: registrarla
-        # como laboral cambia el impuesto.
-        raise ValueError(
-            f"El 220 reporta pensiones ({ext.pensiones_de_jubilacion:,}); "
-            "regístralas como IngresoPension, no laboral"
-        )
-
-    # Identidad del documento antes de calidad de la extracción: el error más común es
-    # subir el 220 del año equivocado, y este chequeo no puede falso-rechazar.
+    # Identidad del documento primero: el error más común es subir el 220 del año
+    # equivocado, y este chequeo no puede falso-rechazar.
     if anio_esperado is not None and ext.anio_gravable != anio_esperado:
         raise ValueError(
             f"El certificado es del año gravable {ext.anio_gravable} "
@@ -142,20 +134,29 @@ def extraer_220(
         )
 
     # Las pensiones entran en la suma porque el "Total de ingresos brutos" impreso las
-    # incluye. Hoy el guard de arriba ya cortó cualquier caso con pensiones > 0, así que
-    # este término es 0; queda escrito para que la invariante siga siendo cierta si algún
-    # día el 220 mixto tiene ruta propia (devolver IngresoLaboral + IngresoPension).
+    # incluye. Va ANTES del guard de pensiones a propósito: así el término es
+    # load-bearing (un 220 mixto bien extraído reconcilia gracias a él) y por tanto
+    # verificable, en vez de ser código correcto pero inalcanzable.
     suma = (
         ext.salarios + ext.cesantias_e_intereses + ext.prima + ext.bonificaciones
         + ext.pensiones_de_jubilacion
     )
     if abs(suma - ext.total_ingresos_brutos) > TOLERANCIA_RECONCILIACION_PESOS:
         # El total impreso es el testigo independiente: si los campos no lo reproducen,
-        # el LLM se saltó una casilla o contó una dos veces.
+        # el LLM se saltó una casilla o contó una dos veces. Si el total descuadra
+        # tampoco se puede confiar en el campo de pensiones, así que este mensaje gana.
         raise ValueError(
             "la extracción no reconcilia contra el total impreso del certificado: "
             f"los campos suman {suma:,} y el certificado dice "
             f"{ext.total_ingresos_brutos:,}"
+        )
+
+    if ext.pensiones_de_jubilacion > 0:
+        # La pensión se exime POR MES (IngresoPension.mesadas), no anual: registrarla
+        # como laboral cambia el impuesto.
+        raise ValueError(
+            f"El 220 reporta pensiones ({ext.pensiones_de_jubilacion:,}); "
+            "regístralas como IngresoPension, no laboral"
         )
 
     doc_id = hashlib.sha256(pdf_bytes).hexdigest()[:12]

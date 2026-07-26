@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from declaras.extraccion.f220 import Extraccion220, extraer_220
+from declaras.extraccion.f220 import PROMPT_220, Extraccion220, extraer_220
 
 PDF = b"%PDF-fake"
 
@@ -131,10 +131,14 @@ def test_rechaza_pdf_con_varios_certificados():
     assert "uno a la vez" in str(exc.value)
 
 
-def test_rechaza_certificado_con_pensiones():
+def test_pensiones_con_total_descuadrado_reporta_no_reconcilia():
+    # Pensiones 30M pero el total impreso sigue en 123M: el documento es incoherente.
+    # Gana la reconciliación porque va primero, y es el mensaje honesto: si el total no
+    # cuadra tampoco se puede confiar en el campo de pensiones.
     ext = EXTRACCION.model_copy(update={"pensiones_de_jubilacion": 30_000_000})
-    with pytest.raises(ValueError, match="IngresoPension"):
+    with pytest.raises(ValueError, match="no reconcilia") as exc:
         extraer_220(PDF, client=ClienteFalso(ext))
+    assert "153,000,000" in str(exc.value)  # la suma incluye las pensiones
 
 
 # El 220 mixto es el caso que se colaba en silencio: un modelo obediente plegaba las
@@ -147,11 +151,23 @@ MIXTO = Extraccion220(**_kwargs_validos(
 
 
 def test_mixto_dispara_el_guard_de_pensiones_y_no_el_de_reconciliacion():
+    # Este test es el que vuelve load-bearing al término `+ pensiones_de_jubilacion` de
+    # la reconciliación: sin él la suma daría 123M contra un total de 153M y saldría
+    # "no reconcilia" en vez del mensaje de pensiones.
     with pytest.raises(ValueError, match="IngresoPension") as exc:
         extraer_220(PDF, client=ClienteFalso(MIXTO))
     mensaje = str(exc.value)
     assert "no reconcilia" not in mensaje  # el total con pensiones SÍ reconcilia
     assert "30,000,000" in mensaje  # dice cuánta pensión encontró
+
+
+def test_el_prompt_prohibe_plegar_las_pensiones_en_otro_campo():
+    # Ancla tautológica a propósito. La cláusula del prompt es la defensa PRINCIPAL del
+    # 220 mixto: si un modelo pliega la pensión dentro de bonificaciones, la suma
+    # reconcilia, `pensiones_de_jubilacion` queda en 0 y el guard no dispara — todo pasa
+    # en verde. Ningún test con cliente falso puede detectarlo (el prompt nunca llega a
+    # un modelo), así que al menos se impide el borrado silencioso de la instrucción.
+    assert "SOLO en pensiones_de_jubilacion" in PROMPT_220
 
 
 def test_pensiones_de_jubilacion_es_obligatoria_en_el_schema():
