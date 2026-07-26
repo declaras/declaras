@@ -42,7 +42,11 @@ def extraer_220(pdf_bytes: bytes, client=None) -> IngresoLaboral:
     data = base64.standard_b64encode(pdf_bytes).decode()
     respuesta = client.messages.parse(
         model=MODELO,
-        max_tokens=2048,
+        # En claude-opus-5 el thinking es adaptativo por defecto (se deja así: es lo
+        # recomendado) y max_tokens topa thinking + respuesta JUNTOS. Con 2048 un 220
+        # escaneado que lo haga razonar consume el presupuesto y trunca el JSON, así que
+        # el parse falla. 8192 deja margen para razonar sobre el formato y emitirlo.
+        max_tokens=8192,
         messages=[{
             "role": "user",
             "content": [
@@ -54,7 +58,15 @@ def extraer_220(pdf_bytes: bytes, client=None) -> IngresoLaboral:
         }],
         output_format=Extraccion220,
     )
-    ext: Extraccion220 = respuesta.parsed_output
+    ext: Extraccion220 | None = respuesta.parsed_output
+    if ext is None:
+        # Sin salida estructurada: refusal de los clasificadores, max_tokens, u otro
+        # stop_reason sin texto. Error de dominio explícito en vez del AttributeError
+        # que saldría al leer el primer campo de None.
+        raise ValueError(
+            "La extracción del 220 no produjo salida estructurada "
+            f"(stop_reason={respuesta.stop_reason})"
+        )
     doc_id = hashlib.sha256(pdf_bytes).hexdigest()[:12]
     return IngresoLaboral(
         empleador_nit=ext.empleador_nit,
