@@ -12,6 +12,17 @@ def test_nodo_registra_y_devuelve():
     assert t.nodos["A"].formula == "suma de x"
 
 
+def test_nodo_devuelve_el_valor_validado():
+    """El retorno es el int que validó pydantic, no el argumento crudo: `-> int` no miente."""
+    t = Traza()
+    v = t.nodo("S", "str", "100", "f")
+    assert v == 100
+    assert type(v) is int
+    b = t.nodo("B", "bool", True, "f")
+    assert b == 1
+    assert type(b) is int  # pydantic coerciona el bool a 1, no lo rechaza
+
+
 def test_codigo_duplicado_revienta():
     """Los códigos son casilla del 210: dos módulos del motor no pueden pisarse."""
     t = Traza()

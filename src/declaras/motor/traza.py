@@ -52,7 +52,7 @@ class Traza:
             raise ValueError(f"Código de nodo duplicado: {codigo}")
         self.nodos[codigo] = Nodo(codigo=codigo, etiqueta=etiqueta, valor=valor,
                                   formula=formula, insumos=list(insumos), regla=regla)
-        return valor
+        return self.nodos[codigo].valor
 
     def flag(self, codigo: str, mensaje: str,
              severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia") -> None:
