@@ -1,4 +1,6 @@
-from declaras.caso import CasoTributario
+from collections import Counter
+
+from declaras.caso import CONFIANZA_MINIMA, CasoTributario
 from declaras.dinero import pesos, porcentaje
 from declaras.motor.traza import Traza
 from declaras.parametros import ParametrosAnio
@@ -113,23 +115,45 @@ def validar(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
                f"laboral ({bruto_laboral:,}): la traza aguas arriba es absurda; "
                "revisar la captura de los certificados 220.")
 
-    fuentes_retencion = (
-        [(f"laboral {l.empleador_nombre}", l.retencion, l.bruto)
+    # Un 220 re-emitido (corregido por el empleador) es OTRO archivo: la deduplicación
+    # por sha256 del upload no lo ve, y el ingreso queda contado dos veces.
+    for nit, veces in Counter(l.empleador_nit for l in caso.laborales).items():
+        if veces > 1:
+            t.flag("EMPLEADOR_DUPLICADO",
+                   f"Dos ingresos laborales del mismo empleador (NIT {nit}): posible "
+                   "certificado duplicado o re-emitido — verificar antes de presentar.")
+
+    if any(d.meses < 12 for d in caso.beneficios.dependientes):
+        t.flag("DEPENDIENTE_PARCIAL",
+               "El motor otorga 72 UVT/387 anualizados; el prorrateo por N meses no "
+               "está implementado — revisar con el contador.")
+
+    # (nombre legible, fuente, retención, base) por ingreso: los dos chequeos por fuente
+    # recorren la misma lista para que el nombre se arme en un solo lugar.
+    ingresos = (
+        [(f"laboral {l.empleador_nombre}", l.fuente, l.retencion, l.bruto)
          for l in caso.laborales]
-        + [(f"pensión {pn.pagador}", pn.retencion, sum(pn.mesadas))
+        + [(f"pensión {pn.pagador}", pn.fuente, pn.retencion, sum(pn.mesadas))
            for pn in caso.pensiones]
-        + [(f"rendimientos {r.entidad}", r.retencion, r.valor)
+        + [(f"rendimientos {r.entidad}", r.fuente, r.retencion, r.valor)
            for r in caso.rendimientos]
-        + [(f"arriendo {a.inmueble}", a.retencion, a.canon_total)
+        + [(f"arriendo {a.inmueble}", a.fuente, a.retencion, a.canon_total)
            for a in caso.arriendos]
-        + [(f"dividendos {d.sociedad_nombre}", d.retencion,
+        + [(f"dividendos {d.sociedad_nombre}", d.fuente, d.retencion,
             d.no_gravados + d.gravados) for d in caso.dividendos]
     )
-    for nombre, retencion, base in fuentes_retencion:
+    for nombre, fuente, retencion, base in ingresos:
         if retencion > base:
             t.flag("RETENCION_EXCEDE_INGRESO",
                    f"La retención de {nombre} ({retencion:,}) supera su base "
                    f"({base:,}): una retención inflada fabrica un saldo a favor falso.")
+        # La advertencia del upload se muere con la respuesta HTTP; el contador audita
+        # el borrador y la memoria, así que la confianza baja tiene que reaparecer ahí.
+        if fuente.confianza is not None and fuente.confianza < CONFIANZA_MINIMA:
+            t.flag("CONFIANZA_BAJA",
+                   f"El ingreso {nombre} viene de una extracción con confianza "
+                   f"{fuente.confianza} (< {CONFIANZA_MINIMA}): verificar los valores "
+                   "contra el documento antes de presentar.")
 
     impuesto_cargo = t.nodos["IMPUESTO_241"].valor + t.nodos["IMP_DIV_35"].valor
     tope_258 = porcentaje(impuesto_cargo, _TOPE_258_PCT)

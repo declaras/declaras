@@ -2,7 +2,8 @@ import pytest
 
 from declaras.caso import (
     Activo, Arriendo, Beneficios, CasoTributario, Contribuyente, Creditos,
-    Donacion, Fuente, IngresoLaboral, IngresoPension, Patrimonio,
+    Dependiente, Donacion, Fuente, IngresoLaboral, IngresoPension, Patrimonio,
+    Rendimiento,
 )
 from declaras.motor import Elecciones, liquidar
 from declaras.parametros import cargar
@@ -162,8 +163,85 @@ def test_flag_tope_descuento_donaciones():
     assert liq.valor("IMPUESTO_NETO") == 5_418_627 - 2_500_000
 
 
+@pytest.mark.parametrize("nit_segundo, duplicado", [("900", True), ("901", False)])
+def test_flag_empleador_duplicado(nit_segundo, duplicado):
+    # Dos 220 del mismo NIT: el certificado re-emitido es otro archivo, así que la
+    # deduplicación por sha256 del upload no lo ve y el ingreso se cuenta dos veces.
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="6", nombre="Dup"),
+        laborales=[
+            IngresoLaboral(empleador_nit="900", empleador_nombre="ACME",
+                           salarios=60_000_000, aportes_salud=2_400_000,
+                           aportes_pension=2_400_000, fuente=FX),
+            IngresoLaboral(empleador_nit=nit_segundo, empleador_nombre="ACME (v2)",
+                           salarios=60_000_000, aportes_salud=2_400_000,
+                           aportes_pension=2_400_000, fuente=FX),
+        ],
+    )
+    liq = liquidar(caso, P, Elecciones())
+    mensajes = [f.mensaje for f in liq.flags if f.codigo == "EMPLEADOR_DUPLICADO"]
+    assert (len(mensajes) == 1) is duplicado
+    if duplicado:
+        assert "900" in mensajes[0]  # dice de qué NIT se trata
+    # Advierte, no corrige: los dos ingresos siguen sumando en la cédula general.
+    assert liq.valor("ING_BRUTO_GENERAL") == 120_000_000
+
+
+@pytest.mark.parametrize("meses, parcial", [(12, False), (11, True), (1, True)])
+def test_flag_dependiente_parcial(meses, parcial):
+    # El motor da los 72 UVT y el 387 completos: con un dependiente de medio año la
+    # cifra está de más y nadie lo notaría sin el flag.
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="7", nombre="Dep"),
+        laborales=[IngresoLaboral(
+            empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
+            aportes_salud=4_800_000, aportes_pension=4_800_000, fuente=FX)],
+        beneficios=Beneficios(dependientes=[
+            Dependiente(tipo="hijo_menor", meses=meses, fuente=FX)]),
+    )
+    liq = liquidar(caso, P, Elecciones(usar_387=False, usar_72uvt=True))
+    assert liq.tiene_flag("DEPENDIENTE_PARCIAL") is parcial
+    assert liq.valor("EXTRA_LIMITE") == P.uvt_pesos(72)  # sin prorratear, como advierte
+
+
+@pytest.mark.parametrize("confianza, avisa", [
+    (0.9, False), (0.7, False), (0.69, True), (0.3, True), (None, False),
+])
+def test_flag_confianza_baja_persiste_en_la_liquidacion(confianza, avisa):
+    # La advertencia del upload muere con la respuesta HTTP; el contador audita el
+    # borrador y la memoria, que se arman desde estos flags. Borde igual que en el API:
+    # 0.7 pasa, 0.69 avisa, sin confianza declarada no se inventa alarma.
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="8", nombre="Conf"),
+        laborales=[IngresoLaboral(
+            empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
+            aportes_salud=4_800_000, aportes_pension=4_800_000,
+            fuente=Fuente.documento("220", "abc123def456", confianza=confianza))],
+    )
+    liq = liquidar(caso, P, Elecciones())
+    assert liq.tiene_flag("CONFIANZA_BAJA") is avisa
+    if avisa:
+        mensaje = next(f.mensaje for f in liq.flags if f.codigo == "CONFIANZA_BAJA")
+        assert "ACME" in mensaje and str(confianza) in mensaje  # qué ingreso y cuánta
+
+
+def test_flag_confianza_baja_cubre_las_demas_fuentes_de_ingreso():
+    # No es un chequeo de laborales: cualquier ingreso con proveniencia dudosa avisa.
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="9", nombre="Conf2"),
+        rendimientos=[Rendimiento(entidad="Banco Y", valor=8_000_000,
+                                  fuente=Fuente.documento("extracto", "d0", confianza=0.4))],
+        arriendos=[Arriendo(inmueble="Apto 101", canon_total=6_000_000, fuente=FX)],
+    )
+    liq = liquidar(caso, P, Elecciones())
+    mensajes = [f.mensaje for f in liq.flags if f.codigo == "CONFIANZA_BAJA"]
+    assert len(mensajes) == 1  # solo el rendimiento; el arriendo es fixture sin confianza
+    assert "Banco Y" in mensajes[0]
+
+
 def test_caso_limpio_sin_flags_de_validacion():
     liq = liquidar(_caso_laboral(), P, Elecciones(usar_387=False, usar_72uvt=False))
     for codigo in ("NO_RESIDENTE", "APORTES_EXCEDEN_BRUTO",
-                   "RETENCION_EXCEDE_INGRESO", "TOPE_DESCUENTO_DONACIONES"):
+                   "RETENCION_EXCEDE_INGRESO", "TOPE_DESCUENTO_DONACIONES",
+                   "EMPLEADOR_DUPLICADO", "DEPENDIENTE_PARCIAL", "CONFIANZA_BAJA"):
         assert not liq.tiene_flag(codigo)

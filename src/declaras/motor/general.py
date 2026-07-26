@@ -1,5 +1,5 @@
 from declaras.caso import CasoTributario
-from declaras.dinero import pesos
+from declaras.dinero import porcentaje
 from declaras.motor.elecciones import Elecciones
 from declaras.motor.traza import Traza
 from declaras.parametros import ParametrosAnio
@@ -34,7 +34,7 @@ def base_general(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
     pct_ci = p.componente_inflacionario or 0.0
     ci = t.nodo(
         "INCR_CI", "INCRNGO componente inflacionario de rendimientos",
-        pesos(total_rend * pct_ci),
+        porcentaje(total_rend, pct_ci),
         f"{pct_ci:.2%} × rendimientos {total_rend:,}",
         regla="arts. 38-41 ET",
     )
@@ -54,7 +54,8 @@ def base_general(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
     t.nodo("CAP_40",
            f"Límite exentas+deducciones (menor entre {p.limite_general_pct:.0%} "
            f"y {p.limite_general_uvt:,} UVT)",
-           min(pesos(netos * p.limite_general_pct), p.uvt_pesos(p.limite_general_uvt)),
+           min(porcentaje(netos, p.limite_general_pct),
+               p.uvt_pesos(p.limite_general_uvt)),
            f"min({p.limite_general_pct:.0%} × {netos:,}, {p.limite_general_uvt:,} UVT "
            f"= {p.uvt_pesos(p.limite_general_uvt):,})",
            insumos=["ING_NETOS_GENERAL"], regla="art. 336 num. 3")
@@ -72,13 +73,13 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
                     p.uvt_pesos(p.prepagada_tope_uvt_anio))
     icetex = min(b.intereses_icetex.valor if b.intereses_icetex else 0,
                  p.uvt_pesos(p.icetex_tope_uvt))
-    gmf = pesos((b.gmf_pagado.valor if b.gmf_pagado else 0) * p.gmf_pct_deducible)
+    gmf = porcentaje(b.gmf_pagado.valor if b.gmf_pagado else 0, p.gmf_pct_deducible)
     afc = min(sum(a.valor for a in b.aportes_afc_fvp),
-              pesos(t.nodos["ING_BRUTO_GENERAL"].valor * p.afc_pct),
+              porcentaje(t.nodos["ING_BRUTO_GENERAL"].valor, p.afc_pct),
               p.uvt_pesos(p.afc_tope_uvt))
     ded_387 = 0
     if e.usar_387 and b.dependientes:
-        ded_387 = min(pesos(bruto_laboral * p.ded_387_pct),
+        ded_387 = min(porcentaje(bruto_laboral, p.ded_387_pct),
                       p.uvt_pesos(p.ded_387_tope_uvt_mes * 12))
 
     deducciones = t.nodo(
@@ -94,7 +95,7 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
                   - (intereses + prepagada + icetex + ded_387 + afc))
     exenta_25 = t.nodo(
         "EXENTA_25", "Renta exenta 25% laboral (tope 790 UVT)",
-        min(pesos(base_25 * p.exenta_laboral_pct),
+        min(porcentaje(base_25, p.exenta_laboral_pct),
             p.uvt_pesos(p.exenta_laboral_tope_uvt)),
         f"min(25% × base {base_25:,}, 790 UVT)", regla="art. 206 num. 10 ET",
     )
@@ -112,11 +113,10 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
     if e.usar_72uvt and b.dependientes:
         n = min(len(b.dependientes), p.dependientes_max)
         dep_72 = p.uvt_pesos(p.dependiente_uvt * n)
-    fact_1 = min(
-        pesos((b.facturas_electronicas_total.valor
-               if b.facturas_electronicas_total else 0) * p.facturas_pct),
-        p.uvt_pesos(p.facturas_tope_uvt),
-    )
+    facturas = (b.facturas_electronicas_total.valor
+                if b.facturas_electronicas_total else 0)
+    fact_1 = min(porcentaje(facturas, p.facturas_pct),
+                 p.uvt_pesos(p.facturas_tope_uvt))
     extra = t.nodo("EXTRA_LIMITE", "Beneficios por fuera del límite 40%",
                    dep_72 + fact_1,
                    f"72 UVT dependientes {dep_72:,} + 1% facturas {fact_1:,}",
