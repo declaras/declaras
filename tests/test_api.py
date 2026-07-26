@@ -3,6 +3,8 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import anthropic
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -124,6 +126,17 @@ def test_liquidar_devuelve_casillas_y_optimiza(cliente):
     assert isinstance(cuerpo["flags"], list)
 
 
+def test_put_de_anio_sin_parametros_es_422(cliente):
+    # El PUT es la otra puerta de entrada de un caso completo: sin este guard, reparar un
+    # caso podía dejarle un año sin tabla y el 422 aparecía después, al liquidar.
+    caso_id = _crear(cliente)
+    r = cliente.put(f"/casos/{caso_id}",
+                    json=g1().model_copy(update={"anio_gravable": 1999}).model_dump())
+    assert r.status_code == 422
+    assert "1999" in r.json()["detail"]
+    assert cliente.get(f"/casos/{caso_id}").json()["anio_gravable"] == 2025  # no escribió
+
+
 def test_crear_caso_de_anio_sin_parametros_es_422(cliente):
     # El año se rechaza al crear, no tres pantallas después al liquidar.
     r = cliente.post("/casos", json=g1().model_copy(update={"anio_gravable": 1999})
@@ -195,6 +208,31 @@ def test_error_del_documento_es_422_con_el_mensaje(cliente, monkeypatch, mensaje
 def test_error_del_documento_no_modifica_el_caso(cliente, monkeypatch):
     caso_id = _crear(cliente)
     _subir(cliente, caso_id, ExtractorFalso(error=ValueError("no reconcilia")), monkeypatch)
+    assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 1
+
+
+def _error_401() -> anthropic.AuthenticationError:
+    """El 401 del SDK: la llave existe pero no sirve (revocada, de otro proyecto)."""
+    peticion = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return anthropic.AuthenticationError(
+        "invalid x-api-key", response=httpx.Response(401, request=peticion), body=None)
+
+
+@pytest.mark.parametrize("error", [
+    # Sin ANTHROPIC_API_KEY el SDK no resuelve la autenticación y revienta así, con un
+    # TypeError, al armar los headers de la llamada.
+    TypeError('"Could not resolve authentication method. Expected one of api_key, '
+              'auth_token, or credentials to be set."'),
+    _error_401(),
+])
+def test_falta_de_credenciales_es_503_y_dice_que_falta(cliente, monkeypatch, error):
+    # El bug: cualquiera de estas dos salía como 500 "Internal Server Error", así que un
+    # servidor sin llave se veía idéntico a un bug del motor.
+    caso_id = _crear(cliente)
+    r = _subir(cliente, caso_id, ExtractorFalso(error=error), monkeypatch)
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+    # Falta configuración del servidor, no falla el caso: queda como estaba.
     assert len(cliente.get(f"/casos/{caso_id}").json()["laborales"]) == 1
 
 

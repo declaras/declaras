@@ -2,6 +2,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Debajo de esto un valor extraído se usa igual, pero queda marcado para revisión humana:
+# el número entra a un formulario tributario. El umbral es del concepto
+# `Fuente.confianza`, así que vive acá y lo comparten las dos capas que avisan: el API al
+# subir el documento y el motor al validar el caso. Con una constante por capa, subirle el
+# umbral a una dejaba la otra callada.
+CONFIANZA_MINIMA = 0.7
+
 
 class _Modelo(BaseModel):
     """Base de todo el caso: una clave desconocida revienta en vez de descartarse.

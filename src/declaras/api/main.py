@@ -1,11 +1,12 @@
 import threading
 
+import anthropic
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict
 
 from declaras.api import almacen
-from declaras.caso import CasoTributario
+from declaras.caso import CONFIANZA_MINIMA, CasoTributario
 from declaras.extraccion import extraer_220, id_documento
 from declaras.motor import Elecciones, Flag
 from declaras.optimizador import optimizar
@@ -13,9 +14,17 @@ from declaras.parametros import ParametrosAnio
 from declaras.parametros import cargar as cargar_parametros
 from declaras.render import borrador_html, casillas, memoria_markdown
 
-# Debajo de esto la extracción se muestra, pero se marca para revisión humana: el número
-# igual entra a un formulario tributario.
-CONFIANZA_MINIMA = 0.7
+# Formas en que la extracción muere por credenciales y no por el documento: sin
+# ANTHROPIC_API_KEY el SDK no resuelve la autenticación y revienta con `TypeError` al
+# armar los headers; con una llave inválida o sin permisos, 401/403. Son configuración
+# que le falta al servidor, no un PDF malo: el 500 genérico las hacía ver como un bug del
+# motor y mandaba a depurar el lugar equivocado. El precio de atrapar `TypeError` entero
+# (el SDK no da otra señal para "no hay credenciales") es que un bug de tipos dentro del
+# extractor también saldría como "falta la llave"; el caso frecuente es este.
+_SIN_CREDENCIALES = (TypeError, anthropic.AuthenticationError,
+                     anthropic.PermissionDeniedError)
+_DETALLE_SIN_CREDENCIALES = (
+    "El servicio de extracción no está configurado (falta ANTHROPIC_API_KEY)")
 
 # Serializa todo read-modify-write del almacén. FastAPI corre estos handlers síncronos en
 # un threadpool, así que dos subidas concurrentes leen el mismo caso, cada una agrega su
@@ -89,6 +98,9 @@ def leer_caso(caso_id: str) -> CasoTributario:
 
 @app.put("/casos/{caso_id}")
 def reemplazar_caso(caso_id: str, caso: CasoTributario) -> CasoTributario:
+    # Mismo guard que al crear: reparar un caso no puede dejarlo con un año sin tabla,
+    # que reventaría después al liquidar (y no acá, donde se produjo el dato malo).
+    _parametros(caso)
     with _CANDADO:
         # Existencia por archivo, sin parsear el contenido viejo: el PUT es el endpoint
         # que REPARA un caso ilegible (schema anterior, JSON a medias). Si exigiera
@@ -147,6 +159,10 @@ def subir_220(caso_id: str, archivo: UploadFile) -> RespuestaUpload220:
             # Todo lo que reporta el extractor es un problema del documento subido (no
             # reconcilia, año equivocado, pensiones, varios certificados, no es PDF).
             raise HTTPException(422, str(e)) from e
+        except _SIN_CREDENCIALES as e:
+            # 503 y no 500: el servidor no está listo para atender esto, y el detalle
+            # dice qué falta en vez de mandar a leer un stacktrace.
+            raise HTTPException(503, _DETALLE_SIN_CREDENCIALES) from e
 
         almacen.guardar_documento(laboral.fuente.ref, pdf)
         caso.laborales.append(laboral)
