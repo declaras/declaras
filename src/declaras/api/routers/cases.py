@@ -129,8 +129,9 @@ async def resolve_flag(
     container: ContainerDep,
     _auth: ApiKeyDep,
 ) -> CaseFlagResponse:
-    del case_id  # el flag ya trae su propio id; el case_id en la ruta es por legibilidad REST
-    flag = await container.case_service.resolve_flag(flag_id, note=payload.note)
+    flag = await container.case_service.resolve_flag(
+        case_id=case_id, flag_id=flag_id, note=payload.note
+    )
     return CaseFlagResponse.from_domain(flag)
 
 

@@ -63,6 +63,30 @@ class DocumentNotFoundError(DeclarasError):
     default_message = "El documento solicitado no existe."
 
 
+class UnsupportedDocumentTypeError(DeclarasError):
+    """No hay lector para esa clase de documento.
+
+    Se distingue de DocumentUnreadableError a proposito: que aun no exista un parser es
+    una limitacion conocida del sistema y no un problema del documento, asi que no debe
+    generar una alerta al contador. Que un documento sea ilegible SI debe generarla.
+    """
+
+    code = "UNSUPPORTED_DOCUMENT_TYPE"
+    http_status = 422
+    default_message = "Todavia no hay lector para esa clase de documento."
+
+
+class DocumentUnreadableError(DeclarasError):
+    """El documento existe y deberia poder leerse, pero esta corrupto o no es del formato
+    que dice ser. Es un problema real del archivo y el contador debe enterarse."""
+
+    code = "DOCUMENT_UNREADABLE"
+    http_status = 422
+    default_message = (
+        "El documento no se pudo leer: puede estar corrupto o no ser del formato esperado."
+    )
+
+
 # ─────────────────────────── Errores del portal DIAN ───────────────────────────
 
 
@@ -198,3 +222,15 @@ class FlagNotFoundError(DeclarasError):
     code = "FLAG_NOT_FOUND"
     http_status = 404
     default_message = "El flag solicitado no existe."
+
+
+class TaxpayerMismatchError(DeclarasError):
+    """Los datos que se intentan vincular pertenecen a otro contribuyente.
+
+    Es la proteccion mas importante del expediente: mezclar la informacion tributaria de
+    dos personas seria un dano grave y muy dificil de detectar despues.
+    """
+
+    code = "TAXPAYER_MISMATCH"
+    http_status = 409
+    default_message = "La informacion pertenece a otro contribuyente o a otro anio gravable."

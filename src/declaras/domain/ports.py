@@ -76,8 +76,15 @@ class DocumentStore(Protocol):
     """Almacenamiento de documentos extraidos y evidencias."""
 
     async def put(
-        self, *, taxpayer: TaxpayerRef, document: RawDocument, job_id: UUID
-    ) -> StoredDocument: ...
+        self, *, taxpayer: TaxpayerRef, document: RawDocument, scope_id: UUID
+    ) -> StoredDocument:
+        """Almacena un documento.
+
+        `scope_id` agrupa la evidencia de la operacion que produjo el documento: puede ser
+        un job de extraccion o un expediente. Se llama asi, y no `job_id`, porque no
+        siempre es un job.
+        """
+        ...
 
     async def read(self, storage_uri: str) -> bytes: ...
 

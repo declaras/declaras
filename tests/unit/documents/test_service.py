@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from declaras.documents.service import DocumentReaderService
-from declaras.domain.errors import ValidationError
+from declaras.domain.errors import (
+    DocumentUnreadableError,
+    UnsupportedDocumentTypeError,
+    ValidationError,
+)
 from tests.documents_fixtures import build_exogena_xlsx
 
 
@@ -16,8 +20,10 @@ def test_lee_un_documento_soportado():
 
 
 def test_documento_sin_lector_falla_e_informa_los_soportados():
+    """Sin lector es distinto de ilegible: el error debe decir cual de los dos es, para
+    que el expediente sepa si generar una alerta al contador o no."""
     service = DocumentReaderService()
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(UnsupportedDocumentTypeError) as exc:
         service.read(content=b"algo", doc_type="NO_EXISTE")
     assert "EXOGENA" in exc.value.details["supported"]
 
@@ -38,10 +44,11 @@ def test_la_segunda_lectura_del_mismo_contenido_usa_la_cache():
 
 def test_el_mismo_contenido_con_otro_tipo_no_comparte_cache():
     """La llave de cache incluye el tipo: el mismo byte-a-byte con un tipo distinto no
-    debe devolver una lectura pensada para otro documento."""
+    debe devolver una lectura pensada para otro documento. Al intentar leer un XLSX como
+    si fuera un PDF, el lector correcto se ejecuta y reporta que es ilegible."""
     service = DocumentReaderService()
     content = build_exogena_xlsx()
-    with pytest.raises(ValidationError):
+    with pytest.raises(DocumentUnreadableError):
         service.read(content=content, doc_type="RUT")
 
 

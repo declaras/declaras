@@ -35,7 +35,7 @@ def object_key(
     sha256: str,
     filename: str,
     content_type: str,
-    job_id: UUID,
+    scope_id: UUID,
 ) -> str:
     ext = extension_for(filename, content_type)
     parts = [
@@ -44,6 +44,6 @@ def object_key(
         doc_type.value.lower(),
     ]
     if doc_type is DocumentType.EVIDENCE:
-        parts.append(str(job_id))
+        parts.append(str(scope_id))
     parts.append(f"{sha256[:12]}.{ext}")
     return "/".join(parts)

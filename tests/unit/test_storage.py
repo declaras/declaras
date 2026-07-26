@@ -28,7 +28,7 @@ def test_la_llave_agrupa_por_sujeto_anio_y_tipo(taxpayer):
         sha256="a" * 64,
         filename="rut.pdf",
         content_type="application/pdf",
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
     assert "/2025/rut/" in key
     assert key.endswith(".pdf")
@@ -37,7 +37,7 @@ def test_la_llave_agrupa_por_sujeto_anio_y_tipo(taxpayer):
 async def test_guardar_y_leer_documento(tmp_path, taxpayer):
     store = LocalDocumentStore(tmp_path)
     document = RawDocument(doc_type=DocumentType.RUT, filename="rut.pdf", content=b"%PDF-fake")
-    stored = await store.put(taxpayer=taxpayer, document=document, job_id=uuid4())
+    stored = await store.put(taxpayer=taxpayer, document=document, scope_id=uuid4())
 
     assert stored.size_bytes == len(b"%PDF-fake")
     assert stored.sha256

@@ -49,12 +49,22 @@ async def service(tmp_path):
     await engine.dispose()
 
 
+# El expediente valida que la extraccion sea del mismo contribuyente, asi que la cedula
+# tiene que ser la misma en todo el archivo: se define una sola vez.
+ID_NUMBER = "10203040"
+TAX_YEAR = 2025
+
+
 def _succeeded_job(
-    *, documents: list[StoredDocument], failures: list[DocumentFailure] | None = None
+    *,
+    documents: list[StoredDocument],
+    failures: list[DocumentFailure] | None = None,
+    id_number: str = ID_NUMBER,
+    tax_year: int = TAX_YEAR,
 ) -> Job:
     now = datetime.now(UTC)
     result = ExtractionResult(
-        taxpayer=TaxpayerRef(id_number="1020304050", tax_year=2025),
+        taxpayer=TaxpayerRef(id_number=id_number, tax_year=tax_year),
         documents=documents,
         failures=failures or [],
         started_at=now,
@@ -89,7 +99,7 @@ async def test_vincular_una_extraccion_exitosa_registra_los_documentos(service):
         document=RawDocument(
             doc_type=DocumentType.EXOGENA, filename="e.xlsx", content=build_exogena_xlsx()
         ),
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
     job = _succeeded_job(documents=[stored_exo])
 
@@ -113,7 +123,7 @@ async def test_un_documento_con_lector_queda_leido_automaticamente(service):
             filename="e.xlsx",
             content=build_exogena_xlsx(taxpayer_name="RESTREPO"),
         ),
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
     job = _succeeded_job(documents=[stored])
 
@@ -134,7 +144,7 @@ async def test_un_documento_sin_lector_todavia_se_guarda_sin_flag(service):
         document=RawDocument(
             doc_type=DocumentType.PRIOR_RETURN, filename="d.pdf", content=b"%PDF-fake"
         ),
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
     job = _succeeded_job(documents=[stored])
 
@@ -155,7 +165,7 @@ async def test_los_avisos_de_lectura_se_convierten_en_flags(service):
             filename="e.xlsx",
             content=build_exogena_xlsx(detail_rows=[]),
         ),
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
     job = _succeeded_job(documents=[stored])
 

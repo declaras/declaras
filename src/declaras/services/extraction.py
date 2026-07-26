@@ -184,7 +184,7 @@ class ExtractionService:
             try:
                 raw = await session.download(doc_type, request.taxpayer)
                 stored = await self._store.put(
-                    taxpayer=request.taxpayer, document=raw, job_id=job.id
+                    taxpayer=request.taxpayer, document=raw, scope_id=job.id
                 )
                 documents.append(stored)
             except DianError as exc:
@@ -229,7 +229,7 @@ class ExtractionService:
             return
         try:
             evidence = await session.capture_evidence(label)
-            await self._store.put(taxpayer=request.taxpayer, document=evidence, job_id=job.id)
+            await self._store.put(taxpayer=request.taxpayer, document=evidence, scope_id=job.id)
         except Exception as exc:  # pragma: no cover - la evidencia nunca tumba el job
             log.warning("extraction.evidence_failed", job_id=str(job.id), error=str(exc)[:160])
 

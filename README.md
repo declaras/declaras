@@ -322,6 +322,12 @@ Verificado contra una extraccion real: al vincular RUT, exogena y facturas elect
 los tres quedaron leidos automaticamente y salio un flag real (el defecto de codificacion
 conocido del portal), sin intervencion manual.
 
+El expediente hace cumplir cuatro protecciones, cada una nacida de un bug real
+([ADR 0007](docs/adr/0007-protecciones-del-expediente.md)): no se vincula una extraccion de
+otro contribuyente ni de otro anio, vincular dos veces el mismo job es inofensivo, un
+documento ilegible genera flag bloqueante (distinto de un tipo que aun no tiene lector), y
+un documento a nombre de otra persona frena el expediente.
+
 ## Pendiente antes de produccion
 
 - [ ] **Calibrar los descargadores de documentos** contra una sesion autenticada. El

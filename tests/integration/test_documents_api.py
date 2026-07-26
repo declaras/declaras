@@ -42,7 +42,7 @@ async def test_lee_un_documento_ya_almacenado_por_el_conector(client, container)
             filename="exogena.xlsx",
             content=build_exogena_xlsx(taxpayer_name="RESTREPO VELEZ"),
         ),
-        job_id=uuid4(),
+        scope_id=uuid4(),
     )
 
     response = await client.post(
@@ -61,7 +61,19 @@ async def test_documento_de_un_tipo_no_soportado_devuelve_422(client):
         files={"file": ("x.bin", b"contenido", "application/octet-stream")},
     )
     assert response.status_code == 422
-    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert response.json()["code"] == "UNSUPPORTED_DOCUMENT_TYPE"
+
+
+async def test_un_documento_corrupto_se_distingue_de_uno_sin_lector(client):
+    """El agente necesita distinguir los dos casos: uno se resuelve pidiendo el documento
+    de nuevo, el otro es una limitacion del sistema y no tiene sentido reintentarlo."""
+    response = await client.post(
+        "/v1/documents/read",
+        data={"doc_type": "EXOGENA"},
+        files={"file": ("roto.xlsx", b"esto no es un xlsx", "application/octet-stream")},
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "DOCUMENT_UNREADABLE"
 
 
 async def test_requiere_llave_de_api(client):

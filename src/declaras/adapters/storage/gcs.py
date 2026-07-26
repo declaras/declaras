@@ -32,7 +32,7 @@ class GcsDocumentStore:
         self._bucket = storage.Client().bucket(bucket_name)
 
     async def put(
-        self, *, taxpayer: TaxpayerRef, document: RawDocument, job_id: UUID
+        self, *, taxpayer: TaxpayerRef, document: RawDocument, scope_id: UUID
     ) -> StoredDocument:
         sha256 = hashlib.sha256(document.content).hexdigest()
         key = object_key(
@@ -41,7 +41,7 @@ class GcsDocumentStore:
             sha256=sha256,
             filename=document.filename,
             content_type=document.content_type,
-            job_id=job_id,
+            scope_id=scope_id,
         )
         try:
             await asyncio.to_thread(self._upload, key, document)

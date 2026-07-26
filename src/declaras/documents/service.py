@@ -11,7 +11,7 @@ import hashlib
 
 from declaras.documents.models import DocumentReading
 from declaras.documents.registry import reader_for, supported_types
-from declaras.domain.errors import ValidationError
+from declaras.domain.errors import UnsupportedDocumentTypeError, ValidationError
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
@@ -43,7 +43,7 @@ class DocumentReaderService:
 
         reader = reader_for(doc_type)
         if reader is None:
-            raise ValidationError(
+            raise UnsupportedDocumentTypeError(
                 f"no hay lector para {doc_type}",
                 doc_type=doc_type,
                 supported=supported_types(),

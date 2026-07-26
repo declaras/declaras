@@ -34,7 +34,7 @@ from declaras.documents.models import (
     ReadingWarning,
     ThresholdCode,
 )
-from declaras.domain.errors import ValidationError
+from declaras.domain.errors import DocumentUnreadableError
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
@@ -80,11 +80,13 @@ def parse(content: bytes) -> DocumentReading:
     try:
         workbook = load_workbook(BytesIO(content), data_only=True, read_only=False)
     except Exception as exc:
-        raise ValidationError("el archivo no es un XLSX legible", parser=PARSER_NAME) from exc
+        raise DocumentUnreadableError(
+            "el archivo no es un XLSX legible", parser=PARSER_NAME
+        ) from exc
 
     sheet = workbook.active
     if sheet is None:
-        raise ValidationError("el XLSX no tiene hojas", parser=PARSER_NAME)
+        raise DocumentUnreadableError("el XLSX no tiene hojas", parser=PARSER_NAME)
 
     warnings: list[ReadingWarning] = []
     fields = _read_header(sheet, warnings)

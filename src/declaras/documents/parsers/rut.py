@@ -34,7 +34,7 @@ from declaras.documents.models import (
     ExtractedField,
     ReadingWarning,
 )
-from declaras.domain.errors import ValidationError
+from declaras.domain.errors import DocumentUnreadableError
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
@@ -91,7 +91,9 @@ def parse(content: bytes) -> DocumentReading:
     try:
         page = PdfReader(BytesIO(content)).pages[0]
     except Exception as exc:
-        raise ValidationError("el archivo no es un PDF legible", parser=PARSER_NAME) from exc
+        raise DocumentUnreadableError(
+            "el archivo no es un PDF legible", parser=PARSER_NAME
+        ) from exc
 
     fragments: list[str] = []
 
@@ -116,6 +118,7 @@ def parse(content: bytes) -> DocumentReading:
         )
 
     fields = _extract_fields(values, warnings)
+    _check_internal_consistency(fields, warnings)
     fields.append(
         ExtractedField(name="raw_text", value=full_text, confidence=Confidence.DETERMINISTIC)
     )
@@ -128,6 +131,34 @@ def parse(content: bytes) -> DocumentReading:
         fields=fields,
         warnings=warnings,
     )
+
+
+def _check_internal_consistency(
+    fields: list[ExtractedField], warnings: list[ReadingWarning]
+) -> None:
+    """Verifica que el NIT y el numero de identificacion coincidan.
+
+    En una persona natural son el mismo numero, asi que compararlos es una prueba gratuita
+    de que el cursor no se desincronizo al recorrer el PDF. Es la unica defensa contra el
+    peor modo de falla de un parser posicional: devolver un valor equivocado con
+    aparente normalidad.
+    """
+    values = {f.name: f.value for f in fields}
+    nit, id_number = values.get("nit"), values.get("id_number")
+    kind = values.get("taxpayer_kind") or ""
+    is_natural = any(marker in str(kind).lower() for marker in _NATURAL_PERSON_MARKERS)
+    if not (is_natural and nit and id_number):
+        return
+    if str(nit) != str(id_number):
+        warnings.append(
+            ReadingWarning(
+                code="RUT_ID_MISMATCH",
+                message=(
+                    f"el NIT ({nit}) y el numero de identificacion ({id_number}) no "
+                    "coinciden: la lectura del PDF pudo desincronizarse"
+                ),
+            )
+        )
 
 
 def _value_stream(fragments: list[str]) -> tuple[list[str], bool]:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from declaras.documents.models import ReadingWarning
+from declaras.documents.models import DocumentReading, ReadingWarning
 from declaras.documents.service import DocumentReaderService
 from declaras.domain.case import (
     Case,
@@ -22,7 +22,14 @@ from declaras.domain.case import (
     FlagSeverity,
 )
 from declaras.domain.case_ports import CaseRepository, ClientRepository
-from declaras.domain.errors import CaseNotFoundError, ValidationError
+from declaras.domain.errors import (
+    CaseNotFoundError,
+    DocumentUnreadableError,
+    FlagNotFoundError,
+    TaxpayerMismatchError,
+    UnsupportedDocumentTypeError,
+    ValidationError,
+)
 from declaras.domain.models import (
     DocumentType,
     ExtractionResult,
@@ -100,12 +107,30 @@ class CaseService:
                 job_id=str(extraction_job.id),
                 status=extraction_job.status.value,
             )
-        await self._require_case(case_id)
+        detail = await self._require_detail(case_id)
         result = ExtractionResult.model_validate(extraction_job.result)
+
+        self._assert_same_taxpayer(detail, result)
+
+        # Idempotencia: el agente puede reintentar la llamada (timeout, reenvio). Si este
+        # job ya se vinculo, se devuelve el expediente tal como esta en vez de duplicar
+        # documentos, flags y eventos.
+        if any(d.extraction_job_id == extraction_job.id for d in detail.documents):
+            log.info(
+                "case.extraction_already_linked",
+                case_id=str(case_id),
+                job_id=str(extraction_job.id),
+            )
+            return detail
+
+        already_present = {(d.doc_type, d.content_sha256) for d in detail.documents}
 
         for stored in result.documents:
             if stored.doc_type.value == _EVIDENCE_DOC_TYPE:
                 continue  # es evidencia de auditoria, no un insumo del motor
+            if (stored.doc_type.value, stored.sha256) in already_present:
+                # Otro job ya trajo este mismo documento byte a byte: no se duplica.
+                continue
 
             case_doc = await self._cases.add_document(
                 case_id=case_id,
@@ -167,7 +192,7 @@ class CaseService:
         raw = RawDocument(doc_type=DocumentType.CLIENT_DOCUMENT, filename=filename, content=content)
         # El almacenamiento agrupa por tipo de documento del conector; los documentos del
         # cliente usan un marcador generico y el nombre real de tipo va en el expediente.
-        stored = await self._store.put(taxpayer=taxpayer, document=raw, job_id=case_id)
+        stored = await self._store.put(taxpayer=taxpayer, document=raw, scope_id=case_id)
 
         case_doc = await self._cases.add_document(
             case_id=case_id,
@@ -187,8 +212,25 @@ class CaseService:
         log.info("case.client_upload", case_id=str(case_id), doc_type=doc_type)
         return await self._require_detail(case_id)
 
-    async def resolve_flag(self, flag_id: UUID, *, note: str | None = None) -> CaseFlag:
-        return await self._cases.resolve_flag(flag_id, note=note)
+    async def resolve_flag(
+        self, *, case_id: UUID, flag_id: UUID, note: str | None = None
+    ) -> CaseFlag:
+        """Resuelve un flag verificando que pertenezca al expediente indicado.
+
+        Sin esa verificacion, la ruta HTTP permitiria resolver el flag de un expediente
+        pasando el id de otro, y la bitacora quedaria contando una historia falsa.
+        """
+        detail = await self._require_detail(case_id)
+        if flag_id not in {f.id for f in detail.flags}:
+            raise FlagNotFoundError(flag_id=str(flag_id), case_id=str(case_id))
+        flag = await self._cases.resolve_flag(flag_id, note=note)
+        await self._cases.add_event(
+            case_id=case_id,
+            kind="FLAG_RESOLVED",
+            message=f"Flag {flag.code} marcado como resuelto",
+            payload={"flag_id": str(flag_id), "note": note},
+        )
+        return flag
 
     # ─────────────────────────── internos ───────────────────────────
 
@@ -204,13 +246,81 @@ class CaseService:
         try:
             content = await self._store.read(case_doc.storage_uri)
             reading = self._reader.read(content=content, doc_type=doc_type)
-        except ValidationError:
+        except UnsupportedDocumentTypeError:
+            # Todavia no hay parser para ese tipo: es una limitacion conocida del sistema,
+            # no un problema del documento. Queda disponible para revision manual.
             log.info("case.no_reader_yet", case_id=str(case_id), doc_type=doc_type)
+            return
+        except DocumentUnreadableError as exc:
+            # El documento SI deberia poder leerse y no se pudo: el contador debe saberlo,
+            # porque significa que hay que volver a pedirlo.
+            log.warning("case.document_unreadable", case_id=str(case_id), doc_type=doc_type)
+            await self._cases.add_flag(
+                case_id=case_id,
+                code=exc.code,
+                message=f"{doc_type} no se pudo leer: {exc.message}",
+                severity=FlagSeverity.BLOCKING,
+                source_document_id=case_doc.id,
+            )
             return
 
         await self._cases.attach_reading(case_doc.id, reading)
         for warning in reading.warnings:
             await self._flag_from_warning(case_id, case_doc.id, warning)
+        await self._flag_if_identity_differs(case_id, case_doc, reading)
+
+    def _assert_same_taxpayer(self, detail: CaseDetail, result: ExtractionResult) -> None:
+        """El expediente y la extraccion tienen que ser de la misma persona y anio.
+
+        Es la proteccion mas importante del expediente: sin esta verificacion, un job de
+        extraccion de otro contribuyente se puede vincular a un expediente ajeno y mezclar
+        informacion tributaria de dos personas, que es un dano grave y casi imposible de
+        detectar despues.
+        """
+        client, case = detail.client, detail.case
+        if (
+            result.taxpayer.id_kind != client.id_kind
+            or result.taxpayer.id_number != client.id_number
+        ):
+            raise TaxpayerMismatchError(
+                "la extraccion pertenece a otro contribuyente",
+                case_taxpayer=client.subject_key,
+                extraction_taxpayer=result.taxpayer.subject_key,
+            )
+        if result.taxpayer.tax_year != case.tax_year:
+            raise TaxpayerMismatchError(
+                "la extraccion es de otro anio gravable",
+                case_tax_year=case.tax_year,
+                extraction_tax_year=result.taxpayer.tax_year,
+            )
+
+    async def _flag_if_identity_differs(
+        self, case_id: UUID, case_doc: CaseDocument, reading: DocumentReading
+    ) -> None:
+        """Detecta un documento que no es del titular del expediente.
+
+        Casi todos los documentos del portal traen el numero de identificacion del
+        contribuyente. Si el que trae el documento no es el del cliente, lo mas probable es
+        que se haya subido el certificado de otra persona, y eso tiene que frenar el
+        expediente antes de que ese valor entre al calculo.
+        """
+        detail = await self._require_detail(case_id)
+        document_id_number = reading.field("id_number")
+        if not document_id_number:
+            return
+        expected = detail.client.id_number
+        if str(document_id_number).strip() == expected:
+            return
+        await self._cases.add_flag(
+            case_id=case_id,
+            code="DOCUMENT_IDENTITY_MISMATCH",
+            message=(
+                f"El documento esta a nombre de {document_id_number}, "
+                f"pero el expediente es de {expected}"
+            ),
+            severity=FlagSeverity.BLOCKING,
+            source_document_id=case_doc.id,
+        )
 
     async def _flag_from_warning(
         self, case_id: UUID, document_id: UUID, warning: ReadingWarning
