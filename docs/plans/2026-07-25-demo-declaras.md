@@ -658,7 +658,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `tests/test_traza.py`
 
 **Interfaces:**
-- Produces: `Nodo{codigo, etiqueta, valor:int, formula:str, insumos:list[str], regla:str|None}`; `Flag{codigo, mensaje, severidad}`; `Traza` con `.nodo(codigo, etiqueta, valor, formula, insumos=(), regla=None) -> int` (registra y devuelve `int(valor)`), `.flag(codigo, mensaje, severidad="advertencia")`, `.a_liquidacion(anio, elecciones) -> Liquidacion`; `Liquidacion{anio_gravable, elecciones, nodos:dict[str,Nodo], flags:list[Flag]}` con `.valor(codigo) -> int` y `.tiene_flag(codigo) -> bool`; `Elecciones{usar_387:bool=False, usar_72uvt:bool=True}`.
+- Produces: `Nodo{codigo, etiqueta, valor:int, formula:str, insumos:list[str], regla:str|None}`; `Flag{codigo, mensaje, severidad}`; `Traza` con `.nodo(codigo, etiqueta, valor: int, formula, insumos=(), regla=None) -> int` (valida int vía pydantic — ValidationError si no lo es —, ValueError si el código ya está registrado, devuelve el int validado), `.flag(codigo, mensaje, severidad="advertencia")`, `.a_liquidacion(anio, elecciones) -> Liquidacion`; `Liquidacion{anio_gravable, elecciones, nodos:dict[str,Nodo], flags:list[Flag]}` con `.valor(codigo) -> int` y `.tiene_flag(codigo) -> bool`; `Elecciones{usar_387:bool=False, usar_72uvt:bool=True}`. Todos los modelos con `extra="forbid"`.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
