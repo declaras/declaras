@@ -300,6 +300,28 @@ asigna a cada valor reportado), `EINVOICE_SUMMARY` (XLSX, agrega la base de la d
 del 1% ya filtrada por medio de pago) y `RUT` (PDF sin campos de formulario, lectura
 posicional con confianza declarada como baja).
 
+## El expediente
+
+Cliente, expediente por anio gravable, documentos (del portal o subidos por el cliente),
+flags que un contador debe revisar y bitacora de auditoria: es el agregado que amarra el
+conector DIAN y la lectura de documentos, y la base de la futura consola del contador.
+Diseno completo en [ADR 0006](docs/adr/0006-expediente-agregado-central.md).
+
+```
+POST /v1/cases                              abre un expediente (crea el cliente si es nuevo)
+GET  /v1/cases                              lista expedientes (para la consola)
+GET  /v1/cases/{id}                         detalle completo: cliente, documentos, flags, bitacora
+POST /v1/cases/{id}/link-extraction         vuelca una extraccion DIAN ya terminada al expediente
+POST /v1/cases/{id}/documents  (multipart)  el cliente sube un documento por chat
+POST /v1/cases/{id}/flags/{id}/resolve      marca un flag como resuelto
+GET  /v1/clients                            lista clientes
+GET  /v1/clients/{id}/cases                 expedientes de un cliente, por todos los anios
+```
+
+Verificado contra una extraccion real: al vincular RUT, exogena y facturas electronicas,
+los tres quedaron leidos automaticamente y salio un flag real (el defecto de codificacion
+conocido del portal), sin intervencion manual.
+
 ## Pendiente antes de produccion
 
 - [ ] **Calibrar los descargadores de documentos** contra una sesion autenticada. El

@@ -18,7 +18,14 @@ class IdDocumentKind(StrEnum):
 
 
 class DocumentType(StrEnum):
-    """Tipos de documento que el conector extrae del portal."""
+    """Tipos de documento que el conector extrae del portal.
+
+    `CLIENT_DOCUMENT` es distinto: es el cubo generico de almacenamiento para lo que el
+    cliente sube por chat (certificados, registro civil...), cuyo catalogo real y con
+    significado de producto vive en `CaseDocument.doc_type` (texto libre). Este marcador
+    solo existe para que la convencion de rutas de almacenamiento, pensada para el
+    conector, tambien sirva para esos archivos sin forzar un catalogo cerrado aqui.
+    """
 
     RUT = "RUT"
     EXOGENA = "EXOGENA"
@@ -26,6 +33,7 @@ class DocumentType(StrEnum):
     SUGGESTED_RETURN = "SUGGESTED_RETURN"
     EINVOICE_SUMMARY = "EINVOICE_SUMMARY"
     EVIDENCE = "EVIDENCE"
+    CLIENT_DOCUMENT = "CLIENT_DOCUMENT"
 
 
 class JobKind(StrEnum):
@@ -154,9 +162,12 @@ class ExtractionRequest(BaseModel):
 
     @field_validator("doc_types")
     @classmethod
-    def _reject_evidence(cls, value: list[DocumentType]) -> list[DocumentType]:
-        if DocumentType.EVIDENCE in value:
-            raise ValueError("EVIDENCE no es solicitable: se genera de forma automatica")
+    def _reject_non_requestable(cls, value: list[DocumentType]) -> list[DocumentType]:
+        non_requestable = {DocumentType.EVIDENCE, DocumentType.CLIENT_DOCUMENT}
+        found = non_requestable & set(value)
+        if found:
+            names = ", ".join(sorted(d.value for d in found))
+            raise ValueError(f"{names} no son solicitables al conector DIAN")
         return list(dict.fromkeys(value))
 
 

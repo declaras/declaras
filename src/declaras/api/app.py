@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from declaras import __version__
 from declaras.api.container import Container
 from declaras.api.errors import register_exception_handlers
-from declaras.api.routers import documents, documents_read, extractions, health
+from declaras.api.routers import cases, documents, documents_read, extractions, health
 from declaras.config import Settings, get_settings
 from declaras.observability import configure_logging
 
@@ -54,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(extractions.router)
     app.include_router(documents.router)
     app.include_router(documents_read.router)
+    app.include_router(cases.router)
     return app
 
 

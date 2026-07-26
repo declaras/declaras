@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from declaras.adapters.dian.factory import build_dian_connector
+from declaras.adapters.persistence.case_repository import SqlCaseRepository, SqlClientRepository
 from declaras.adapters.persistence.engine import (
     create_engine,
     create_schema,
@@ -21,8 +22,10 @@ from declaras.adapters.persistence.login_guard import SqlLoginAttemptGuard
 from declaras.adapters.storage.factory import build_document_store
 from declaras.config import Settings
 from declaras.documents.service import DocumentReaderService
+from declaras.domain.case_ports import CaseRepository, ClientRepository
 from declaras.domain.ports import DianConnector, DocumentStore, JobRepository, LoginAttemptGuard
 from declaras.observability import get_logger
+from declaras.services.case_service import CaseService
 from declaras.services.credential_vault import InMemoryCredentialVault
 from declaras.services.extraction import ExtractionService
 from declaras.services.job_runner import JobRunner
@@ -45,6 +48,9 @@ class Container:
     extraction: ExtractionService
     runner: JobRunner
     document_reader: DocumentReaderService
+    clients: ClientRepository
+    cases: CaseRepository
+    case_service: CaseService
 
     @classmethod
     def build(cls, settings: Settings) -> Container:
@@ -69,6 +75,11 @@ class Container:
             settings=settings,
         )
         document_reader = DocumentReaderService()
+        clients = SqlClientRepository(sessions)
+        cases = SqlCaseRepository(sessions)
+        case_service = CaseService(
+            clients=clients, cases=cases, store=store, reader=document_reader
+        )
         runner = JobRunner(
             jobs=jobs,
             extraction=extraction,
@@ -88,6 +99,9 @@ class Container:
             extraction=extraction,
             runner=runner,
             document_reader=document_reader,
+            clients=clients,
+            cases=cases,
+            case_service=case_service,
         )
 
     async def startup(self) -> None:

@@ -57,6 +57,7 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 # FastAPI exige File()/Form() como valor por defecto de los parametros: es el patron
 # idiomatico del framework, no una funcion que se ejecuta por accidente.
 "src/declaras/api/routers/documents_read.py" = ["B008"]
+"src/declaras/api/routers/cases.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -177,3 +177,24 @@ class StorageError(DeclarasError):
     http_status = 500
     retryable = True
     default_message = "No se pudo almacenar o leer el documento."
+
+
+# ─────────────────────────── Errores del expediente ───────────────────────────
+
+
+class CaseNotFoundError(DeclarasError):
+    code = "CASE_NOT_FOUND"
+    http_status = 404
+    default_message = "El expediente solicitado no existe."
+
+
+class CaseAlreadyExistsError(DeclarasError):
+    code = "CASE_ALREADY_EXISTS"
+    http_status = 409
+    default_message = "Ya existe un expediente de este cliente para ese anio gravable."
+
+
+class FlagNotFoundError(DeclarasError):
+    code = "FLAG_NOT_FOUND"
+    http_status = 404
+    default_message = "El flag solicitado no existe."
