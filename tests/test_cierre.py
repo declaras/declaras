@@ -1,8 +1,8 @@
 import pytest
 
 from declaras.caso import (
-    Activo, Arriendo, Beneficios, CasoTributario, Contribuyente, Creditos, Deuda,
-    Donacion, Fuente, IngresoLaboral, Patrimonio,
+    Activo, Arriendo, Beneficios, CasoTributario, Contribuyente, Creditos,
+    Donacion, Fuente, IngresoLaboral, IngresoPension, Patrimonio,
 )
 from declaras.motor import Elecciones, liquidar
 from declaras.parametros import cargar
@@ -11,14 +11,27 @@ FX = Fuente.fixture("test")
 P = cargar(2025)
 
 
-def _caso_laboral(**creditos_kw):
+def _caso_laboral(retencion=8_000_000, **creditos_kw):
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="1", nombre="X"),
         laborales=[IngresoLaboral(
             empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
             aportes_salud=4_800_000, aportes_pension=4_800_000,
-            retencion=8_000_000, fuente=FX)],
+            retencion=retencion, fuente=FX)],
         creditos=Creditos(**creditos_kw),
+    )
+
+
+def _caso_pensionado(activos_31dic: int) -> CasoTributario:
+    """Pensión 4M/mes (48M/año), 100% exenta (< 1.000 UVT/mes); RLG_PENSIONES = 0."""
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="7", nombre="P"),
+        pensiones=[IngresoPension(pagador="Colpensiones",
+                                  mesadas=[4_000_000] * 12, fuente=FX)],
+        patrimonio=Patrimonio(
+            activos=[Activo(tipo="cuenta", descripcion="ahorros",
+                            valor_31dic=activos_31dic, fuente=FX)],
+            patrimonio_liquido_anterior=100_000_000),
     )
 
 
@@ -56,6 +69,28 @@ def test_obligado_por_patrimonio_y_comparacion():
     assert liq.valor("OBLIGADO_DECLARAR") == 1        # patrimonio > 4.500 UVT
     assert liq.valor("IMPUESTO_NETO") == 0
     assert liq.tiene_flag("COMPARACION_PATRIMONIAL")  # creció 50M sin rentas
+
+
+def test_anticipo_con_retenciones_bajas():
+    liq = liquidar(_caso_laboral(retencion=1_000_000, anios_previos_declarando=2), P,
+                   Elecciones(usar_387=False, usar_72uvt=False))
+    # 75% × 5.418.627 = 4.063.970,25 → half-up 4.063.970 − 1.000.000 = 3.063.970
+    assert liq.valor("ANTICIPO_SIGUIENTE") == 3_063_970
+    assert liq.valor("SALDO") == 5_418_627 + 3_063_970 - 1_000_000
+
+
+def test_comparacion_patrimonial_pension_exenta_justifica():
+    # Ahorra 30M con 48M de pensión exenta: el art. 236 cuenta las rentas exentas
+    # como justificación del incremento → NO debe disparar el flag.
+    liq = liquidar(_caso_pensionado(activos_31dic=130_000_000), P, Elecciones())
+    assert liq.valor("RLG_PENSIONES") == 0
+    assert not liq.tiene_flag("COMPARACION_PATRIMONIAL")
+
+
+def test_comparacion_patrimonial_dispara_si_excede_todo_ingreso():
+    # Incremento 60M > 48M de ingreso pensional total → sigue disparando.
+    liq = liquidar(_caso_pensionado(activos_31dic=160_000_000), P, Elecciones())
+    assert liq.tiene_flag("COMPARACION_PATRIMONIAL")
 
 
 def test_no_obligado():

@@ -30,7 +30,7 @@ def cerrar(caso: CasoTributario, p: ParametrosAnio, t: Traza, impuesto_neto: int
             base, detalle = promedio, f"promedio dos años {promedio:,} (menor)"
     anticipo = t.nodo(
         "ANTICIPO_SIGUIENTE", "Anticipo del año siguiente",
-        max(0, pesos(base * pct) - retenciones),
+        max(0, porcentaje(base, pct) - retenciones),
         f"max(0, {pct:.0%} × {detalle} − retenciones {retenciones:,})",
         insumos=["IMPUESTO_NETO", "RETENCIONES"], regla="art. 807 ET",
     )
@@ -75,8 +75,11 @@ def validar(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
     anterior = caso.patrimonio.patrimonio_liquido_anterior
     if anterior is not None:
         incremento = liquido - anterior
+        # Art. 236 ET: las rentas exentas también justifican el incremento, así que
+        # se usa el ingreso pensional TOTAL (gravado + exento), no RLG_PENSIONES.
+        pension_total = sum(sum(pn.mesadas) for pn in caso.pensiones)
         justificado = (
-            t.nodos["RLG_GENERAL"].valor + t.nodos["RLG_PENSIONES"].valor
+            t.nodos["RLG_GENERAL"].valor + pension_total
             + t.nodos["DIV_NO_GRAVADOS"].valor + t.nodos["DIV_GRAVADOS"].valor
             + t.nodos["APLICADO_40"].valor + t.nodos["EXTRA_LIMITE"].valor
             + t.nodos["INCR_TOTAL"].valor
