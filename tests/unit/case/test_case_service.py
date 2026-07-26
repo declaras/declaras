@@ -107,7 +107,7 @@ async def test_vincular_una_extraccion_exitosa_registra_los_documentos(service):
     assert len(updated.documents) == 1
     assert updated.documents[0].source is CaseDocumentSource.DIAN_PORTAL
     assert updated.case.status is CaseStatus.READY_FOR_REVIEW
-    assert any(e.kind == "EXTRACTION_LINKED" for e in updated.events)
+    assert any(e.kind == "DIAN_QUERY" for e in updated.events)
 
 
 async def test_un_documento_con_lector_queda_leido_automaticamente(service):
@@ -276,3 +276,95 @@ async def test_un_documento_del_cliente_con_lector_tambien_se_lee(service):
     )
     assert updated.documents[0].reading is not None
     assert updated.documents[0].reading.field("taxpayer_name") == "SUBIDO A MANO"
+
+
+# ─────── que trajo la consulta ───────
+#
+# La DIAN incrusta la fecha de generacion en cada archivo, asi que el mismo documento
+# descargado dos veces tiene contenido y hash distintos. Sin comparar lo que dice el
+# documento, cada consulta parece traer todo de nuevo.
+
+
+async def _consultar(svc, store, case_id, *, contenido):
+    stored = await store.put(
+        taxpayer=TaxpayerRef(id_number="10203040", tax_year=2025),
+        document=RawDocument(doc_type=DocumentType.EXOGENA, filename="e.xlsx", content=contenido),
+        scope_id=uuid4(),
+    )
+    return await svc.link_extraction_result(
+        case_id=case_id, extraction_job=_succeeded_job(documents=[stored])
+    )
+
+
+def _ultima_consulta(detail):
+    return next(e for e in reversed(detail.events) if e.kind == "DIAN_QUERY")
+
+
+async def test_la_primera_consulta_dice_que_trajo_los_documentos(service):
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    assert "trajo" in _ultima_consulta(detail).message
+
+
+async def test_volver_a_consultar_sin_novedades_lo_dice_en_vez_de_anunciar_una_actualizacion(
+    service,
+):
+    """Es la queja mas legitima de quien vuelve a consultar: si el sistema anuncia lo mismo
+    cada vez, parece que descargo todo de nuevo sin razon."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+
+    evento = _ultima_consulta(detail)
+    assert "no encontró cambios" in evento.message
+    assert evento.payload["changed"] == []
+
+
+async def test_una_fecha_de_generacion_distinta_no_cuenta_como_cambio(service):
+    """El portal cambia la fecha del reporte en cada descarga sin que cambie ni un peso de lo
+    reportado. Si eso contara como cambio, nunca se podria decir "no hubo cambios"."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    # El fixture escribe la fecha del reporte fija, asi que se cambia el contenido de forma
+    # que solo el hash del archivo cambie.
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx() + b"\x00")
+    assert "no encontró cambios" in _ultima_consulta(detail).message
+
+
+async def test_cuando_la_dian_si_actualizo_algo_se_dice_que_fue(service):
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    detail = await _consultar(
+        svc,
+        store,
+        caso.case.id,
+        contenido=build_exogena_xlsx(
+            thresholds={
+                "ingresos": 99_000_000,
+                "patrimonio": 5_000_000,
+                "consumo_tarjeta": 1_000_000,
+                "movimientos": 20_000_000,
+                "compras": 500_000,
+            }
+        ),
+    )
+    evento = _ultima_consulta(detail)
+    assert "cambió" in evento.message
+    assert "exógena" in evento.message.lower()
+    assert evento.payload["changed"] == ["EXOGENA"]
+
+
+async def test_la_bitacora_no_muestra_codigos_internos(service):
+    """Lo que se registra lo lee una persona. El codigo del evento existe para consultar la
+    bitacora por tipo, no para mostrarlo."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    for evento in detail.events:
+        assert evento.message
+        assert evento.kind not in evento.message
+        assert "_" not in evento.message

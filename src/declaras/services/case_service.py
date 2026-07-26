@@ -42,6 +42,7 @@ from declaras.domain.models import (
 )
 from declaras.domain.ports import DocumentStore
 from declaras.observability import get_logger
+from declaras.services.reading_diff import ReadingDiff, compare, describe_sync
 
 log = get_logger(__name__)
 
@@ -113,6 +114,14 @@ class CaseService:
 
         self._assert_same_taxpayer(detail, result)
 
+        # Lo que el expediente ya sabia antes de esta consulta, para poder decir despues si
+        # la consulta trajo algo. Se toma antes de reemplazar nada.
+        previous_readings = {
+            d.doc_type: d.reading
+            for d in detail.documents
+            if d.source is CaseDocumentSource.DIAN_PORTAL
+        }
+
         # Idempotencia: el agente puede reintentar la llamada (timeout, reenvio). Si este
         # job ya se vinculo, se devuelve el expediente tal como esta en vez de duplicar
         # documentos, flags y eventos.
@@ -124,6 +133,7 @@ class CaseService:
             )
             return detail
 
+        diffs: list[ReadingDiff] = []
         for stored in result.documents:
             if stored.doc_type.value == _EVIDENCE_DOC_TYPE:
                 continue  # es evidencia de auditoria, no un insumo del motor
@@ -145,17 +155,15 @@ class CaseService:
                 content_sha256=stored.sha256,
                 extraction_job_id=extraction_job.id,
             )
-            await self._cases.add_event(
-                case_id=case_id,
-                kind="DOCUMENT_LINKED",
-                message=(
-                    f"Se vinculó {document_label(stored.doc_type.value)} "
-                    "desde la consulta a la DIAN"
-                ),
-                payload={"filename": stored.filename, "job_id": str(extraction_job.id)},
-            )
-            await self._try_read_and_flag(
+            reading = await self._try_read_and_flag(
                 case_id=case_id, case_doc=case_doc, doc_type=stored.doc_type.value
+            )
+            diffs.append(
+                compare(
+                    doc_type=stored.doc_type.value,
+                    before=previous_readings.get(stored.doc_type.value),
+                    after=reading,
+                )
             )
 
         for failure in result.failures:
@@ -172,12 +180,13 @@ class CaseService:
         await self._cases.transition(case_id, status=CaseStatus.READY_FOR_REVIEW)
         await self._cases.add_event(
             case_id=case_id,
-            kind="EXTRACTION_LINKED",
-            message="Se vinculó la consulta a la DIAN con el expediente",
+            kind="DIAN_QUERY",
+            message=describe_sync(diffs),
             payload={
                 "job_id": str(extraction_job.id),
                 "documents": len(result.documents),
                 "failures": len(result.failures),
+                "changed": [d.doc_type for d in diffs if d.has_changes],
             },
         )
         log.info(
@@ -246,7 +255,7 @@ class CaseService:
 
     async def _try_read_and_flag(
         self, *, case_id: UUID, case_doc: CaseDocument, doc_type: str
-    ) -> None:
+    ) -> DocumentReading | None:
         """Intenta leer un documento y convierte sus avisos en flags.
 
         Si no hay lector para el tipo (documentos aun sin parser, o del cliente que
@@ -260,7 +269,7 @@ class CaseService:
             # Todavia no hay parser para ese tipo: es una limitacion conocida del sistema,
             # no un problema del documento. Queda disponible para revision manual.
             log.info("case.no_reader_yet", case_id=str(case_id), doc_type=doc_type)
-            return
+            return None
         except DocumentUnreadableError as exc:
             # El documento SI deberia poder leerse y no se pudo: el contador debe saberlo,
             # porque significa que hay que volver a pedirlo.
@@ -272,12 +281,13 @@ class CaseService:
                 severity=FlagSeverity.BLOCKING,
                 source_document_id=case_doc.id,
             )
-            return
+            return None
 
         await self._cases.attach_reading(case_doc.id, reading)
         for warning in reading.warnings:
             await self._flag_from_warning(case_id, case_doc.id, warning)
         await self._flag_if_identity_differs(case_id, case_doc, reading)
+        return reading
 
     async def _supersede_previous(self, case_id: UUID, doc_type: str) -> None:
         """Marca reemplazados los documentos del portal de ese tipo y cierra sus avisos.
