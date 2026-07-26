@@ -6,9 +6,12 @@ headers, la traduccion de timeouts y la validacion de sesion viven aqui.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import httpx
 
 from declaras.adapters.dian.endpoints import DASHBOARD_FORM, ENDPOINTS
+from declaras.adapters.dian.rest.api_client import DianApiClient
 from declaras.domain.errors import DianSessionExpiredError, DianTimeoutError
 
 
@@ -61,3 +64,15 @@ class PortalClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+@dataclass(frozen=True)
+class PortalContext:
+    """Lo que un flujo necesita para traer un documento.
+
+    Algunos documentos salen del portal JSF y otros de la API REST, asi que los flujos
+    reciben ambos accesos y cada uno usa el que le corresponde.
+    """
+
+    portal: PortalClient
+    api: DianApiClient

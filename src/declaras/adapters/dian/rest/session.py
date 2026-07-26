@@ -10,7 +10,8 @@ from uuid import uuid4
 
 import httpx
 
-from declaras.adapters.dian.rest.client import PortalClient
+from declaras.adapters.dian.rest.api_client import DianApiClient
+from declaras.adapters.dian.rest.client import PortalClient, PortalContext
 from declaras.adapters.dian.rest.flows import DOWNLOADERS
 from declaras.domain.errors import DianLayoutChangedError, ValidationError
 from declaras.domain.models import (
@@ -31,6 +32,9 @@ class HttpDianSession:
     def __init__(self, *, client: httpx.AsyncClient, base_url: str) -> None:
         self.session_id = str(uuid4())
         self._portal = PortalClient(client, base_url)
+        self._ctx = PortalContext(
+            portal=self._portal, api=DianApiClient(client, portal_url=base_url)
+        )
         self._closed = False
 
     @property
@@ -47,7 +51,7 @@ class HttpDianSession:
                 doc_type=doc_type.value,
             )
         log.info("dian.http.download_start", doc_type=doc_type.value, session_id=self.session_id)
-        return await downloader(self._portal, taxpayer)
+        return await downloader(self._ctx, taxpayer)
 
     async def capture_evidence(self, label: str) -> RawDocument:
         """Sin navegador no hay captura de pantalla: se archiva el HTML del portal.

@@ -105,8 +105,8 @@ DECLARAS_DIAN_HEADLESS=false      # false para ver el navegador mientras trabaja
 ### Estado de calibracion
 
 Verificado end to end contra el portal real el 2026-07-25: `POST /v1/extractions` con
-credenciales reales devolvio RUT, exogena y facturas electronicas en 11 segundos,
-almacenados y descargables. Solo el RUT toma unos 4 segundos por HTTP; con navegador, 21.
+credenciales reales devolvio **los cinco insumos en 13 segundos**, almacenados y
+descargables. Solo el RUT toma unos 4 segundos por HTTP; con navegador, 21.
 
 | Parte | Estado |
 |---|---|
@@ -114,12 +114,12 @@ almacenados y descargables. Solo el RUT toma unos 4 segundos por HTTP; con naveg
 | Login por navegador (formulario Angular, mat-select, consentimiento) | **Calibrado y verificado** |
 | Puntos de entrada del portal (ids JSF estables) | **Mapeados**: ver `endpoints.py` y `DashboardSelectors` |
 | Descarga de RUT (postback JSF) | **Calibrado y verificado** en ambos adaptadores |
-| Descarga de exogena (modal de anio, 3 envios) | **Calibrado y verificado** por HTTP: entrega XLSX |
-| Resumen de facturas electronicas (mismo modal de anio) | **Calibrado y verificado** por HTTP: entrega XLSX |
+| Descarga de exogena (modal de anio, 3 envios) | **Calibrado y verificado**: entrega XLSX |
+| Resumen de facturas electronicas (mismo modal de anio) | **Calibrado y verificado**: entrega XLSX |
+| Declaracion presentada del anio anterior | **Calibrado y verificado**: PDF por la API REST |
+| Borrador abierto del anio en curso | **Calibrado y verificado**: PDF por la API REST |
 | Navegacion del menu lateral (arbol JSF, resuelto por etiqueta) | **Calibrado** |
-| Acceso a la API REST de la DIAN (canje de sesion por token) | **Calibrado y verificado** |
-| Inventario de declaraciones presentadas y borradores | **Calibrado**: se consulta por API |
-| Contenido o PDF de una declaracion | Pendiente: falta la ruta exacta |
+| Acceso a la API REST (canje de sesion por token) | **Calibrado y verificado** |
 | Verificacion de identidad (reto) | Sin observar: esta cuenta no lo pidio |
 
 Aprendizaje clave que condiciona el resto: **el Muisca es JSF y no se navega por URL**.
@@ -252,20 +252,25 @@ La retencion minima es de 3 anios, que es cuando la declaracion queda en firme.
 ### La API REST de la DIAN
 
 Las declaraciones no estan en el portal JSF sino detras de `api.dian.gov.co`, la API que
-consumen las aplicaciones Angular de la entidad. Ya esta implementado el acceso
-(`DianApiClient`): se canjea la cookie de sesion del portal por un Bearer token y se
-consulta con el header `clientid`, que la API exige.
+consumen las aplicaciones Angular de la entidad. El acceso esta implementado en
+`DianApiClient`: se canjea la cookie de sesion del portal por un Bearer token y se consulta
+con el header `clientid`, que la API exige.
 
-Con eso ya se puede saber, antes de pedirle un dato al cliente, **que declaraciones tiene
-presentadas, de que anios, si hay un borrador abierto, si admite correccion y si tiene
-firma electronica**. El catalogo de endpoints confirmados esta en
+Ademas de los documentos, la API permite saber antes de pedirle un dato al cliente **que
+declaraciones tiene presentadas, de que anios, si hay un borrador abierto, si admite
+correccion y si tiene firma electronica**. Catalogo completo en
 [ADR 0004](docs/adr/0004-api-rest-de-la-dian.md).
 
-Falta la ruta que entrega el contenido de una declaracion concreta. Ese mismo hallazgo
-destrabara el presentador del formulario 210, porque el formulario vive en esa misma API
-(`documentos/renta210v18/v1`).
+Siguiente frontera: la misma API expone el formulario 210 en `documentos/renta210v18/v1`,
+que es el camino del presentador. Diligenciar por API en vez de manejar un navegador sobre
+una SPA convierte la pieza mas fragil del producto en una integracion normal.
 
 ## Notas para quien parsee los documentos
+
+Las rutas de almacenamiento agrupan por el anio gravable que se esta preparando, no por
+el anio propio de cada documento: la declaracion de 2024 vive bajo `2025/prior_return/`
+porque es un insumo de la declaracion de 2025. El anio real del documento queda en sus
+metadatos.
 
 El XLSX de exogena trae una hoja con el detalle por tercero: NIT y razon social de quien
 reporta, concepto, valor, si la DIAN lo uso en la declaracion sugerida, y los topes de

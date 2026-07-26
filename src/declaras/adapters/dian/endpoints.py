@@ -134,6 +134,8 @@ class DianApiEndpoints:
     renta_years: str = "/documentos/renta210ingreso/v1/anios"
     renta_form_versions: str = "/documentos/renta210ingreso/v1/formatos/210/versionesRuta"
     renta_forms: str = "/documentos/renta210ingreso/v1/formularios"
+    # La ruta de descarga esta en espanol: /descargar, no /pdf.
+    renta_form_download: str = "/documentos/renta210ingreso/v1/formularios/{form_id}/descargar"
     rut_registration_date: str = "/documentos/renta210ingreso/v1/contribuyente/fechaInscripcionRut"
 
     # RUT.

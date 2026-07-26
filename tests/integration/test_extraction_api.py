@@ -6,7 +6,7 @@ mala, intentos agotados, reto de identidad y exito parcial.
 
 from __future__ import annotations
 
-from tests.conftest import wait_for_status
+from tests.conftest import wait_for_final_failure, wait_for_status
 
 BASE = "/v1/extractions"
 
@@ -151,13 +151,13 @@ async def test_el_reintento_conserva_las_credenciales(client_con_reintentos):
     """Regresion: si al fallar se borraba la clave, el reintento moria con
     DIAN_SESSION_EXPIRED y ocultaba el error verdadero del portal."""
     created = await client_con_reintentos.post(BASE, json=payload("clave-down"))
-    final = await wait_for_status(
-        client_con_reintentos, created.json()["job_id"], "FAILED", "SUCCEEDED"
+    final = await wait_for_final_failure(
+        client_con_reintentos, created.json()["job_id"], attempts=2
     )
 
-    assert final["status"] == "FAILED"
-    assert final["attempts"] == 2, "el worker debio reintentar"
-    assert final["error"]["code"] == "DIAN_PORTAL_UNAVAILABLE"
+    assert final["error"]["code"] == "DIAN_PORTAL_UNAVAILABLE", (
+        "el reintento debe reportar la falla real del portal, no credenciales ausentes"
+    )
 
 
 async def test_el_anio_gravable_se_deduce_si_no_se_envia(client):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -48,19 +48,57 @@ async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
         yield http
 
 
+async def wait_until(
+    client: AsyncClient,
+    job_id: str,
+    predicate: Callable[[dict], bool],
+    *,
+    descripcion: str,
+    timeout_s: float = 8.0,
+) -> dict:
+    """Sondea el job hasta que cumpla la condicion dada.
+
+    Se espera por una condicion y no solo por un estado porque un job con reintentos pasa
+    por FAILED de forma transitoria antes de volver a la cola: mirar solo el estado hace
+    la prueba dependiente del azar.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    last: dict = {}
+    while asyncio.get_event_loop().time() < deadline:
+        last = (await client.get(f"/v1/extractions/{job_id}")).json()
+        if predicate(last):
+            return last
+        await asyncio.sleep(0.05)
+    raise AssertionError(
+        f"timeout esperando {descripcion}; ultimo estado: {last.get('status')} "
+        f"(intentos: {last.get('attempts')})"
+    )
+
+
 async def wait_for_status(
     client: AsyncClient, job_id: str, *targets: str, timeout_s: float = 8.0
 ) -> dict:
     """Espera a que el job llegue a alguno de los estados pedidos."""
-    deadline = asyncio.get_event_loop().time() + timeout_s
-    last: dict = {}
-    while asyncio.get_event_loop().time() < deadline:
-        response = await client.get(f"/v1/extractions/{job_id}")
-        last = response.json()
-        if last.get("status") in targets:
-            return last
-        await asyncio.sleep(0.05)
-    raise AssertionError(f"timeout esperando {targets}, ultimo estado: {last.get('status')}")
+    return await wait_until(
+        client,
+        job_id,
+        lambda job: job.get("status") in targets,
+        descripcion=f"estado en {targets}",
+        timeout_s=timeout_s,
+    )
+
+
+async def wait_for_final_failure(
+    client: AsyncClient, job_id: str, *, attempts: int, timeout_s: float = 10.0
+) -> dict:
+    """Espera la falla definitiva, cuando ya se agotaron los reintentos."""
+    return await wait_until(
+        client,
+        job_id,
+        lambda job: job.get("status") == "FAILED" and job.get("attempts", 0) >= attempts,
+        descripcion=f"falla definitiva con {attempts} intentos",
+        timeout_s=timeout_s,
+    )
 
 
 @pytest.fixture

@@ -95,6 +95,23 @@ class DianApiClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_bytes(self, path: str) -> tuple[bytes, httpx.Headers]:
+        """Descarga un recurso binario de la API, como el PDF de una declaracion."""
+        if self._bearer is None:
+            await self.authenticate()
+        url = f"{DIAN_API.base_url}{path}"
+        headers = self._headers()
+        headers["Accept"] = "application/pdf, application/octet-stream, */*"
+        try:
+            response = await self._client.get(url, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise DianTimeoutError(url=url) from exc
+
+        if response.status_code == httpx.codes.UNAUTHORIZED:
+            raise DianSessionExpiredError("el token de la API ya no es valido")
+        response.raise_for_status()
+        return response.content, response.headers
+
     def _headers(self) -> dict[str, str]:
         # x-request-id y etag comparten el mismo identificador, como hace el portal.
         request_id = str(uuid.uuid4())

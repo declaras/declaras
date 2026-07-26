@@ -33,6 +33,7 @@ Tres pasos, todos replicables sin navegador:
 | `GET /documentos/renta210ingreso/v1/formatos/210/versionesRuta` | Version vigente del 210 (18), su `uriApi` (`documentos/renta210v18/v1`) y su `urlFormato` |
 | `GET /documentos/renta210ingreso/v1/formularios?estado=presentado` | **Declaraciones presentadas**, con id de documento, anio, fecha de presentacion y si admite correccion |
 | `GET /documentos/renta210ingreso/v1/formularios?estado=pendiente` | **Borradores abiertos**, con id, anio y si son editables |
+| `GET /documentos/renta210ingreso/v1/formularios/{id}/descargar` | **PDF de una declaracion**. La ruta esta en espanol: `/descargar`, no `/pdf` |
 | `GET /documentos/renta210ingreso/v1/contribuyente/fechaInscripcionRut` | Fecha de inscripcion en el RUT |
 | `GET /documentos/renta210ingreso/v1/formularios/{id}/firmantes/{id}/esFirmaElectron` | Si el contribuyente tiene instrumento de firma electronica |
 | `GET /rut/v10/contribuyentes/{documento}/actividadeseconomicas` | Actividad economica del RUT |
@@ -60,8 +61,8 @@ Tres cosas que cambian el plan del producto:
    vez de manejando un navegador sobre una SPA, el presentador pasa de ser la pieza mas
    fragil del sistema a una integracion como cualquier otra.
 
-## Pendiente
+## Siguiente frontera
 
-Falta la ruta que entrega el contenido o el PDF de una declaracion concreta: las rutas
-evidentes bajo `renta210v18` responden 404, asi que hay que observar la aplicacion abriendo
-un formulario real. Ese mismo trabajo revela la API de escritura, o sea el presentador.
+Con la lectura resuelta, lo que sigue es la escritura: el manifiesto de versiones apunta a
+`documentos/renta210v18/v1` como la API del formulario. Si el diligenciamiento del 210 se
+hace por ahi, el presentador deja de depender de automatizar una SPA.

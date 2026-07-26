@@ -5,9 +5,11 @@ sesion para que agregar un documento sea escribir una funcion y registrarla, sin
 nada mas.
 
 Estado de calibracion contra el portal real (2026-07-25):
-  RUT                un solo envio, entrega PDF
+  RUT                postback simple, entrega PDF
   EXOGENA            modal de anio en tres envios, entrega XLSX
   EINVOICE_SUMMARY   modal de anio en tres envios, entrega XLSX
+  PRIOR_RETURN       API REST: se busca el id y se descarga el PDF
+  SUGGESTED_RETURN   API REST: el borrador abierto del anio en curso
 """
 
 from __future__ import annotations
@@ -16,12 +18,13 @@ import httpx
 
 from declaras.adapters.dian.endpoints import (
     DASHBOARD_FORM,
+    DIAN_API,
     EINVOICE_MODAL,
     EXOGENA_MODAL,
     YearModal,
 )
 from declaras.adapters.dian.rest import jsf
-from declaras.adapters.dian.rest.client import PortalClient
+from declaras.adapters.dian.rest.client import PortalContext
 from declaras.domain.errors import DianDocumentUnavailableError, DianLayoutChangedError
 from declaras.domain.models import DocumentType, RawDocument, TaxpayerRef
 from declaras.observability import get_logger
@@ -33,10 +36,10 @@ _XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetm
 _BINARY_SIGNATURES = (b"%PDF", b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
 
 
-async def download_rut(client: PortalClient, taxpayer: TaxpayerRef) -> RawDocument:
+async def download_rut(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
     """RUT actualizado: el icono del dashboard entrega el PDF en un solo envio."""
-    html = await client.fetch_dashboard()
-    response = await client.submit_form(
+    html = await ctx.portal.fetch_dashboard()
+    response = await ctx.portal.submit_form(
         jsf.build_postback(html, form_id=_FORM, button_id=DASHBOARD_FORM.rut_copy)
     )
     _assert_is_document(response, DocumentType.RUT)
@@ -45,13 +48,13 @@ async def download_rut(client: PortalClient, taxpayer: TaxpayerRef) -> RawDocume
         doc_type=DocumentType.RUT,
         fallback_name=f"rut-{taxpayer.id_number}.pdf",
         content_type="application/pdf",
-        source_url=client.dashboard_url,
+        source_url=ctx.portal.dashboard_url,
         metadata={"via": "postback", "button": DASHBOARD_FORM.rut_copy},
     )
 
 
 async def download_from_year_modal(
-    client: PortalClient,
+    ctx: PortalContext,
     taxpayer: TaxpayerRef,
     *,
     modal: YearModal,
@@ -72,12 +75,14 @@ async def download_from_year_modal(
 
     year_fields = {modal.year_select: year, modal.year_hidden: year}
 
-    html = await client.fetch_dashboard()
-    opened = await client.submit_form(
+    html = await ctx.portal.fetch_dashboard()
+    opened = await ctx.portal.submit_form(
         jsf.build_postback(html, form_id=_FORM, button_id=modal.open_button)
     )
-    registered = await client.submit_form({**jsf.hidden_fields(opened.text, _FORM), **year_fields})
-    response = await client.submit_form(
+    registered = await ctx.portal.submit_form(
+        {**jsf.hidden_fields(opened.text, _FORM), **year_fields}
+    )
+    response = await ctx.portal.submit_form(
         jsf.build_link_postback(
             registered.text, form_id=_FORM, link_id=modal.action_link, extra=year_fields
         )
@@ -89,22 +94,108 @@ async def download_from_year_modal(
         doc_type=doc_type,
         fallback_name=modal.fallback_filename.format(year=year),
         content_type=_XLSX_CONTENT_TYPE,
-        source_url=client.dashboard_url,
+        source_url=ctx.portal.dashboard_url,
         metadata={"via": "year_modal", "tax_year": taxpayer.tax_year},
     )
 
 
-async def download_exogena(client: PortalClient, taxpayer: TaxpayerRef) -> RawDocument:
+async def download_exogena(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
     """Informacion exogena del anio gravable: lo que terceros le reportaron a la DIAN."""
     return await download_from_year_modal(
-        client, taxpayer, modal=EXOGENA_MODAL, doc_type=DocumentType.EXOGENA
+        ctx, taxpayer, modal=EXOGENA_MODAL, doc_type=DocumentType.EXOGENA
     )
 
 
-async def download_einvoice_summary(client: PortalClient, taxpayer: TaxpayerRef) -> RawDocument:
+async def download_einvoice_summary(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
     """Facturas electronicas recibidas: insumo de la deduccion del 1%."""
     return await download_from_year_modal(
-        client, taxpayer, modal=EINVOICE_MODAL, doc_type=DocumentType.EINVOICE_SUMMARY
+        ctx, taxpayer, modal=EINVOICE_MODAL, doc_type=DocumentType.EINVOICE_SUMMARY
+    )
+
+
+async def _find_declaration(
+    ctx: PortalContext, *, year: int, state: str, doc_type: DocumentType
+) -> str:
+    """Busca en la API el id de la declaracion del anio y estado indicados."""
+    payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
+    listado = (payload or {}).get("listadoFormularios", {}).get("infoFormularios", [])
+    for item in listado:
+        if item.get("anio") == year:
+            return str(item["identificador"]["id"])
+    raise DianDocumentUnavailableError(
+        f"no hay declaracion {state} del anio gravable {year}",
+        doc_type=doc_type.value,
+        tax_year=year,
+        available_years=sorted({i.get("anio") for i in listado if i.get("anio")}),
+    )
+
+
+async def _download_declaration(
+    ctx: PortalContext, *, form_id: str, doc_type: DocumentType, year: int, filename: str
+) -> RawDocument:
+    """Descarga el PDF de una declaracion por su identificador."""
+    path = DIAN_API.renta_form_download.format(form_id=form_id)
+    content, headers = await ctx.api.get_bytes(path)
+    if not jsf.looks_like_pdf(content):
+        raise DianLayoutChangedError(
+            "la API no devolvio un PDF de la declaracion",
+            doc_type=doc_type.value,
+            form_id=form_id,
+        )
+    log.info(
+        "dian.api.declaration_downloaded",
+        doc_type=doc_type.value,
+        form_id=form_id,
+        size_bytes=len(content),
+    )
+    return RawDocument(
+        doc_type=doc_type,
+        filename=jsf.filename_from_disposition(headers.get("content-disposition"), filename),
+        content=content,
+        content_type="application/pdf",
+        source_url=f"{DIAN_API.base_url}{path}",
+        metadata={"via": "api", "form_id": form_id, "tax_year": year},
+    )
+
+
+async def download_prior_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
+    """Declaracion presentada del anio anterior.
+
+    Aporta el patrimonio inicial, el anticipo pagado y los saldos a favor, que son los
+    insumos de la comparacion patrimonial.
+    """
+    year = taxpayer.tax_year - 1
+    form_id = await _find_declaration(
+        ctx, year=year, state=DIAN_API.state_filed, doc_type=DocumentType.PRIOR_RETURN
+    )
+    return await _download_declaration(
+        ctx,
+        form_id=form_id,
+        doc_type=DocumentType.PRIOR_RETURN,
+        year=year,
+        filename=f"declaracion-{year}.pdf",
+    )
+
+
+async def download_suggested_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
+    """Borrador abierto del anio gravable en curso.
+
+    La DIAN precrea un borrador con la informacion que ya conoce, asi que sirve de
+    contraste contra el borrador propio. Si el contribuyente no tiene ninguno abierto, se
+    reporta como documento no disponible y la extraccion continua sin el.
+    """
+    form_id = await _find_declaration(
+        ctx,
+        year=taxpayer.tax_year,
+        state=DIAN_API.state_pending,
+        doc_type=DocumentType.SUGGESTED_RETURN,
+    )
+    return await _download_declaration(
+        ctx,
+        form_id=form_id,
+        doc_type=DocumentType.SUGGESTED_RETURN,
+        year=taxpayer.tax_year,
+        filename=f"borrador-{taxpayer.tax_year}.pdf",
     )
 
 
@@ -112,6 +203,8 @@ DOWNLOADERS = {
     DocumentType.RUT: download_rut,
     DocumentType.EXOGENA: download_exogena,
     DocumentType.EINVOICE_SUMMARY: download_einvoice_summary,
+    DocumentType.PRIOR_RETURN: download_prior_return,
+    DocumentType.SUGGESTED_RETURN: download_suggested_return,
 }
 
 
