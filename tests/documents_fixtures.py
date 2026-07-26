@@ -265,3 +265,106 @@ def build_rut_pdf(
         y += 4.2
 
     return bytes(pdf.output())
+
+
+def build_renta_210_pdf(
+    *,
+    tax_year: int = 2024,
+    id_number: int = 1020304050,
+    verification_digit: int = 7,
+    patrimonio_bruto: int = 50_000_000,
+    deudas: int = 20_000_000,
+    patrimonio_liquido: int = 30_000_000,
+    ingresos_brutos: int = 80_000_000,
+    no_constitutivos: int = 6_000_000,
+    renta_liquida: int = 74_000_000,
+    ingresos_no_laborales: int = 5_000_000,
+) -> bytes:
+    """Reproduce el formulario 210 con la geometria real del PDF del portal.
+
+    Se escribe el flujo de contenido a mano en vez de usar `fpdf` porque lo que el parser
+    lee son las coordenadas de cada valor, y `fpdf` no permite controlarlas al nivel que
+    hace falta: solo conserva la matriz del primer texto de la pagina.
+
+    Las coordenadas son las de una declaracion real del ano gravable 2024, incluida la parte
+    que mas facil se rompe: la franja del patrimonio y la de totales no usan las mismas
+    columnas que la cedula general.
+    """
+    trazos: list[tuple[float, float, str]] = []
+
+    def poner(x: float, y: float, texto: str) -> None:
+        trazos.append((x, y, texto))
+
+    def miles(valor: int) -> str:
+        return f"{valor:,}"
+
+    # Cabecera: el ano gravable y la cedula se imprimen digito por digito. El digito de
+    # verificacion va separado por un espacio mayor.
+    for i, digito in enumerate(str(tax_year)):
+        poner(67.9 + i * 10.75, 722.5, digito)
+    for i, digito in enumerate(str(id_number)):
+        poner(86.7 + i * 10.9, 615.5, digito)
+    poner(199.5 + (len(str(id_number)) - 10) * 10.9, 615.5, str(verification_digit))
+
+    # Patrimonio: tres casillas con su propio juego de columnas.
+    poner(216.4, 593.5, miles(patrimonio_bruto))
+    poner(366.5, 593.5, miles(deudas))
+    poner(585.5, 593.5, miles(patrimonio_liquido))
+
+    # Cedula general: cuatro columnas. La primera lleva las rentas de trabajo y la cuarta
+    # las rentas no laborales.
+    cedula = [
+        (569.5, ingresos_brutos, ingresos_no_laborales),
+        (545.5, no_constitutivos, 0),
+        (521.5, renta_liquida, ingresos_no_laborales),
+    ]
+    for y, trabajo, no_laboral in cedula:
+        poner(190.0, y, miles(trabajo))
+        poner(345.6, y, "0")
+        poner(465.6, y, "0")
+        poner(554.4, y, miles(no_laboral))
+
+    # Fila que el formulario solo abre en la ultima columna (devoluciones y descuentos).
+    poner(585.5, 557.5, "0")
+
+    # Renta liquida ordinaria y franja de totales.
+    poner(190.0, 377.5, miles(renta_liquida))
+    poner(554.4, 377.5, miles(ingresos_no_laborales))
+    total_cedula = renta_liquida + ingresos_no_laborales
+    poner(130.0, 365.5, miles(total_cedula))
+    poner(272.4, 365.5, "0")
+    poner(406.0, 365.5, miles(total_cedula))
+    poner(585.5, 365.5, "0")
+
+    return _build_pdf_with_positioned_text(trazos)
+
+
+def _build_pdf_with_positioned_text(trazos: list[tuple[float, float, str]]) -> bytes:
+    """Arma un PDF minimo donde cada texto lleva su propia matriz de posicion."""
+    operaciones = "".join(
+        f"BT /F1 8 Tf 1 0 0 1 {x} {y} Tm ({texto})Tj ET\n" for x, y, texto in trazos
+    )
+    objetos = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.28 841.89]"
+        b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+    ]
+    flujo = operaciones.encode("latin-1")
+    objetos.append(b"<</Length %d>>stream\n%s\nendstream" % (len(flujo), flujo))
+
+    salida = bytearray(b"%PDF-1.4\n")
+    posiciones: list[int] = []
+    for numero, cuerpo in enumerate(objetos, start=1):
+        posiciones.append(len(salida))
+        salida += b"%d 0 obj\n" % numero + cuerpo + b"\nendobj\n"
+    inicio_xref = len(salida)
+    salida += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objetos) + 1)
+    for posicion in posiciones:
+        salida += b"%010d 00000 n \n" % posicion
+    salida += b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objetos) + 1,
+        inicio_xref,
+    )
+    return bytes(salida)

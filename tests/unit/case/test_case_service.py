@@ -134,23 +134,42 @@ async def test_un_documento_con_lector_queda_leido_automaticamente(service):
 
 
 async def test_un_documento_sin_lector_todavia_se_guarda_sin_flag(service):
-    """PRIOR_RETURN y SUGGESTED_RETURN (PDF de la declaracion) aun no tienen parser: el
-    documento debe quedar disponible igual, sin que la ausencia de lector cuente como
-    un problema del expediente."""
+    """Un soporte que el cliente manda por chat (la foto de un recibo) no tiene lector
+    deterministico: debe quedar guardado y disponible igual, sin que la ausencia de lector
+    cuente como un problema del expediente. No tener lector no es lo mismo que no poder leer:
+    lo primero es normal, lo segundo si es un flag."""
+    svc, _ = service
+    detail = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+
+    updated = await svc.add_client_upload(
+        case_id=detail.case.id,
+        doc_type="recibo_de_pago",
+        content=b"una foto cualquiera",
+        filename="recibo.jpg",
+    )
+    assert updated.documents[0].reading is None
+    assert updated.open_flags == []
+
+
+async def test_una_declaracion_que_no_se_puede_leer_si_es_un_flag(service):
+    """El 210 si tiene lector, asi que un PDF corrupto no puede pasar en silencio: si se
+    guardara sin leer, el motor trabajaria sin la declaracion del anio anterior y nadie lo
+    notaria hasta comparar el patrimonio."""
     svc, store = service
     detail = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
     stored = await store.put(
         taxpayer=TaxpayerRef(id_number="10203040", tax_year=2025),
         document=RawDocument(
-            doc_type=DocumentType.PRIOR_RETURN, filename="d.pdf", content=b"%PDF-fake"
+            doc_type=DocumentType.PRIOR_RETURN, filename="d.pdf", content=b"%PDF-roto"
         ),
         scope_id=uuid4(),
     )
-    job = _succeeded_job(documents=[stored])
 
-    updated = await svc.link_extraction_result(case_id=detail.case.id, extraction_job=job)
+    updated = await svc.link_extraction_result(
+        case_id=detail.case.id, extraction_job=_succeeded_job(documents=[stored])
+    )
     assert updated.documents[0].reading is None
-    assert updated.open_flags == []
+    assert [f.severity for f in updated.open_flags] == [FlagSeverity.BLOCKING]
 
 
 async def test_los_avisos_de_lectura_se_convierten_en_flags(service):

@@ -83,5 +83,5 @@ documento real.
 - Lector con modelo de vision para documentos del cliente (certificados de banco, cédula,
   registro civil), con el mismo modelo `DocumentReading` de salida.
 - Deteccion automatica de tipo cuando el cliente manda un documento sin que se le pidiera.
-- Parser del formulario 210 en PDF (declaracion anterior y sugerida), que probablemente
-  comparte el mismo problema de PDF sin campos de formulario que el RUT.
+El parser del formulario 210 (declaracion anterior y sugerida) ya esta construido y se
+documenta aparte, porque su problema resulto distinto al del RUT: ver ADR 0008.

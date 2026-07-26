@@ -30,7 +30,7 @@ from declaras.domain.models import (
     TaxpayerRef,
 )
 from declaras.services.case_service import CaseService
-from tests.documents_fixtures import build_exogena_xlsx
+from tests.documents_fixtures import build_exogena_xlsx, build_renta_210_pdf
 
 CLIENT_ID_NUMBER = "11111111"
 OTHER_ID_NUMBER = "99999999"
@@ -252,5 +252,36 @@ async def test_un_documento_del_titular_no_genera_flag_de_identidad(service):
         doc_type="EXOGENA",
         content=build_exogena_xlsx(id_number=CLIENT_ID_NUMBER),
         filename="propia.xlsx",
+    )
+    assert [f for f in detail.open_flags if f.code == "DOCUMENT_IDENTITY_MISMATCH"] == []
+
+
+async def test_una_declaracion_de_otra_persona_genera_flag_bloqueante(service):
+    """El 210 trae la cedula del declarante impresa en la cabecera, asi que subir la
+    declaracion de otra persona (algo facil de hacer si alguien maneja varias) tiene que
+    frenar el expediente: de ahi salen el patrimonio y los ingresos del ano anterior, que son
+    la base de la comparacion patrimonial."""
+    svc, _ = service
+    case = await svc.open_case(id_kind=IdDocumentKind.CC, id_number=CLIENT_ID_NUMBER, tax_year=2025)
+    detail = await svc.add_client_upload(
+        case_id=case.case.id,
+        doc_type="PRIOR_RETURN",
+        content=build_renta_210_pdf(id_number=int(OTHER_ID_NUMBER)),
+        filename="ajena.pdf",
+    )
+
+    flags = [f for f in detail.open_flags if f.code == "DOCUMENT_IDENTITY_MISMATCH"]
+    assert flags, "una declaracion de otra persona debe frenar el expediente"
+    assert flags[0].severity is FlagSeverity.BLOCKING
+
+
+async def test_la_declaracion_del_titular_no_genera_flag_de_identidad(service):
+    svc, _ = service
+    case = await svc.open_case(id_kind=IdDocumentKind.CC, id_number=CLIENT_ID_NUMBER, tax_year=2025)
+    detail = await svc.add_client_upload(
+        case_id=case.case.id,
+        doc_type="PRIOR_RETURN",
+        content=build_renta_210_pdf(id_number=int(CLIENT_ID_NUMBER)),
+        filename="propia.pdf",
     )
     assert [f for f in detail.open_flags if f.code == "DOCUMENT_IDENTITY_MISMATCH"] == []

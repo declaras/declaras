@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from declaras.documents.models import DocumentReading
-from declaras.documents.parsers import einvoice_summary, exogena, rut
+from declaras.documents.parsers import einvoice_summary, exogena, renta_210, rut
 
 Reader = Callable[[bytes], DocumentReading]
 
@@ -27,6 +27,10 @@ DETERMINISTIC_READERS: dict[str, Reader] = {
     "EXOGENA": exogena.parse,
     "RUT": rut.parse,
     "EINVOICE_SUMMARY": einvoice_summary.parse,
+    # La declaracion presentada del anio anterior y el borrador del anio en curso son el
+    # mismo formulario 210, asi que los lee el mismo parser.
+    "PRIOR_RETURN": renta_210.parse,
+    "SUGGESTED_RETURN": renta_210.parse,
 }
 
 
