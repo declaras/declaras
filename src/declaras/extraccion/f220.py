@@ -27,7 +27,8 @@ cambia entre años del formato, las etiquetas no.
 - total_ingresos_brutos: el "Total de ingresos brutos" tal como lo imprime el
   certificado. NO lo recalcules: cópialo.
 - pensiones_de_jubilacion: pagos por pensiones de jubilación, invalidez o vejez;
-  0 si el certificado no las reporta.
+  0 si el certificado no las reporta. Las pensiones NUNCA van en bonificaciones ni en
+  ningún otro campo: van SOLO acá.
 - aportes_salud y aportes_pension: aportes OBLIGATORIOS del trabajador
   (pension incluye fondo de solidaridad si viene sumado).
 - retencion: total retención en la fuente practicada en el año.
@@ -38,7 +39,9 @@ cambia entre años del formato, las etiquetas no.
 
 Reglas que no puedes violar:
 1. Cada peso del certificado se cuenta EXACTAMENTE una vez entre salarios,
-   cesantias_e_intereses, prima y bonificaciones: ni se duplica ni se omite.
+   cesantias_e_intereses, prima, bonificaciones y pensiones_de_jubilacion: ni se
+   duplica ni se omite. Las pensiones de jubilación, invalidez o vejez van SOLO en
+   pensiones_de_jubilacion, nunca dobladas dentro de bonificaciones.
 2. Los valores van en pesos completos, sin puntos ni separadores. Si el certificado
    indica "cifras en miles", multiplica por 1.000.
 3. confianza: tu confianza global 0.0-1.0 en la extracción (baja si el PDF es
@@ -46,7 +49,8 @@ Reglas que no puedes violar:
 
 
 class Extraccion220(BaseModel):
-    empleador_nit: str = Field(pattern=r"^\d{9,10}$")
+    # 7-8 dígitos = NIT de persona natural (cédula), empleador legítimo y masivo.
+    empleador_nit: str = Field(pattern=r"^\d{7,10}$")
     empleador_nombre: str
     anio_gravable: int
     numero_de_certificados: int = Field(ge=0)
@@ -55,7 +59,9 @@ class Extraccion220(BaseModel):
     cesantias_e_intereses: int = Field(default=0, ge=0)
     prima: int = Field(default=0, ge=0)
     bonificaciones: int = Field(default=0, ge=0)
-    pensiones_de_jubilacion: int = Field(default=0, ge=0)
+    # SIN default a propósito: el modelo debe declararla siempre, aunque sea 0. Si fuera
+    # opcional, un modelo que la omite deja pasar un 220 mixto como laboral puro.
+    pensiones_de_jubilacion: int = Field(ge=0)
     aportes_salud: int = Field(ge=0)
     aportes_pension: int = Field(ge=0)
     retencion: int = Field(default=0, ge=0)
@@ -89,7 +95,7 @@ def extraer_220(
         # presupuesto corto trunca el JSON de un 220 escaneado y el parse falla.
         max_tokens=16000,
         # Esto es transcripción mecánica de casillas, no razonamiento abierto: effort
-        # medio gasta menos thinking sin cambiar el contrato del parse.
+        # "medium" gasta menos thinking sin cambiar el contrato del parse.
         output_config={"effort": "medium"},
         messages=[{
             "role": "user",
@@ -127,7 +133,22 @@ def extraer_220(
             "regístralas como IngresoPension, no laboral"
         )
 
-    suma = ext.salarios + ext.cesantias_e_intereses + ext.prima + ext.bonificaciones
+    # Identidad del documento antes de calidad de la extracción: el error más común es
+    # subir el 220 del año equivocado, y este chequeo no puede falso-rechazar.
+    if anio_esperado is not None and ext.anio_gravable != anio_esperado:
+        raise ValueError(
+            f"El certificado es del año gravable {ext.anio_gravable} "
+            f"y se esperaba {anio_esperado}"
+        )
+
+    # Las pensiones entran en la suma porque el "Total de ingresos brutos" impreso las
+    # incluye. Hoy el guard de arriba ya cortó cualquier caso con pensiones > 0, así que
+    # este término es 0; queda escrito para que la invariante siga siendo cierta si algún
+    # día el 220 mixto tiene ruta propia (devolver IngresoLaboral + IngresoPension).
+    suma = (
+        ext.salarios + ext.cesantias_e_intereses + ext.prima + ext.bonificaciones
+        + ext.pensiones_de_jubilacion
+    )
     if abs(suma - ext.total_ingresos_brutos) > TOLERANCIA_RECONCILIACION_PESOS:
         # El total impreso es el testigo independiente: si los campos no lo reproducen,
         # el LLM se saltó una casilla o contó una dos veces.
@@ -135,12 +156,6 @@ def extraer_220(
             "la extracción no reconcilia contra el total impreso del certificado: "
             f"los campos suman {suma:,} y el certificado dice "
             f"{ext.total_ingresos_brutos:,}"
-        )
-
-    if anio_esperado is not None and ext.anio_gravable != anio_esperado:
-        raise ValueError(
-            f"El certificado es del año gravable {ext.anio_gravable} "
-            f"y se esperaba {anio_esperado}"
         )
 
     doc_id = hashlib.sha256(pdf_bytes).hexdigest()[:12]
