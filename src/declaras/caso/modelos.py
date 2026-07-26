@@ -1,20 +1,20 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
-from declaras.caso.fuentes import Fuente, MontoDeclarado
+from declaras.caso.fuentes import Fuente, MontoDeclarado, _Modelo
 
 Monto = Field(ge=0)
 
 
-class Contribuyente(BaseModel):
+class Contribuyente(_Modelo):
     tipo_doc: str = "CC"
     num_doc: str
     nombre: str
     residente: bool = True
 
 
-class IngresoLaboral(BaseModel):
+class IngresoLaboral(_Modelo):
     empleador_nit: str
     empleador_nombre: str
     salarios: int = Monto
@@ -31,7 +31,7 @@ class IngresoLaboral(BaseModel):
         return self.salarios + self.cesantias_e_intereses + self.prima + self.bonificaciones
 
 
-class IngresoPension(BaseModel):
+class IngresoPension(_Modelo):
     pagador: str
     mesadas: list[int]  # 12 valores, enero a diciembre (la exención es POR MES)
     retencion: int = Field(default=0, ge=0)
@@ -45,14 +45,14 @@ class IngresoPension(BaseModel):
         return v
 
 
-class Rendimiento(BaseModel):
+class Rendimiento(_Modelo):
     entidad: str
     valor: int = Monto
     retencion: int = Field(default=0, ge=0)
     fuente: Fuente
 
 
-class CostosArriendo(BaseModel):
+class CostosArriendo(_Modelo):
     predial: int = Field(default=0, ge=0)
     administracion: int = Field(default=0, ge=0)
     comision_inmobiliaria: int = Field(default=0, ge=0)
@@ -63,7 +63,7 @@ class CostosArriendo(BaseModel):
         return self.predial + self.administracion + self.comision_inmobiliaria + self.reparaciones
 
 
-class Arriendo(BaseModel):
+class Arriendo(_Modelo):
     inmueble: str
     canon_total: int = Monto
     retencion: int = Field(default=0, ge=0)
@@ -71,7 +71,7 @@ class Arriendo(BaseModel):
     fuente: Fuente
 
 
-class Dividendo(BaseModel):
+class Dividendo(_Modelo):
     sociedad_nit: str
     sociedad_nombre: str
     no_gravados: int = Field(default=0, ge=0)
@@ -80,28 +80,28 @@ class Dividendo(BaseModel):
     fuente: Fuente
 
 
-class Dependiente(BaseModel):
+class Dependiente(_Modelo):
     tipo: Literal["hijo_menor", "hijo_estudiante", "hijo_discapacidad",
                   "conyuge", "padre_hermano"]
     meses: int = Field(default=12, ge=1, le=12)
     fuente: Fuente
 
 
-class AporteAfc(BaseModel):
+class AporteAfc(_Modelo):
     entidad: str
     tipo: Literal["AFC", "FVP"]
     valor: int = Monto
     fuente: Fuente
 
 
-class Donacion(BaseModel):
+class Donacion(_Modelo):
     entidad: str
     valor: int = Monto
     certificada: bool = False
     fuente: Fuente
 
 
-class Beneficios(BaseModel):
+class Beneficios(_Modelo):
     dependientes: list[Dependiente] = []
     medicina_prepagada: MontoDeclarado | None = None
     intereses_vivienda: MontoDeclarado | None = None
@@ -112,40 +112,40 @@ class Beneficios(BaseModel):
     donaciones_esal: list[Donacion] = []
 
 
-class Activo(BaseModel):
+class Activo(_Modelo):
     tipo: Literal["inmueble", "vehiculo", "cuenta", "inversion", "otro"]
     descripcion: str
     valor_31dic: int = Monto
     fuente: Fuente
 
 
-class Deuda(BaseModel):
+class Deuda(_Modelo):
     acreedor: str
     saldo_31dic: int = Monto
     fuente: Fuente
 
 
-class Patrimonio(BaseModel):
+class Patrimonio(_Modelo):
     activos: list[Activo] = []
     deudas: list[Deuda] = []
     patrimonio_liquido_anterior: int | None = None
 
 
-class Movimientos(BaseModel):
+class Movimientos(_Modelo):
     """Insumos para el chequeo de obligación (no son ingreso)."""
 
     consignaciones_totales: MontoDeclarado | None = None
     compras_y_consumos: MontoDeclarado | None = None
 
 
-class Creditos(BaseModel):
+class Creditos(_Modelo):
     anticipo_pagado: int = Field(default=0, ge=0)
     saldo_favor_anterior: int = Field(default=0, ge=0)
     anios_previos_declarando: int = Field(default=0, ge=0)
-    impuesto_neto_anio_anterior: int | None = None
+    impuesto_neto_anio_anterior: int | None = Field(default=None, ge=0)
 
 
-class CasoTributario(BaseModel):
+class CasoTributario(_Modelo):
     anio_gravable: int = 2025
     contribuyente: Contribuyente
     laborales: list[IngresoLaboral] = []
