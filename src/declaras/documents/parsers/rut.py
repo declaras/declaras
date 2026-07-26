@@ -111,8 +111,8 @@ def parse(content: bytes) -> DocumentReading:
             ReadingWarning(
                 code="TEMPLATE_MARKER_NOT_FOUND",
                 message=(
-                    "no se encontro el bloque de plantilla del RUT; el formato del "
-                    "documento pudo cambiar y los campos leidos son menos confiables"
+                    "El RUT no tiene la forma que esperábamos: la DIAN pudo cambiar el "
+                    "formato, así que conviene revisar los datos que se leyeron."
                 ),
             )
         )
@@ -154,8 +154,9 @@ def _check_internal_consistency(
             ReadingWarning(
                 code="RUT_ID_MISMATCH",
                 message=(
-                    f"el NIT ({nit}) y el numero de identificacion ({id_number}) no "
-                    "coinciden: la lectura del PDF pudo desincronizarse"
+                    f"En el RUT, el NIT ({nit}) y el número de identificación ({id_number}) "
+                    "no coinciden. En una persona natural son el mismo número, así que hay "
+                    "que revisar el documento."
                 ),
             )
         )
@@ -173,6 +174,27 @@ def _value_stream(fragments: list[str]) -> tuple[list[str], bool]:
     return fragments[template_indexes[-1] + 1 :], True
 
 
+# Como se llama cada campo del RUT en un aviso que lee una persona. Los avisos no deben
+# filtrar nombres internos como "collection_office".
+_FIELD_LABELS = {
+    "form_number": "el número del formulario",
+    "nit": "el NIT",
+    "verification_digit": "el dígito de verificación",
+    "collection_office": "la dirección seccional",
+    "taxpayer_kind": "el tipo de contribuyente",
+    "id_kind": "el tipo de documento",
+    "id_number": "el número de identificación",
+    "business_name": "la razón social",
+    "last_name_1": "el primer apellido",
+    "last_name_2": "el segundo apellido",
+    "first_name_1": "el primer nombre",
+    "other_names": "los otros nombres",
+    "email": "el correo electrónico",
+    "economic_activity_code": "la actividad económica",
+    "economic_activity_start_date": "la fecha de inicio de actividad",
+}
+
+
 def _extract_fields(values: list[str], warnings: list[ReadingWarning]) -> list[ExtractedField]:
     cursor = _Cursor(values)
     fields: list[ExtractedField] = []
@@ -180,7 +202,13 @@ def _extract_fields(values: list[str], warnings: list[ReadingWarning]) -> list[E
     def add(name: str, value: str | None, *, unit: str | None = None) -> None:
         if value is None:
             warnings.append(
-                ReadingWarning(code="FIELD_NOT_FOUND", message=f"no se encontro {name}")
+                ReadingWarning(
+                    code="FIELD_NOT_FOUND",
+                    message=f"No se encontró {_FIELD_LABELS.get(name, name)} en el RUT",
+                    # Un campo del RUT que falta no bloquea nada por si solo: lo que hace es
+                    # bajar la confianza de la lectura, y de eso queda constancia.
+                    needs_action=False,
+                )
             )
             return
         fields.append(

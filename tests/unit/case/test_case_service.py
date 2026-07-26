@@ -368,3 +368,57 @@ async def test_la_bitacora_no_muestra_codigos_internos(service):
         assert evento.message
         assert evento.kind not in evento.message
         assert "_" not in evento.message
+
+
+# Vocabulario que solo existe dentro del sistema. El producto es para que una persona resuelva
+# su propia declaracion, y ninguna de estas palabras significa nada para ella.
+VOCABULARIO_INTERNO = ("expediente", "flag", "parser", "job", "vincul", "extraccion")
+
+
+async def test_lo_que_se_registra_no_usa_vocabulario_interno(service):
+    """Paso dos veces: la palabra "expediente" se filtro a un evento que lee el cliente. Un caso
+    que lo vigile cuesta menos que volver a encontrarlo en una captura de pantalla."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    await svc.add_client_upload(
+        case_id=caso.case.id,
+        doc_type="certificado_intereses_vivienda",
+        content=b"una foto",
+        filename="cert.jpg",
+    )
+    detail = await svc.get_detail(caso.case.id)
+
+    textos = [e.message for e in detail.events] + [f.message for f in detail.flags]
+    for texto in textos:
+        for palabra in VOCABULARIO_INTERNO:
+            assert palabra not in texto.lower(), f"{palabra!r} aparece en {texto!r}"
+
+
+async def test_un_aviso_que_no_pide_nada_queda_como_constancia_no_como_pendiente(service):
+    """El portal manda el nombre del contribuyente con caracteres danados. No hay nada que
+    nadie pueda hacer y no afecta ninguna cifra, asi que no puede estar en la misma lista que
+    un valor que hay que confirmar: mezclarlos le quita autoridad a la lista."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    detail = await _consultar(
+        svc, store, caso.case.id, contenido=build_exogena_xlsx(taxpayer_name="PEREZ JOS\ufffd")
+    )
+
+    constancia = next(f for f in detail.flags if f.code == "TEXT_ENCODING_DAMAGED")
+    assert constancia.severity is FlagSeverity.INFO
+
+
+async def test_volver_a_consultar_no_deja_un_evento_por_documento(service):
+    """Una consulta reemplaza los cinco documentos a la vez. Cinco lineas seguidas diciendo lo
+    mismo tapan lo que si paso."""
+    svc, store = service
+    caso = await svc.open_case(id_kind=IdDocumentKind.CC, id_number="10203040", tax_year=2025)
+    await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+    detail = await _consultar(svc, store, caso.case.id, contenido=build_exogena_xlsx())
+
+    consultas = [e for e in detail.events if e.kind == "DIAN_QUERY"]
+    assert len(consultas) == 2
+    # El reemplazo queda registrado, pero contado en el evento de la consulta.
+    assert consultas[-1].payload["superseded"] == 1
+    assert not [e for e in detail.events if e.kind == "DOCUMENT_SUPERSEDED"]

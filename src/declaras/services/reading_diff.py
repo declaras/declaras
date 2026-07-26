@@ -123,7 +123,7 @@ def describe_sync(diffs: list[ReadingDiff]) -> str:
 
     if len(changed) == len(diffs) and all(d.is_new for d in changed):
         cuantos = "un documento" if len(diffs) == 1 else f"{len(diffs)} documentos"
-        return f"La consulta a la DIAN trajo {cuantos} al expediente"
+        return f"La consulta a la DIAN trajo {cuantos}"
 
     nombres = [document_label(d.doc_type) for d in changed]
     listado = nombres[0] if len(nombres) == 1 else f"{', '.join(nombres[:-1])} y {nombres[-1]}"

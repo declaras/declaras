@@ -134,3 +134,53 @@ async def test_requiere_llave_de_api(client):
         headers={"X-API-Key": "invalida"},
     )
     assert response.status_code == 401
+
+
+async def test_la_descarga_ofrece_el_nombre_real_del_documento(client):
+    """El almacenamiento nombra los archivos por hash. Sin esto, alguien que descarga su
+    declaracion se queda con "e92f38b8ba15.pdf" en la carpeta de descargas."""
+    created = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    case_id = created.json()["id"]
+    subido = await client.post(
+        f"/v1/cases/{case_id}/documents",
+        data={"doc_type": "certificado_intereses_vivienda"},
+        files={"file": ("certificado banco.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    url = subido.json()["documents"][0]["download_url"]
+    # El nombre va en la ruta: el visor de PDF del navegador titula el documento con el ultimo
+    # segmento de la URL, y sin esto quien abre su declaracion ve un archivo llamado "content".
+    assert "/certificado%20banco.pdf?" in url
+
+    respuesta = await client.get(url)
+    assert respuesta.status_code == 200
+    assert 'filename="certificado banco.pdf"' in respuesta.headers["content-disposition"]
+    assert respuesta.headers["content-type"] == "application/pdf"
+
+
+async def test_un_nombre_de_archivo_no_puede_inyectar_cabeceras(client):
+    """El nombre viaja por la URL, asi que llega del cliente: un salto de linea ahi permitiria
+    inyectar otras cabeceras en la respuesta."""
+    from declaras.api.routers.documents import safe_filename
+
+    assert safe_filename("a\r\nSet-Cookie: x=1", "seguro.pdf") == "aSet-Cookie x1"
+    assert safe_filename('"; evil="', "seguro.pdf") == "evil"
+    assert safe_filename("", "seguro.pdf") == "seguro.pdf"
+    assert safe_filename("...", "seguro.pdf") == "seguro.pdf"
+
+
+async def test_el_documento_se_puede_ver_sin_descargarlo(client):
+    """Para revisar si un documento es el correcto, bajarlo al disco y abrirlo con otro programa
+    es friccion innecesaria."""
+    created = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    subido = await client.post(
+        f"/v1/cases/{created.json()['id']}/documents",
+        data={"doc_type": "predial"},
+        files={"file": ("predial.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    url = subido.json()["documents"][0]["download_url"]
+
+    vista = await client.get(f"{url}&inline=true")
+    assert vista.headers["content-disposition"].startswith("inline")
+    descarga = await client.get(url)
+    assert descarga.headers["content-disposition"].startswith("attachment")

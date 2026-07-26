@@ -87,7 +87,7 @@ class CaseService:
         await self._cases.add_event(
             case_id=case.id,
             kind="CASE_OPENED",
-            message=f"Expediente abierto para el año gravable {tax_year}",
+            message=f"Se abrió la declaración del año gravable {tax_year}",
         )
         log.info("case.opened", case_id=str(case.id), client_id=str(client.id), tax_year=tax_year)
         return await self._require_detail(case.id)
@@ -134,6 +134,7 @@ class CaseService:
             return detail
 
         diffs: list[ReadingDiff] = []
+        reemplazados = 0
         for stored in result.documents:
             if stored.doc_type.value == _EVIDENCE_DOC_TYPE:
                 continue  # es evidencia de auditoria, no un insumo del motor
@@ -144,7 +145,7 @@ class CaseService:
             # distinto. Y reconsultar es normal (el contador vuelve cuando la DIAN ya
             # publico la exogena), asi que acumular copias dejaria el expediente sin un
             # documento vigente claro.
-            await self._supersede_previous(case_id, stored.doc_type.value)
+            reemplazados += await self._supersede_previous(case_id, stored.doc_type.value)
 
             case_doc = await self._cases.add_document(
                 case_id=case_id,
@@ -187,6 +188,9 @@ class CaseService:
                 "documents": len(result.documents),
                 "failures": len(result.failures),
                 "changed": [d.doc_type for d in diffs if d.has_changes],
+                # Las copias anteriores se conservan para auditoria; el conteo queda aqui en
+                # vez de en un evento por documento.
+                "superseded": reemplazados,
             },
         )
         log.info(
@@ -224,7 +228,7 @@ class CaseService:
         await self._cases.add_event(
             case_id=case_id,
             kind="DOCUMENT_UPLOADED",
-            message=f"El cliente subió {doc_type.replace('_', ' ')}",
+            message=f"Se agregó {document_label(doc_type)}",
             payload={"filename": filename},
         )
         await self._try_read_and_flag(case_id=case_id, case_doc=case_doc, doc_type=doc_type)
@@ -277,7 +281,7 @@ class CaseService:
             await self._cases.add_flag(
                 case_id=case_id,
                 code=exc.code,
-                message=f"No se pudo leer {doc_type.replace('_', ' ')}: {exc.message}",
+                message=f"No se pudo leer {document_label(doc_type)}: {exc.message}",
                 severity=FlagSeverity.BLOCKING,
                 source_document_id=case_doc.id,
             )
@@ -289,18 +293,22 @@ class CaseService:
         await self._flag_if_identity_differs(case_id, case_doc, reading)
         return reading
 
-    async def _supersede_previous(self, case_id: UUID, doc_type: str) -> None:
+    async def _supersede_previous(self, case_id: UUID, doc_type: str) -> int:
         """Marca reemplazados los documentos del portal de ese tipo y cierra sus avisos.
 
         El documento viejo se conserva (la DIAN puede preguntar hasta tres anios despues),
         pero sus flags se resuelven solos: un aviso sobre un documento que ya no es el
-        vigente solo ensucia la lista de pendientes del contador.
+        vigente solo ensucia la lista de pendientes.
+
+        No registra un evento por documento. Una consulta reemplaza los cinco a la vez, y cinco
+        lineas seguidas diciendo lo mismo no son la historia del expediente, son ruido que tapa
+        lo que si paso; el conteo va en el evento unico de la consulta.
         """
         reemplazados = await self._cases.supersede_documents(
             case_id=case_id, doc_type=doc_type, source=CaseDocumentSource.DIAN_PORTAL
         )
         if not reemplazados:
-            return
+            return 0
 
         detail = await self._require_detail(case_id)
         ids_reemplazados = {d.id for d in reemplazados}
@@ -310,16 +318,8 @@ class CaseService:
                     flag.id, note="El documento se reemplazó por una consulta más reciente."
                 )
 
-        await self._cases.add_event(
-            case_id=case_id,
-            kind="DOCUMENT_SUPERSEDED",
-            message=(
-                f"Una consulta más reciente reemplazó {document_label(doc_type)}; "
-                "la copia anterior se conserva para auditoría"
-            ),
-            payload={"doc_type": doc_type, "superseded": len(reemplazados)},
-        )
         log.info("case.document_superseded", case_id=str(case_id), doc_type=doc_type)
+        return len(reemplazados)
 
     def _assert_same_taxpayer(self, detail: CaseDetail, result: ExtractionResult) -> None:
         """El expediente y la extraccion tienen que ser de la misma persona y anio.
@@ -367,8 +367,8 @@ class CaseService:
             case_id=case_id,
             code="DOCUMENT_IDENTITY_MISMATCH",
             message=(
-                f"El documento está a nombre de {document_id_number}, "
-                f"pero el expediente es de {expected}"
+                f"Este documento está a nombre de la identificación {document_id_number}, "
+                f"y la declaración es de la {expected}. Ese valor no puede entrar al cálculo."
             ),
             severity=FlagSeverity.BLOCKING,
             source_document_id=case_doc.id,
@@ -377,11 +377,17 @@ class CaseService:
     async def _flag_from_warning(
         self, case_id: UUID, document_id: UUID, warning: ReadingWarning
     ) -> None:
+        """Convierte un aviso de lectura en un pendiente del expediente.
+
+        Un aviso que no le pide nada a nadie queda como constancia (`INFO`) y no como algo por
+        atender: mezclarlo con los pendientes reales les quita autoridad, y a la larga hace que
+        la lista se deje de mirar.
+        """
         await self._cases.add_flag(
             case_id=case_id,
             code=warning.code,
             message=warning.message,
-            severity=FlagSeverity.WARNING,
+            severity=FlagSeverity.WARNING if warning.needs_action else FlagSeverity.INFO,
             source_document_id=document_id,
         )
 

@@ -108,7 +108,10 @@ def _read_invoices(
         warnings.append(
             ReadingWarning(
                 code="TABLE_HEADER_NOT_FOUND",
-                message="no se encontro el encabezado de la tabla de facturas",
+                message=(
+                    "El resumen de facturas no tiene la forma esperada, así que no se pudo "
+                    "leer el detalle. Hay que volver a traerlo del portal."
+                ),
             )
         )
         return [], None
@@ -129,7 +132,10 @@ def _read_invoices(
             warnings.append(
                 ReadingWarning(
                     code="CASH_PAYMENT_WITH_BENEFIT",
-                    message="una factura en efectivo trae valor susceptible de beneficio",
+                    message=(
+                        "Una factura pagada en efectivo aparece marcada como válida para el "
+                        "descuento del 1%. En efectivo no aplica, así que hay que revisarla."
+                    ),
                     source=f"fila {row}",
                 )
             )

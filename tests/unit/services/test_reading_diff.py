@@ -84,7 +84,7 @@ def test_sin_cambios_se_dice_sin_cambios():
 def test_la_primera_consulta_no_dice_que_algo_cambio():
     diffs = [compare(doc_type=t, before=None, after=_lectura(a=1)) for t in ("EXOGENA", "RUT")]
     mensaje = describe_sync(diffs)
-    assert "trajo 2 documentos" in mensaje
+    assert mensaje == "La consulta a la DIAN trajo 2 documentos"
     assert "cambió" not in mensaje
 
 

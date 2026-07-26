@@ -44,11 +44,21 @@ class ExtractedRow(BaseModel):
 
 
 class ReadingWarning(BaseModel):
-    """Algo que el contador o el motor deben mirar, sin que sea una falla."""
+    """Algo que hay que mirar al leer un documento, sin que sea una falla.
+
+    `needs_action` distingue dos cosas que no se parecen: un aviso que le pide a alguien hacer
+    algo (confirmar un valor, volver a pedir un archivo) y una constancia de un defecto conocido
+    que no cambia ninguna cifra. Solo el lector sabe cual de las dos esta emitiendo, asi que lo
+    declara aqui en vez de dejar que cada consumidor lo adivine.
+
+    Importa porque un aviso que dice "esto no afecta nada" y que igual aparece en la lista de
+    pendientes ensucia la lista y le quita autoridad a los que si hay que atender.
+    """
 
     code: str
     message: str
     source: str | None = None
+    needs_action: bool = True
 
 
 class DocumentReading(BaseModel):

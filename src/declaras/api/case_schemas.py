@@ -154,7 +154,7 @@ class CaseDetailResponse(BaseModel):
             client=ClientResponse.from_domain(detail.client),
             documents=[
                 CaseDocumentResponse.from_domain(
-                    d, download_url=download_url_builder(d.storage_uri)
+                    d, download_url=download_url_builder(d.storage_uri, d.filename)
                 )
                 for d in detail.documents
             ],

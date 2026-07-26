@@ -27,8 +27,16 @@ from declaras.services.case_summary import CaseSummary, build_summary
 router = APIRouter(prefix="/v1", tags=["cases"])
 
 
-def _download_url(storage_uri: str) -> str:
-    return f"/v1/documents/content?uri={quote(storage_uri, safe='')}"
+def _download_url(storage_uri: str, filename: str | None = None) -> str:
+    """URL de entrega de un documento, con su nombre real en la ruta.
+
+    El nombre va en la ruta y no en un parametro porque el visor de PDF del navegador titula el
+    documento con el ultimo segmento de la URL.
+    """
+    ruta = "/v1/documents/content"
+    if filename:
+        ruta += f"/{quote(filename, safe='')}"
+    return f"{ruta}?uri={quote(storage_uri, safe='')}"
 
 
 @router.post(

@@ -144,7 +144,7 @@ def _read_header(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[Extra
             warnings.append(
                 ReadingWarning(
                     code="HEADER_FIELD_MISSING",
-                    message=f"El reporte de la DIAN no trae {label}",
+                    message=f"El reporte de la DIAN no trae {label}.",
                     source=cell,
                 )
             )
@@ -158,9 +158,12 @@ def _read_header(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[Extra
                     code="TEXT_ENCODING_DAMAGED",
                     message=(
                         f"El portal entregó {label} con caracteres ilegibles. "
-                        "Es un defecto conocido de la DIAN, no del documento."
+                        "Es un defecto conocido de la DIAN y no afecta ninguna cifra."
                     ),
                     source=cell,
+                    # Queda como constancia: no hay nada que nadie pueda hacer al respecto,
+                    # y las cifras del reporte no dependen de como se escriba un nombre.
+                    needs_action=False,
                 )
             )
         fields.append(ExtractedField(name=name, value=value, source=cell))
@@ -288,13 +291,13 @@ def _check_reported_to_taxpayer(
         reported = affected[0].values.get("reported_name") or "otra persona"
         if kind == "id":
             message = (
-                f"{reporter} reportó ${total:,.0f} a un número de identificación distinto "
-                f"al del titular: ese valor no debería contar como suyo"
+                f"{reporter} reportó ${total:,.0f} a un número de identificación distinto al "
+                "del titular, así que ese valor no debería contar como suyo."
             ).replace(",", ".")
         else:
             message = (
                 f"{reporter} reportó ${total:,.0f} al número de identificación del titular "
-                f"pero a nombre de {reported}: hay que confirmar si ese valor es suyo"
+                f"pero a nombre de {reported}. Hay que confirmar si ese valor es suyo."
             ).replace(",", ".")
         warnings.append(
             ReadingWarning(

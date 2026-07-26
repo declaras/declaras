@@ -232,8 +232,8 @@ def parse(content: bytes) -> DocumentReading:
             ReadingWarning(
                 code="FORM_LAYOUT_NOT_RECOGNIZED",
                 message=(
-                    "No se reconoció la disposición del formulario: puede ser otra versión "
-                    "del 210 y las casillas no se pudieron ubicar"
+                    "No se reconoció la disposición del formulario, así que no se pudieron "
+                    "ubicar las casillas. Puede ser otra versión del 210."
                 ),
             )
         )
@@ -297,7 +297,7 @@ def _read_boxes(marks: list[_Positioned], warnings: list[ReadingWarning]) -> dic
                 code="FORM_LAYOUT_NOT_RECOGNIZED",
                 message=(
                     f"Se encontraron {shaded_hits} valores en celdas que el formulario deja "
-                    "en blanco: puede ser otra versión del 210"
+                    "en blanco, así que puede ser otra versión del 210."
                 ),
             )
         )
@@ -374,7 +374,7 @@ def _check_form_arithmetic(boxes: dict[int, int], warnings: list[ReadingWarning]
                     code="FORM_ARITHMETIC_MISMATCH",
                     message=(
                         f"La casilla {result} ({name}) no cuadra con las casillas que la "
-                        "componen: la lectura del PDF pudo desincronizarse"
+                        "componen, así que la lectura del PDF pudo desincronizarse."
                     ),
                     source=BOX_LABELS.get(result, f"casilla {result}"),
                 )
