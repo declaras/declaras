@@ -1,0 +1,179 @@
+"""Pruebas de extremo a extremo de la API, con el conector falso.
+
+Cubren las ramas que el agente que nos consume tiene que saber manejar: exito, clave
+mala, intentos agotados, reto de identidad y exito parcial.
+"""
+
+from __future__ import annotations
+
+from tests.conftest import wait_for_status
+
+BASE = "/v1/extractions"
+
+
+def payload(password: str, **overrides) -> dict:
+    body = {
+        "id_kind": "CC",
+        "id_number": "1020304050",
+        "dian_password": password,
+        "tax_year": 2025,
+    }
+    body.update(overrides)
+    return body
+
+
+async def test_extraccion_exitosa_devuelve_los_cinco_documentos(client):
+    created = await client.post(BASE, json=payload("clave-buena"))
+    assert created.status_code == 202
+    body = created.json()
+    assert body["status"] == "QUEUED"
+    assert created.headers["Location"].endswith(body["job_id"])
+
+    final = await wait_for_status(client, body["job_id"], "SUCCEEDED", "FAILED")
+    assert final["status"] == "SUCCEEDED"
+
+    doc_types = {doc["doc_type"] for doc in final["documents"]}
+    assert doc_types == {
+        "RUT",
+        "EXOGENA",
+        "PRIOR_RETURN",
+        "SUGGESTED_RETURN",
+        "EINVOICE_SUMMARY",
+    }
+    assert not final["failures"]
+    assert all(doc["sha256"] and doc["size_bytes"] > 0 for doc in final["documents"])
+
+
+async def test_los_documentos_se_pueden_descargar(client):
+    created = await client.post(BASE, json=payload("clave-buena"))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED")
+
+    download = await client.get(final["documents"][0]["download_url"])
+    assert download.status_code == 200
+    assert download.content.startswith(b"%PDF")
+
+
+async def test_clave_rechazada_falla_e_informa_intentos_restantes(client):
+    created = await client.post(BASE, json=payload("clave-bad"))
+    final = await wait_for_status(client, created.json()["job_id"], "FAILED", "SUCCEEDED")
+
+    assert final["status"] == "FAILED"
+    assert final["error"]["code"] == "DIAN_INVALID_CREDENTIALS"
+    assert final["error"]["retryable"] is False
+    assert final["error"]["details"]["attempts_remaining"] == 1
+
+
+async def test_no_se_encola_cuando_ya_no_quedan_intentos(client):
+    for _ in range(2):
+        created = await client.post(BASE, json=payload("clave-bad"))
+        await wait_for_status(client, created.json()["job_id"], "FAILED")
+
+    blocked = await client.post(BASE, json=payload("clave-bad"))
+    assert blocked.status_code == 429
+    assert blocked.json()["code"] == "DIAN_LOGIN_ATTEMPTS_EXHAUSTED"
+    assert blocked.headers["X-Retryable"] == "false"
+
+
+async def test_reto_de_identidad_parquea_el_job_y_se_reanuda_al_responder(client):
+    created = await client.post(BASE, json=payload("clave-challenge"))
+    job_id = created.json()["job_id"]
+
+    parked = await wait_for_status(client, job_id, "AWAITING_CHALLENGE", "FAILED")
+    assert parked["status"] == "AWAITING_CHALLENGE"
+    assert parked["challenge"]["kind"] == "EMAIL_CODE"
+    assert "codigo" in parked["challenge"]["prompt"].lower()
+
+    wrong = await client.post(f"{BASE}/{job_id}/challenge", json={"answers": ["0000"]})
+    assert wrong.status_code == 401
+
+    accepted = await client.post(f"{BASE}/{job_id}/challenge", json={"answers": ["1234"]})
+    assert accepted.status_code == 200
+
+    final = await wait_for_status(client, job_id, "SUCCEEDED", "FAILED")
+    assert final["status"] == "SUCCEEDED"
+    assert len(final["documents"]) == 5
+
+
+async def test_documento_no_publicado_produce_exito_parcial(client):
+    created = await client.post(BASE, json=payload("clave-noexo"))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
+
+    assert final["status"] == "SUCCEEDED"
+    assert len(final["documents"]) == 4
+    assert len(final["failures"]) == 1
+    failure = final["failures"][0]
+    assert failure["doc_type"] == "EXOGENA"
+    assert failure["code"] == "DIAN_DOCUMENT_UNAVAILABLE"
+
+
+async def test_portal_caido_es_reintentable(client):
+    created = await client.post(BASE, json=payload("clave-down"))
+    final = await wait_for_status(client, created.json()["job_id"], "FAILED", "SUCCEEDED")
+
+    assert final["error"]["code"] == "DIAN_PORTAL_UNAVAILABLE"
+    assert final["error"]["retryable"] is True
+
+
+async def test_se_puede_pedir_un_subconjunto_de_documentos(client):
+    created = await client.post(BASE, json=payload("ok", doc_types=["RUT", "EXOGENA"]))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
+
+    assert {doc["doc_type"] for doc in final["documents"]} == {"RUT", "EXOGENA"}
+
+
+async def test_no_se_puede_pedir_evidencia_como_documento(client):
+    response = await client.post(BASE, json=payload("ok", doc_types=["EVIDENCE"]))
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+async def test_job_inexistente_devuelve_404(client):
+    response = await client.get(f"{BASE}/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 404
+    assert response.json()["code"] == "JOB_NOT_FOUND"
+
+
+async def test_la_api_exige_llave(client):
+    response = await client.post(BASE, json=payload("ok"), headers={"X-API-Key": "invalida"})
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
+
+
+async def test_health_expone_la_configuracion_del_conector(client):
+    response = await client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["dian_adapter"] == "fake"
+
+
+async def test_el_reintento_conserva_las_credenciales(client_con_reintentos):
+    """Regresion: si al fallar se borraba la clave, el reintento moria con
+    DIAN_SESSION_EXPIRED y ocultaba el error verdadero del portal."""
+    created = await client_con_reintentos.post(BASE, json=payload("clave-down"))
+    final = await wait_for_status(
+        client_con_reintentos, created.json()["job_id"], "FAILED", "SUCCEEDED"
+    )
+
+    assert final["status"] == "FAILED"
+    assert final["attempts"] == 2, "el worker debio reintentar"
+    assert final["error"]["code"] == "DIAN_PORTAL_UNAVAILABLE"
+
+
+async def test_el_anio_gravable_se_deduce_si_no_se_envia(client):
+    """El cliente no tiene que saber que anio declara: lo deduce el calendario."""
+    from declaras.domain.tax_calendar import default_tax_year
+
+    cuerpo = {"id_number": "1020304050", "dian_password": "ok", "doc_types": ["RUT"]}
+    created = await client.post(BASE, json=cuerpo)
+    assert created.status_code == 202
+
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
+    assert final["taxpayer"]["tax_year"] == default_tax_year()
+
+
+async def test_se_puede_pedir_un_anio_anterior_explicito(client):
+    """Caso de los atrasados: ponerse al dia con un anio pasado."""
+    created = await client.post(BASE, json=payload("ok", tax_year=2023, doc_types=["RUT"]))
+    final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
+    assert final["taxpayer"]["tax_year"] == 2023

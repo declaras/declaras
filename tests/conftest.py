@@ -1,0 +1,79 @@
+"""Infraestructura de pruebas: una app aislada por test, con conector falso."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from declaras.api.app import create_app
+from declaras.config.settings import DianAdapterKind, Environment, Settings, StorageBackend
+
+API_KEY = "test-key"
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    return Settings(
+        env=Environment.LOCAL,
+        log_level="WARNING",
+        api_keys=[API_KEY],
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        storage_backend=StorageBackend.LOCAL,
+        storage_local_root=tmp_path / "documents",
+        dian_adapter=DianAdapterKind.FAKE,
+        dian_max_login_attempts=2,
+        worker_enabled=True,
+        worker_poll_interval_s=0.05,
+        worker_max_attempts=1,
+        dian_capture_evidence=True,
+    )
+
+
+@pytest.fixture
+async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
+    app = create_app(settings)
+    transport = ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"X-API-Key": API_KEY},
+        ) as http,
+    ):
+        yield http
+
+
+async def wait_for_status(
+    client: AsyncClient, job_id: str, *targets: str, timeout_s: float = 8.0
+) -> dict:
+    """Espera a que el job llegue a alguno de los estados pedidos."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    last: dict = {}
+    while asyncio.get_event_loop().time() < deadline:
+        response = await client.get(f"/v1/extractions/{job_id}")
+        last = response.json()
+        if last.get("status") in targets:
+            return last
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"timeout esperando {targets}, ultimo estado: {last.get('status')}")
+
+
+@pytest.fixture
+async def client_con_reintentos(settings: Settings) -> AsyncIterator[AsyncClient]:
+    """Cliente con reintentos habilitados, para probar la ruta de reencolado."""
+    settings = settings.model_copy(update={"worker_max_attempts": 2})
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-API-Key": API_KEY},
+        ) as http,
+    ):
+        yield http
