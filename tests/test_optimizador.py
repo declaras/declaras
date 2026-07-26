@@ -40,6 +40,20 @@ def test_ahorro_marginal_de_un_dependiente():
     assert ahorro > 0  # un dependiente extra ahorra impuesto real
 
 
+def test_ahorro_marginal_exige_el_mismo_caso():
+    """Restar impuestos de dos contribuyentes distintos no es un ahorro: revienta."""
+    with pytest.raises(ValueError, match="MISMO caso"):
+        ahorro_marginal(caso_g1(), caso_g3_parcial(), P)
+
+
+def test_ahorro_marginal_exige_el_mismo_anio():
+    con = caso_g3_parcial()
+    otro_anio = con.model_copy(deep=True)
+    otro_anio.anio_gravable = 2024
+    with pytest.raises(ValueError, match="MISMO caso"):
+        ahorro_marginal(otro_anio, con, P)
+
+
 def test_sin_dependientes_un_solo_combo():
     caso = caso_g1()
     caso.beneficios.dependientes = []

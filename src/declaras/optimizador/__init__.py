@@ -39,6 +39,14 @@ def optimizar(caso: CasoTributario, p: ParametrosAnio) -> ResultadoOptimizacion:
 
 def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
                     p: ParametrosAnio) -> int:
-    """Cuánto impuesto ahorra un hecho: base del 'cada pregunta lleva su ahorro'."""
+    """Cuánto impuesto ahorra un hecho: base del 'cada pregunta lleva su ahorro'.
+
+    Los ahorros marginales NO son aditivos: para mostrar ahorro por pregunta
+    acumulado, calcular cada uno sobre el caso ya acumulado, no todos contra el
+    mismo base.
+    """
+    if (caso_base.contribuyente.num_doc != caso_con_hecho.contribuyente.num_doc
+            or caso_base.anio_gravable != caso_con_hecho.anio_gravable):
+        raise ValueError("ahorro_marginal compara dos versiones del MISMO caso")
     return (optimizar(caso_base, p).liquidacion.valor("IMPUESTO_NETO")
             - optimizar(caso_con_hecho, p).liquidacion.valor("IMPUESTO_NETO"))
