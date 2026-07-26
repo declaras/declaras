@@ -75,6 +75,33 @@ def test_cargar_anio_sin_parametros():
         cargar(1999)
 
 
+def test_clave_desconocida_en_el_yaml_revienta(tmp_path, monkeypatch):
+    # `extra="forbid"` en los parámetros: un parámetro con typo (o renombrado en el YAML
+    # de un año nuevo) se descartaba en silencio y el motor liquidaba con la regla vieja.
+    origen = Path(parametros.__file__).parent / "ag2025.yaml"
+    texto = origen.read_text(encoding="utf-8") + "\nlimite_general_porcentaje: 0.45\n"
+    (tmp_path / "ag2025.yaml").write_text(texto, encoding="utf-8")
+    monkeypatch.setattr(parametros, "_DIR", tmp_path)
+    with pytest.raises(ValueError, match="limite_general_porcentaje"):
+        parametros.cargar(2025)
+
+
+def test_clave_desconocida_en_un_tramo_revienta():
+    tramos = _tramos_ag2025()
+    tramos[2]["constante"] = 116  # el campo real es constante_uvt
+    with pytest.raises(ValueError, match=r"tabla_241\.2\.constante"):
+        ParametrosAnio.model_validate(_ag2025_con_tramos(tramos))
+
+
+def test_tramo_sin_constante_uvt_revienta():
+    # Sin default: un tramo que omite la constante no es "constante 0". En el tramo del
+    # 28% eso subestimaría el impuesto en 116 UVT (5.776.684 pesos) sin avisar.
+    tramos = _tramos_ag2025()
+    del tramos[2]["constante_uvt"]
+    with pytest.raises(ValueError, match="constante_uvt"):
+        ParametrosAnio.model_validate(_ag2025_con_tramos(tramos))
+
+
 def test_tabla_241_debe_empezar_en_cero():
     tramos = _tramos_ag2025()[1:]  # arranca en 1.090 UVT: se pierde el tramo exento
     with pytest.raises(ValueError, match="desde_uvt=0"):

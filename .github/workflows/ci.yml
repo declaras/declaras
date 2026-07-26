@@ -6,5 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
+      # --locked: falla si uv.lock no corresponde a pyproject.toml, en vez de resolver
+      # versiones distintas a las locales y volver el verde de CI no reproducible.
+      - run: uv sync --locked
       - run: uv run pytest -q

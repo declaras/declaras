@@ -1,19 +1,29 @@
 from decimal import Decimal
 from typing import Self
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from declaras.dinero import pesos
 
 
 class Tramo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     desde_uvt: int
     hasta_uvt: int | None  # None = último tramo, sin tope
     tarifa: float
-    constante_uvt: int = 0  # constante publicada del art. 241, en UVT (116, 788, ...)
+    # Constante publicada del art. 241, en UVT (116, 788, ...). SIN default a propósito:
+    # un tramo que la omite no es "constante 0", es un YAML incompleto, y el default
+    # silencioso subestimaba el impuesto de ese tramo en millones.
+    constante_uvt: int
 
 
 class ParametrosAnio(BaseModel):
+    # Una clave desconocida revienta en vez de descartarse: si el YAML de un año trae un
+    # parámetro que el motor no lee (renombrado, nuevo, con typo), el motor liquidaría
+    # con la regla vieja sin decir nada.
+    model_config = ConfigDict(extra="forbid")
+
     anio: int
     uvt: int
     uvt_siguiente: int
