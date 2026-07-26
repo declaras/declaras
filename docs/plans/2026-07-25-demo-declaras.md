@@ -952,7 +952,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 # tests/test_rlg_general.py
 from declaras.caso import (
     Arriendo, Beneficios, CasoTributario, Contribuyente, CostosArriendo,
-    Dependiente, Fuente, IngresoLaboral, MontoDeclarado,
+    Dependiente, Fuente, IngresoLaboral, MontoDeclarado, Rendimiento,
 )
 from declaras.motor.elecciones import Elecciones
 from declaras.motor.general import base_general, rlg_general
@@ -986,13 +986,15 @@ def caso_g1():
 
 
 def caso_g3_parcial():
-    """Asalariado 100M + arriendo: el límite NO se copa, el 387 sí paga."""
+    """Asalariado 100M + rendimientos + arriendo: el límite NO se copa, el 387 sí paga."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="3", nombre="G3"),
         laborales=[IngresoLaboral(
             empleador_nit="900", empleador_nombre="ACME", salarios=100_000_000,
             aportes_salud=4_000_000, aportes_pension=4_000_000,
             retencion=6_000_000, fuente=FX)],
+        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
+                                  retencion=280_000, fuente=FX)],
         arriendos=[Arriendo(
             inmueble="Apto", canon_total=36_000_000, retencion=1_260_000,
             costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
@@ -1805,13 +1807,15 @@ def g2() -> CasoTributario:
 
 
 def g3() -> CasoTributario:
-    """Asalariado + arriendos con costos + dividendos mixtos."""
+    """Asalariado + rendimientos + arriendos con costos + dividendos mixtos."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="13", nombre="G3 Capital"),
         laborales=[IngresoLaboral(
             empleador_nit="900555666", empleador_nombre="Consultora Z",
             salarios=100_000_000, aportes_salud=4_000_000,
             aportes_pension=4_000_000, retencion=6_000_000, fuente=FX)],
+        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
+                                  retencion=280_000, fuente=FX)],
         arriendos=[Arriendo(
             inmueble="Apto arrendado", canon_total=36_000_000, retencion=1_260_000,
             costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
@@ -1891,7 +1895,7 @@ Expected: `4 passed`. Si algo falla, el error está en el motor (los esperados e
 Memoria de cálculo de los esperados (para el implementador y el contador):
 - **G1**: netos 110.4M; cap = 40% = 44.16M; limitadas+25% > cap → aplicado 44.16M; extra = 72 UVT (3.585.528) + 1% de 50M (500.000); RLG = 110.4M − 44.16M − 4.085.528 = 62.154.472; imp = (62.154.472 − 54.280.910)×19% = 1.495.977; anticipo 25%×imp − 8M < 0 → 0; saldo = 1.495.977 − 8.000.000 = −6.504.023.
 - **G2**: netos 81.6M (bruto 88M − aportes 6.4M, CI provisional 0); cap 32.64M; limitadas = GMF 400.000 + 25% de (80M−6.4M)=18.4M → 18.8M ≤ cap; RLG gen = 62.8M; pensiones = (55M−49.799M)×12 = 62.412.000; base 125.212.000 → imp = (base − 1.700 UVT)×28% + 116 UVT = 11.355.036 + 5.776.684 = 17.131.720; anticipo = 75%×imp − 3.56M = 9.288.790; saldo = 17.131.720 − 3.560.000 + 9.288.790 = 22.860.510.
-- **G3** (con 387): netos 132M; costos 11.4M; limitadas = GMF 450.000 + 387 10M + 25% de (100M−8M−10M)=20.5M → 30.95M ≤ cap 52.8M; extra 72×2 UVT = 7.171.056; RLG = 82.478.944; dividendos: 35%×10M=3.5M, base = 82.478.944+30M+6.5M = 118.978.944 → imp241 = (base − 1.700 UVT)×28% + 116 UVT = 15.386.464; descuento 254-1: 36.5M < 54.280.910 → 0; imp neto = 18.886.464; anticipo = 75% − 7.54M = 6.624.848; saldo = 17.971.312.
+- **G3** (con 387): bruto 140M (100M laboral + 4M rendimientos + 36M arriendos), netos 132M (INCR aportes 8M, CI provisional 0); costos 11.4M; limitadas = GMF 450.000 + 387 10M + 25% de (100M−8M−10M)=20.5M → 30.95M ≤ cap 52.8M; extra 72×2 UVT = 7.171.056; RLG = 82.478.944; dividendos: 35%×10M=3.5M, base = 82.478.944+30M+6.5M = 118.978.944 → imp241 = (base − 1.700 UVT)×28% + 116 UVT = 15.386.464; descuento 254-1: 36.5M < 54.280.910 → 0; imp neto = 18.886.464; anticipo = 75% − 7.54M = 6.624.848; saldo = 17.971.312.
 
 - [ ] **Step 3: Commit**
 
