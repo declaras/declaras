@@ -28,11 +28,12 @@ donaciones_descuento_pct: 0.25
 # PENDIENTE: decreto AG 2025 (sale ~mitad de 2026). null activa el flag provisional.
 componente_inflacionario: null
 anticipo_pct: [0.25, 0.50, 0.75]
+# Fórmula publicada del art. 241: (base − desde) × tarifa + constante_uvt
 tabla_241:
-  - {desde_uvt: 0,     hasta_uvt: 1090,  tarifa: 0.0}
-  - {desde_uvt: 1090,  hasta_uvt: 1700,  tarifa: 0.19}
-  - {desde_uvt: 1700,  hasta_uvt: 4100,  tarifa: 0.28}
-  - {desde_uvt: 4100,  hasta_uvt: 8670,  tarifa: 0.33}
-  - {desde_uvt: 8670,  hasta_uvt: 18970, tarifa: 0.35}
-  - {desde_uvt: 18970, hasta_uvt: 31000, tarifa: 0.37}
-  - {desde_uvt: 31000, hasta_uvt: null,  tarifa: 0.39}
+  - {desde_uvt: 0,     hasta_uvt: 1090,  tarifa: 0.0,  constante_uvt: 0}
+  - {desde_uvt: 1090,  hasta_uvt: 1700,  tarifa: 0.19, constante_uvt: 0}
+  - {desde_uvt: 1700,  hasta_uvt: 4100,  tarifa: 0.28, constante_uvt: 116}
+  - {desde_uvt: 4100,  hasta_uvt: 8670,  tarifa: 0.33, constante_uvt: 788}
+  - {desde_uvt: 8670,  hasta_uvt: 18970, tarifa: 0.35, constante_uvt: 2296}
+  - {desde_uvt: 18970, hasta_uvt: 31000, tarifa: 0.37, constante_uvt: 5901}
+  - {desde_uvt: 31000, hasta_uvt: null,  tarifa: 0.39, constante_uvt: 10352}

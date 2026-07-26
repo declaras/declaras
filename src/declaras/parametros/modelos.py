@@ -1,6 +1,7 @@
 from decimal import Decimal
+from typing import Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from declaras.dinero import pesos
 
@@ -9,6 +10,7 @@ class Tramo(BaseModel):
     desde_uvt: int
     hasta_uvt: int | None  # None = último tramo, sin tope
     tarifa: float
+    constante_uvt: int = 0  # constante publicada del art. 241, en UVT (116, 788, ...)
 
 
 class ParametrosAnio(BaseModel):
@@ -45,3 +47,46 @@ class ParametrosAnio(BaseModel):
 
     def uvt_pesos(self, n: float) -> int:
         return pesos(Decimal(str(n)) * self.uvt)
+
+    @model_validator(mode="after")
+    def _validar_tabla_241(self) -> Self:
+        """La tabla debe cubrir [0, ∞) en tramos ascendentes y contiguos.
+
+        `impuesto_tabla_241` la recorre asumiendo eso: sin la guarda, un YAML
+        desordenado o con huecos daría una cifra mala en silencio.
+        """
+        tramos = self.tabla_241
+        if not tramos:
+            raise ValueError("tabla_241: no puede estar vacía")
+        if tramos[0].desde_uvt != 0:
+            raise ValueError(
+                "tabla_241: el primer tramo debe empezar en desde_uvt=0, "
+                f"no en {tramos[0].desde_uvt}"
+            )
+        ultimo = len(tramos) - 1
+        if tramos[ultimo].hasta_uvt is not None:
+            raise ValueError(
+                "tabla_241: el último tramo debe ser abierto (hasta_uvt nulo); tiene "
+                f"hasta_uvt={tramos[ultimo].hasta_uvt}, así que las bases por encima "
+                "quedarían sin gravar"
+            )
+        for i, tramo in enumerate(tramos):
+            if tramo.hasta_uvt is None:
+                if i != ultimo:
+                    raise ValueError(
+                        "tabla_241: solo el último tramo puede tener hasta_uvt nulo; "
+                        f"lo tiene el tramo {i} (desde_uvt={tramo.desde_uvt})"
+                    )
+                continue
+            if tramo.hasta_uvt <= tramo.desde_uvt:
+                raise ValueError(
+                    f"tabla_241: los tramos deben ser ascendentes; el tramo {i} va de "
+                    f"desde_uvt={tramo.desde_uvt} a hasta_uvt={tramo.hasta_uvt}"
+                )
+            if i != ultimo and tramo.hasta_uvt != tramos[i + 1].desde_uvt:
+                raise ValueError(
+                    f"tabla_241: los tramos deben ser contiguos; el tramo {i} termina en "
+                    f"hasta_uvt={tramo.hasta_uvt} pero el siguiente empieza en "
+                    f"desde_uvt={tramos[i + 1].desde_uvt}"
+                )
+        return self
