@@ -1199,12 +1199,12 @@ from declaras.parametros import ParametrosAnio
 
 
 def rlg_pensiones(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> int:
-    """Cédula de pensiones: exención de 1.000 UVT POR MES; el exceso grava."""
+    """Cédula de pensiones (I-2): exención mensual del CONTRIBUYENTE — se agregan
+    los pagadores de cada mes antes de restar el tope; el exceso grava."""
     tope_mes = p.uvt_pesos(p.pension_exenta_uvt_mes)
     gravado = sum(
-        max(0, mesada - tope_mes)
-        for pension in caso.pensiones
-        for mesada in pension.mesadas
+        max(0, sum(pn.mesadas[mes] for pn in caso.pensiones) - tope_mes)
+        for mes in range(12)
     )
     return t.nodo(
         "RLG_PENSIONES", "Renta líquida gravable cédula de pensiones",
