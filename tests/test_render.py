@@ -1,3 +1,4 @@
+from declaras.caso import Contribuyente
 from declaras.optimizador import optimizar
 from declaras.parametros import cargar
 from declaras.render import ORDEN_CASILLAS, borrador_html, casillas, memoria_markdown
@@ -6,6 +7,7 @@ from tests.golden.casos import g0, g1, g2, g3, g4, g5
 P = cargar(2025)
 
 INSUMOS_RLG = ["ING_NETOS_GENERAL", "COSTOS_ARRIENDOS", "APLICADO_40", "EXTRA_LIMITE"]
+NOMBRE_HOSTIL = '<script>alert(1)</script> Pérez & Cía "SAS"'
 
 
 def _liq():
@@ -74,3 +76,22 @@ def test_html_imprimible():
 def test_html_muestra_insumos():
     html = borrador_html(_liq(), g1())
     assert f"<small>Insumos: {', '.join(INSUMOS_RLG)}</small>" in html
+
+
+def test_html_escapa_el_nombre_del_contribuyente():
+    """El nombre llega de extracción LLM y del API: dato no confiable en HTML."""
+    caso = g1().model_copy(update={
+        "contribuyente": Contribuyente(num_doc="99", nombre=NOMBRE_HOSTIL)})
+    html = borrador_html(optimizar(caso, P).liquidacion, caso)
+    assert NOMBRE_HOSTIL not in html
+    assert "<script>" not in html and "</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "Pérez &amp; Cía &#34;SAS&#34;" in html  # tildes intactas, metacaracteres no
+
+
+def test_autoescape_no_toca_formulas_ni_separador_de_miles():
+    html = borrador_html(_liq(), g1())
+    assert "110,400,000 − costos 0 − aplicado 44,160,000 − extra 4,085,528" in html
+    assert "min(40% × 110,400,000, 1,340 UVT = 66,730,660)" in html
+    assert "Σ max(0, mesada_mes agregada entre pagadores − 1,000 UVT" in html
+    assert '<td class="v">62,154,472</td>' in html  # {:,} intacto
