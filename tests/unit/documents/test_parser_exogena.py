@@ -90,3 +90,102 @@ def test_los_valores_deterministicos_tienen_confianza_total():
 def test_el_hash_del_contenido_es_estable():
     content = build_exogena_xlsx()
     assert parse(content).content_sha256 == parse(content).content_sha256
+
+
+# ─────── valores que un tercero reporto a nombre de otra persona ───────
+#
+# Es la pregunta del producto "y este ingreso que no es mio?". El reporte trae a quien le
+# reporto cada tercero, asi que se puede contestar con datos en vez de suposiciones.
+
+
+def _fila(**cambios):
+    fila = {
+        "reporter_nit": "900111222",
+        "reporter_name": "ZPN ARQUIREDES SAS",
+        "concept": "Servicios (Concepto: 5004)",
+        "amount": 7_330_000,
+        "suggested_use": "Tope 1: Ingresos brutos | R43 Ingresos brutos",
+    }
+    return fila | cambios
+
+
+def test_avisa_cuando_un_tercero_reporta_a_nombre_de_otra_persona():
+    """Caso real: la empresa reporto a la cedula correcta con el nombre de otra persona. Ese
+    valor entra a los topes de obligacion como si fuera del titular."""
+    reading = parse(
+        build_exogena_xlsx(
+            taxpayer_name="VALENCIA MORENO JUAN JOSE",
+            detail_rows=[_fila(reported_name="Alejandra Delgado Bautista")],
+        )
+    )
+    avisos = [w for w in reading.warnings if w.code == "REPORTED_TO_ANOTHER_PERSON"]
+    assert len(avisos) == 1
+    assert "Alejandra Delgado Bautista" in avisos[0].message
+    assert "ZPN ARQUIREDES SAS" in avisos[0].message
+
+
+def test_el_mismo_nombre_en_otro_orden_no_genera_aviso():
+    """Los terceros escriben el nombre como quieren. Si esto avisara, el aviso perderia
+    sentido: aparecería en casi todos los reportes y nadie lo miraria."""
+    reading = parse(
+        build_exogena_xlsx(
+            taxpayer_name="VALENCIA MORENO JUAN JOSE",
+            detail_rows=[_fila(reported_name="JUAN JOSE VALENCIA MORENO")],
+        )
+    )
+    assert [w for w in reading.warnings if w.code == "REPORTED_TO_ANOTHER_PERSON"] == []
+
+
+def test_un_nombre_con_acentos_danados_no_genera_aviso():
+    """El portal manda el nombre con caracteres ilegibles. Comparar contra eso no puede
+    producir un aviso falso."""
+    reading = parse(
+        build_exogena_xlsx(
+            taxpayer_name="VALENCIA MORENO JUAN JOS\ufffd",
+            detail_rows=[_fila(reported_name="VALENCIA MORENO JUAN JOSÉ")],
+        )
+    )
+    assert [w for w in reading.warnings if w.code == "REPORTED_TO_ANOTHER_PERSON"] == []
+
+
+def test_avisa_cuando_el_valor_se_reporto_a_otra_identificacion():
+    """Numero distinto es una senal mas fuerte que un nombre distinto: el valor no es de
+    este contribuyente."""
+    reading = parse(
+        build_exogena_xlsx(
+            id_number="1000000001",
+            detail_rows=[_fila(reported_id_number="9999999999")],
+        )
+    )
+    avisos = [w for w in reading.warnings if w.code == "REPORTED_TO_ANOTHER_PERSON"]
+    assert len(avisos) == 1
+    assert "no debería contar como suyo" in avisos[0].message
+
+
+def test_se_avisa_una_vez_por_tercero_no_una_por_fila():
+    """Cuando un tercero confunde a una persona lo hace en todos los valores que le reporta.
+    Un aviso por fila esconderia los demas pendientes del expediente."""
+    reading = parse(
+        build_exogena_xlsx(
+            taxpayer_name="VALENCIA MORENO JUAN JOSE",
+            detail_rows=[
+                _fila(reported_name="Alejandra Delgado Bautista", amount=1_920_000),
+                _fila(reported_name="Delgado Bautista Alejandra", amount=5_410_000),
+                _fila(reported_name="Alejandra Delgado Bautista", amount=800_000),
+            ],
+        )
+    )
+    avisos = [w for w in reading.warnings if w.code == "REPORTED_TO_ANOTHER_PERSON"]
+    assert len(avisos) == 1
+    # El aviso suma lo que ese tercero reporto, que es la cifra que hay que confirmar.
+    assert "8.130.000" in avisos[0].message
+
+
+def test_cada_fila_dice_a_quien_le_reportaron():
+    """El dato tiene que quedar en la fila, no solo en el aviso: es lo que le permite a
+    alguien ver cual valor es el que esta en duda."""
+    reading = parse(
+        build_exogena_xlsx(detail_rows=[_fila(reported_name="Alejandra Delgado Bautista")])
+    )
+    assert reading.rows[0].values["reported_name"] == "Alejandra Delgado Bautista"
+    assert reading.rows[0].values["reported_id_number"] == "1000000001"

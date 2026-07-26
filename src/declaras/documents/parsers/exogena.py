@@ -14,12 +14,18 @@ El detalle trae dos columnas que valen oro y ahorran el trabajo mas duro del mot
 
 Es decir: no hay que adivinar en que casilla va cada concepto reportado, porque la propia
 DIAN lo indica.
+
+El detalle trae ademas a quien le reporto el tercero (numero de identificacion y nombre), y
+eso no siempre es el contribuyente: un tercero puede reportar a la cedula correcta con el
+nombre de otra persona. Es un error frecuente y una de las preguntas que el producto tiene
+que poder responder, porque ese valor entra a los topes de obligacion como si fuera suyo.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from datetime import datetime, time
 from io import BytesIO
 from typing import Any
@@ -66,6 +72,8 @@ _FIRST_DETAIL_ROW = 20
 
 _COL_REPORTER_NIT = 1
 _COL_REPORTER_NAME = 2
+_COL_REPORTED_ID = 3
+_COL_REPORTED_NAME = 4
 _COL_CONCEPT = 5
 _COL_AMOUNT = 6
 _COL_SUGGESTED_USE = 7
@@ -74,7 +82,20 @@ _COL_EXTRA = 8
 _CONCEPT_CODE_RE = re.compile(r"\(Concepto:\s*(\d+)\)")
 _FORM_LINE_RE = re.compile(r"\bR(\d{1,3})\b")
 _THRESHOLD_LABEL_RE = re.compile(r"Tope\s*(\d)")
+
+# La DIAN no siempre suma los valores de un tope: para algunos compara dos fuentes y toma la
+# mayor, y lo dice en el texto de la columna "Uso declaracion Sugerida" ("toma el mayor
+# valor", "selecciona el mayor"). Distinguir esas filas es lo que permite explicar de donde
+# sale un tope sin inventar una formula: son alternativas, no sumandos.
+_COMPARED_NOT_ADDED_RE = re.compile(r"\b(?:el|la)\s+mayor\b", re.IGNORECASE)
 _REPLACEMENT_CHAR = "�"
+
+# Minimo de palabras en comun para considerar que dos nombres son de la misma persona. Los
+# terceros escriben el nombre en cualquier orden ("JUAN JOSE VALENCIA MORENO" y "VALENCIA
+# MORENO JUAN JOSE" son el mismo), asi que se comparan como conjuntos de palabras y no como
+# texto. Dos palabras en comun aguantan que una venga mal escrita o con acentos danados, sin
+# confundir a dos personas distintas: un nombre ajeno no comparte ninguna.
+_MIN_SHARED_NAME_WORDS = 2
 
 
 def parse(content: bytes) -> DocumentReading:
@@ -94,6 +115,7 @@ def parse(content: bytes) -> DocumentReading:
     fields = _read_header(sheet, warnings)
     fields += _read_thresholds(sheet)
     rows = _read_details(sheet, warnings)
+    _check_reported_to_taxpayer(fields, rows, warnings)
 
     log.info(
         "documents.exogena.parsed",
@@ -183,12 +205,22 @@ def _read_details(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[Extr
                     "reporter_name": _clean_text(
                         sheet.cell(row=row, column=_COL_REPORTER_NAME).value
                     ),
+                    # A quien dice el tercero que le reporto. No siempre es el contribuyente.
+                    "reported_id_number": _clean_text(
+                        sheet.cell(row=row, column=_COL_REPORTED_ID).value
+                    ),
+                    "reported_name": _clean_text(
+                        sheet.cell(row=row, column=_COL_REPORTED_NAME).value
+                    ),
                     "concept": concept,
                     "concept_code": _concept_code(concept),
                     "amount": amount,
                     # La DIAN indica el renglon del 210 y el tope al que cuenta.
                     "form_lines": _form_lines(suggested),
                     "thresholds": _thresholds_of(suggested),
+                    # La DIAN compara esta fila contra otra fuente y toma la mayor, en vez
+                    # de sumarla: no es un sumando del tope.
+                    "compared_not_added": bool(_COMPARED_NOT_ADDED_RE.search(suggested)),
                     "suggested_use": suggested or None,
                     "extra": _clean_text(sheet.cell(row=row, column=_COL_EXTRA).value),
                 },
@@ -203,6 +235,92 @@ def _read_details(sheet: Worksheet, warnings: list[ReadingWarning]) -> list[Extr
             )
         )
     return rows
+
+
+def _check_reported_to_taxpayer(
+    fields: list[ExtractedField],
+    rows: list[ExtractedRow],
+    warnings: list[ReadingWarning],
+) -> None:
+    """Marca cada fila segun si el tercero se la reporto al titular, y avisa si no.
+
+    Es la pregunta "y este ingreso que no es mio?" contestada con datos: el reporte dice a
+    quien le reporto cada tercero, asi que se puede comparar con el titular. Importa porque
+    esos valores entran a los topes de obligacion y a los renglones sugeridos como si fueran
+    suyos, y quien responde por la declaracion es el titular.
+
+    La conclusion queda en la propia fila (`reported_to_titular`) para que nadie mas tenga
+    que volver a decidir cuando dos nombres son la misma persona, y ademas se avisa una vez
+    por cada tercero, no una por fila: cuando un tercero confunde a una persona lo hace en
+    todos los valores que le reporta, y cinco avisos del mismo error esconden los demas.
+    """
+    values = {f.name: f.value for f in fields}
+    taxpayer_id = str(values.get("id_number") or "").strip()
+    taxpayer_words = _name_words(values.get("taxpayer_name"))
+
+    grouped: dict[tuple[str, str], list[ExtractedRow]] = {}
+    for row in rows:
+        reported_id = str(row.values.get("reported_id_number") or "").strip()
+        reported_words = _name_words(row.values.get("reported_name"))
+
+        if taxpayer_id and reported_id and reported_id != taxpayer_id:
+            # Distinto numero de identificacion: el valor no es de este contribuyente.
+            key = ("id", reported_id)
+        elif (
+            len(taxpayer_words) >= _MIN_SHARED_NAME_WORDS
+            and len(reported_words) >= _MIN_SHARED_NAME_WORDS
+            and len(taxpayer_words & reported_words) < _MIN_SHARED_NAME_WORDS
+        ):
+            # El numero es el del contribuyente pero el nombre es de otra persona.
+            key = ("name", " ".join(sorted(reported_words)))
+        else:
+            # Coincide, o no hay con que comparar (nombre ausente o ilegible): en ninguno de
+            # los dos casos se puede afirmar que sea de otra persona.
+            row.values["reported_to_titular"] = True
+            continue
+
+        row.values["reported_to_titular"] = False
+        grouped.setdefault(key, []).append(row)
+
+    for (kind, _), affected in grouped.items():
+        total = sum(int(r.values.get("amount") or 0) for r in affected)
+        reporter = affected[0].values.get("reporter_name") or "un tercero"
+        reported = affected[0].values.get("reported_name") or "otra persona"
+        if kind == "id":
+            message = (
+                f"{reporter} reportó ${total:,.0f} a un número de identificación distinto "
+                f"al del titular: ese valor no debería contar como suyo"
+            ).replace(",", ".")
+        else:
+            message = (
+                f"{reporter} reportó ${total:,.0f} al número de identificación del titular "
+                f"pero a nombre de {reported}: hay que confirmar si ese valor es suyo"
+            ).replace(",", ".")
+        warnings.append(
+            ReadingWarning(
+                code="REPORTED_TO_ANOTHER_PERSON",
+                message=message,
+                source=affected[0].source,
+            )
+        )
+
+
+def _name_words(name: Any) -> set[str]:
+    """Palabras de un nombre, normalizadas para poder compararlo escrito de otra forma.
+
+    Se quitan acentos y mayusculas, y se descartan las palabras de una sola letra (iniciales)
+    y las que traigan el caracter de reemplazo que deja el portal cuando manda mal el
+    encoding, porque no se puede saber que letra era.
+    """
+    if not name:
+        return set()
+    plain = unicodedata.normalize("NFKD", str(name))
+    plain = "".join(c for c in plain if not unicodedata.combining(c)).upper()
+    return {
+        word
+        for word in re.split(r"[^A-Z0-9]+", plain)
+        if len(word) > 1 and _REPLACEMENT_CHAR not in word
+    }
 
 
 # ─────────────────────────── utilidades ───────────────────────────

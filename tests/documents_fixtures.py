@@ -92,8 +92,10 @@ def build_exogena_xlsx(
         row = 20 + offset
         ws.cell(row=row, column=1, value=item["reporter_nit"])
         ws.cell(row=row, column=2, value=item["reporter_name"])
-        ws.cell(row=row, column=3, value=id_number)
-        ws.cell(row=row, column=4, value=taxpayer_name)
+        # A quien dice el tercero que le reporto. Por defecto es el titular, pero un caso
+        # puede pasar otro nombre o otra identificacion para reproducir un reporte cruzado.
+        ws.cell(row=row, column=3, value=item.get("reported_id_number", id_number))
+        ws.cell(row=row, column=4, value=item.get("reported_name", taxpayer_name))
         ws.cell(row=row, column=5, value=item["concept"])
         ws.cell(row=row, column=6, value=item["amount"])
         ws.cell(row=row, column=7, value=item["suggested_use"])
