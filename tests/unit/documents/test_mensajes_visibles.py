@@ -172,23 +172,30 @@ _NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/
 #
 #   1. HTTP generico (`api/errors.py`, manejador de `Exception`). CERRADO: responde con
 #      `DeclarasError()` pelado y no repite el texto de la excepcion. Verificado.
-#   2. El worker de extracciones (`services/extraction.py`, rama `except Exception`). ABIERTO:
-#      hace `DeclarasError(str(exc)[:200])`, o sea envuelve el texto crudo de CUALQUIER
-#      excepcion, `mark_failed` lo persiste y `ExtractionResponse.error` lo devuelve por
-#      `GET /v1/extractions/{id}`. Este es el camino que justifica la regex ancha de Juan. Hoy
-#      el nucleo no corre dentro de un job (el worker no llama a los lectores), pero la T3
-#      registra `leer_220` en el registry y ahi entra.
+#   2. El worker de extracciones (`services/extraction.py`, rama `except Exception`) y la alerta
+#      del expediente (`services/case_service.py`, rama `except DocumentUnreadableError`, que
+#      escribe `exc.message` en un flag que lee el contador). El primero envuelve el texto crudo
+#      de CUALQUIER excepcion (`DeclarasError(str(exc)[:200])`), `mark_failed` lo persiste y
+#      `ExtractionResponse.error` lo devuelve por `GET /v1/extractions/{id}`: es el camino que
+#      justifica la regex ancha de Juan. El nucleo entraba por aca al registrarse `leer_220` como
+#      lector del 220, y por eso `documents/parsers/certificados.py` traduce el `ValueError` del
+#      extractor a `DocumentUnreadableError` con un mensaje propio: ese mensaje SI lo revisa la
+#      comprobacion de abajo, porque `documents/` no esta excluido. CERRADO para los lectores.
 #   3. `_domain_validation_error` (`api/errors.py`). ABIERTO: hace eco de los mensajes de los
 #      validadores de pydantic en un 422. En el nucleo excluido hay SIETE: `caso/modelos.py:44`,
 #      alcanzable con datos del cliente, y `parametros/modelos.py:70,72,78,86,92,97`, que solo
 #      se disparan con un `ag<anio>.yaml` malo (error de configuracion, no de quien declara).
 #
-# DEUDA ANOTADA, 13 mensajes: los 7 de validadores de arriba, y los 6 de `extraccion/f220.py`,
-# que son de cara al usuario de verdad (el guard del archivo que sube una persona; uno de ellos
-# filtra `stop_reason=`). Quedan asi por alcance, no porque esten bien: en esta fusion el motor
-# entra intacto. A los 6 de `f220` les falta un punto final y a uno la mayuscula, y arreglarlos
-# no rompe los `match=` de sus pruebas; se cierran en la T3 y la T8, que reescriben `f220`. El de
-# `caso/modelos.py` espera a la T5/T6, cuando el conciliador exponga el Caso por la API.
+# DEUDA ANOTADA, 7 mensajes: los validadores de pydantic del punto 3. El de `caso/modelos.py`
+# espera a la T5/T6, cuando el conciliador exponga el Caso por la API.
+#
+# Los 6 de `extraccion/f220.py` ya no son de cara al usuario: con la frontera del punto 2 puesta,
+# su unica audiencia son el log y quien programa (es el contrato que fijan sus 28 pruebas). Se
+# les corrigio igual el punto final y la mayuscula que les faltaban, porque terminan en un log
+# que lee una persona, pero se quedan fuera de esta comprobacion a proposito: uno dice
+# `stop_reason=refusal`, que es exactamente lo que hay que ver al depurar y exactamente lo que
+# esta comprobacion prohibe. Angostar la exclusion hasta ahi seria pedirle prosa de usuario a un
+# mensaje que ningun usuario ve.
 _NUCLEO_DE_CALCULO = ("motor/", "optimizador/", "parametros/", "render/", "caso/", "extraccion/")
 
 

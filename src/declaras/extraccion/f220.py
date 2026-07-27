@@ -92,7 +92,7 @@ def extraer_220(
     if not pdf_bytes.startswith(b"%PDF"):
         # Pre-flight antes de gastar una llamada: un JPG o un PDF corrupto no se
         # extrae, y el error del API sería mucho menos claro que este.
-        raise ValueError("El archivo no parece un PDF (no empieza con %PDF)")
+        raise ValueError("El archivo no parece un PDF (no empieza con %PDF).")
 
     if client is None:  # import perezoso: los tests no necesitan el SDK real
         import anthropic
@@ -126,14 +126,14 @@ def extraer_220(
         # que saldría al leer el primer campo de None.
         raise ValueError(
             "La extracción del 220 no produjo salida estructurada "
-            f"(stop_reason={respuesta.stop_reason})"
+            f"(stop_reason={respuesta.stop_reason})."
         )
 
     if ext.numero_de_certificados != 1:
         # Con dos certificados en el PDF no se sabe de cuál salió cada cifra.
         raise ValueError(
             f"El PDF contiene {ext.numero_de_certificados} certificados; "
-            "procesa uno a la vez"
+            "procesa uno a la vez."
         )
 
     # Identidad del documento primero: el error más común es subir el 220 del año
@@ -141,7 +141,7 @@ def extraer_220(
     if anio_esperado is not None and ext.anio_gravable != anio_esperado:
         raise ValueError(
             f"El certificado es del año gravable {ext.anio_gravable} "
-            f"y se esperaba {anio_esperado}"
+            f"y se esperaba {anio_esperado}."
         )
 
     # Las pensiones entran en la suma porque el "Total de ingresos brutos" impreso las
@@ -157,9 +157,9 @@ def extraer_220(
         # el LLM se saltó una casilla o contó una dos veces. Si el total descuadra
         # tampoco se puede confiar en el campo de pensiones, así que este mensaje gana.
         raise ValueError(
-            "la extracción no reconcilia contra el total impreso del certificado: "
+            "La extracción no reconcilia contra el total impreso del certificado: "
             f"los campos suman {suma:,} y el certificado dice "
-            f"{ext.total_ingresos_brutos:,}"
+            f"{ext.total_ingresos_brutos:,}."
         )
 
     if ext.pensiones_de_jubilacion > 0:
@@ -167,7 +167,7 @@ def extraer_220(
         # como laboral cambia el impuesto.
         raise ValueError(
             f"El 220 reporta pensiones ({ext.pensiones_de_jubilacion:,}); "
-            "regístralas como IngresoPension, no laboral"
+            "regístralas como IngresoPension, no laboral."
         )
 
     doc_id = id_documento(pdf_bytes)
