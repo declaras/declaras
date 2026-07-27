@@ -16,8 +16,11 @@ from declaras.documents.parsers import certificados, exogena
 from declaras.documents.service import DocumentReaderService
 from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
 from declaras.domain.models import document_label
-from declaras.extraccion.f220 import Extraccion220
+from declaras.extraccion.f220 import Extraccion220, Motivo220
 from tests.unit.documents.dobles import ClienteFalso, ClienteQueRevienta
+
+# Las reglas de un texto que lee una persona se definen una sola vez, en el meta-test.
+from tests.unit.documents.test_mensajes_visibles import _revisar_texto_de_usuario
 
 EXTRACCION = Extraccion220(
     empleador_nit="900123456", empleador_nombre="ACME SAS",
@@ -121,6 +124,68 @@ def test_la_lectura_lleva_el_anio_gravable_del_certificado():
 def test_el_certificado_tiene_nombre_legible_para_las_alertas():
     """La alerta del expediente dice "No se pudo leer {nombre}": ahi no cabe un código."""
     assert document_label("CERT_INGRESOS_220").startswith("el certificado")
+
+
+# ─────── el mensaje que termina dentro de la alerta del contador ───────
+#
+# `case_service` compone `f"No se pudo leer {document_label(doc_type)}: {exc.message}"`, asi que
+# el mensaje de la frontera es un COMPLEMENTO de ese prefijo, como los de los cuatro parsers
+# hermanos ("El archivo no es un PDF que se pueda leer."). Y la pista tiene que corresponder a la
+# causa: un flag BLOCKING que aconseja sobre la unica causa que no fue manda al contador a pedir
+# de nuevo un archivo que estaba bien.
+
+PREFIJO = f"No se pudo leer {document_label('CERT_INGRESOS_220')}: "
+
+MIXTO = EXTRACCION.model_copy(
+    update={"pensiones_de_jubilacion": 30_000_000, "total_ingresos_brutos": 115_000_000}
+)
+
+
+@pytest.mark.parametrize(
+    ("caso", "fragmento"),
+    [
+        ({"content": b"soy un JPG"}, "no es un PDF"),
+        ({"parsed": None, "stop_reason": "refusal"}, "escaneado"),
+        ({"parsed": EXTRACCION.model_copy(update={"numero_de_certificados": 2})}, "más de un"),
+        ({"anio_esperado": 2024}, "otro año"),
+        ({"parsed": EXTRACCION.model_copy(update={"salarios": 50_000_000})}, "total"),
+        ({"parsed": MIXTO}, "pensión"),
+    ],
+    ids=["no-es-pdf", "sin-salida", "varios", "otro-anio", "no-reconcilia", "pensiones"],
+)
+def test_la_pista_corresponde_a_la_causa(caso, fragmento):
+    cliente = ClienteFalso(
+        caso.get("parsed", EXTRACCION), stop_reason=caso.get("stop_reason", "end_turn")
+    )
+    with pytest.raises(DocumentUnreadableError) as exc:
+        certificados.leer_220(
+            caso.get("content", b"%PDF-x"),
+            anio_esperado=caso.get("anio_esperado"),
+            client=cliente,
+        )
+    assert fragmento in exc.value.message
+
+
+def test_el_mensaje_no_repite_el_nombre_del_documento():
+    """Se veía así: "No se pudo leer el certificado…: No se pudo leer el certificado…"."""
+    with pytest.raises(DocumentUnreadableError) as exc:
+        certificados.leer_220(b"soy un JPG", client=ClienteFalso(EXTRACCION))
+    compuesto = PREFIJO + exc.value.message
+    assert compuesto.count("certificado de ingresos y retenciones") == 1
+    assert compuesto.count("No se pudo leer") == 1
+
+
+def test_toda_causa_del_extractor_tiene_su_pista():
+    """Si mañana se agrega un guard al extractor y nadie le escribe la pista, el contador
+    recibe el mensaje genérico sin que nada avise."""
+    assert set(Motivo220) == set(certificados.PISTAS)
+
+
+@pytest.mark.parametrize("pista", sorted(certificados.PISTAS.values()), ids=lambda p: p[:30])
+def test_la_pista_esta_escrita_para_una_persona(pista):
+    """Las pistas viven en un diccionario, así que la comprobación de mensajes visibles —que
+    busca literales dentro de un `raise`— no las ve. Se les aplican sus mismas reglas."""
+    _revisar_texto_de_usuario(pista)
 
 
 # ─────── el año tambien tiene que entrar a la clave de la cache ───────

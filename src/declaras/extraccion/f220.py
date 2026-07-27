@@ -1,11 +1,43 @@
 import base64
 import hashlib
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from declaras.caso import Fuente, IngresoLaboral
 
 MODELO = "claude-opus-5"
+
+
+class Motivo220(StrEnum):
+    """Por qué se rechazó una extracción. Son las causas, no los mensajes.
+
+    Existen porque quien traduce la falla para una persona necesita saber CUÁL guard falló:
+    las causas piden acciones distintas (subir los certificados de a uno, buscar el del año
+    correcto, registrar la pensión aparte) y un consejo que no corresponde a la causa manda a
+    pedir de nuevo un archivo que estaba bien. Adivinar leyendo el texto del mensaje sería
+    atarse a su redacción.
+    """
+
+    NO_ES_PDF = "no_es_pdf"
+    SIN_SALIDA = "sin_salida"
+    VARIOS_CERTIFICADOS = "varios_certificados"
+    OTRO_ANIO = "otro_anio"
+    NO_RECONCILIA = "no_reconcilia"
+    TIENE_PENSIONES = "tiene_pensiones"
+
+
+class Extraccion220InvalidaError(ValueError):
+    """Falla de un guard del 220, con su motivo etiquetado.
+
+    Sigue siendo `ValueError` —el contrato del extractor, que fijan sus 28 pruebas y del que
+    dependen los `match=` de sus mensajes— y además dice cuál guard falló.
+    """
+
+    def __init__(self, motivo: Motivo220, mensaje: str) -> None:
+        super().__init__(mensaje)
+        self.motivo = motivo
+
 
 # Diferencia máxima tolerada entre la suma de los campos y el total impreso. Cubre el
 # redondeo del propio certificado; por encima de esto la extracción no es confiable.
@@ -110,7 +142,9 @@ def extraer_220_con_metadatos(
     if not pdf_bytes.startswith(b"%PDF"):
         # Pre-flight antes de gastar una llamada: un JPG o un PDF corrupto no se
         # extrae, y el error del API sería mucho menos claro que este.
-        raise ValueError("El archivo no parece un PDF (no empieza con %PDF).")
+        raise Extraccion220InvalidaError(
+            Motivo220.NO_ES_PDF, "El archivo no parece un PDF (no empieza con %PDF)."
+        )
 
     if client is None:  # import perezoso: los tests no necesitan el SDK real
         import anthropic
@@ -142,14 +176,16 @@ def extraer_220_con_metadatos(
         # Sin salida estructurada: refusal de los clasificadores, max_tokens, u otro
         # stop_reason sin texto. Error de dominio explícito en vez del AttributeError
         # que saldría al leer el primer campo de None.
-        raise ValueError(
+        raise Extraccion220InvalidaError(
+            Motivo220.SIN_SALIDA,
             "La extracción del 220 no produjo salida estructurada "
             f"(stop_reason={respuesta.stop_reason})."
         )
 
     if ext.numero_de_certificados != 1:
         # Con dos certificados en el PDF no se sabe de cuál salió cada cifra.
-        raise ValueError(
+        raise Extraccion220InvalidaError(
+            Motivo220.VARIOS_CERTIFICADOS,
             f"El PDF contiene {ext.numero_de_certificados} certificados; "
             "procesa uno a la vez."
         )
@@ -157,7 +193,8 @@ def extraer_220_con_metadatos(
     # Identidad del documento primero: el error más común es subir el 220 del año
     # equivocado, y este chequeo no puede falso-rechazar.
     if anio_esperado is not None and ext.anio_gravable != anio_esperado:
-        raise ValueError(
+        raise Extraccion220InvalidaError(
+            Motivo220.OTRO_ANIO,
             f"El certificado es del año gravable {ext.anio_gravable} "
             f"y se esperaba {anio_esperado}."
         )
@@ -174,7 +211,8 @@ def extraer_220_con_metadatos(
         # El total impreso es el testigo independiente: si los campos no lo reproducen,
         # el LLM se saltó una casilla o contó una dos veces. Si el total descuadra
         # tampoco se puede confiar en el campo de pensiones, así que este mensaje gana.
-        raise ValueError(
+        raise Extraccion220InvalidaError(
+            Motivo220.NO_RECONCILIA,
             "La extracción no reconcilia contra el total impreso del certificado: "
             f"los campos suman {suma:,} y el certificado dice "
             f"{ext.total_ingresos_brutos:,}."
@@ -183,7 +221,8 @@ def extraer_220_con_metadatos(
     if ext.pensiones_de_jubilacion > 0:
         # La pensión se exime POR MES (IngresoPension.mesadas), no anual: registrarla
         # como laboral cambia el impuesto.
-        raise ValueError(
+        raise Extraccion220InvalidaError(
+            Motivo220.TIENE_PENSIONES,
             f"El 220 reporta pensiones ({ext.pensiones_de_jubilacion:,}); "
             "regístralas como IngresoPension, no laboral."
         )

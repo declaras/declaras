@@ -6,14 +6,18 @@ con la confianza que el modelo declaró.
 
 ESTE MODULO ES LA FRONTERA, Y POR ESO TRADUCE
 
-`extraer_220` es el núcleo de extracción: levanta `ValueError` con el detalle técnico
-(`stop_reason` del SDK, las dos cifras que no reconcilian) porque su contrato es con quien
-programa. Del otro lado de esta función hay dos consumidores que le hablan a una persona:
-el expediente, que convierte una falla de lectura en una alerta que lee el contador, y la
-API. Un `ValueError` crudo no lo atrapa ninguno de los dos (el expediente espera
-`DocumentUnreadableError`, y la API lo degradaría a un 500 genérico), así que acá se
-traduce una vez: falla de dominio con mensaje escrito para quien subió el archivo, y el
-detalle técnico al log, que es donde sirve.
+El núcleo de extracción falla con el detalle técnico a la vista (`stop_reason` del SDK, las dos
+cifras que no reconcilian) porque su contrato es con quien programa. Del otro lado de esta
+función hay dos consumidores que le hablan a una persona: el expediente, que convierte una falla
+de lectura en una alerta que lee el contador, y la API. Ninguno de los dos atrapa un `ValueError`
+crudo —el expediente espera las fallas del dominio, y la API degradaría cualquier otra cosa a un
+500 genérico—, así que acá se traduce, una vez, distinguiendo de quién es el problema:
+
+  del documento   `DocumentUnreadableError` (422), con la pista que corresponde a la causa.
+  del lector      `DocumentReaderUnavailableError` (503, reintentable): sin credencial, sin
+                  cuota o con el proveedor caído. El archivo no tiene nada malo.
+
+El texto técnico va al log, que es donde sirve, y nunca al mensaje ni a `details`.
 """
 
 from __future__ import annotations
@@ -22,12 +26,51 @@ from typing import Any
 
 from declaras.documents.models import DocumentReading, ExtractedField
 from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
-from declaras.extraccion.f220 import extraer_220_con_metadatos, id_documento
+from declaras.extraccion.f220 import (
+    Extraccion220InvalidaError,
+    Motivo220,
+    extraer_220_con_metadatos,
+    id_documento,
+)
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
 
 PARSER_220 = "cert_220.llm.v1"
+
+# Lo que se le dice a la persona por cada causa de rechazo. Es un COMPLEMENTO del prefijo que
+# arma el expediente ("No se pudo leer el certificado de ingresos y retenciones: …"), igual que
+# los mensajes de los cuatro parsers hermanos, y por eso ninguno repite el nombre del documento.
+#
+# Una pista por causa y no una sola genérica: las causas piden acciones distintas, y "revisa que
+# el archivo esté completo" frente a un certificado que trae pensiones manda a pedir de nuevo un
+# archivo que estaba bien, con un flag que va a quedar igual para siempre.
+PISTAS: dict[Motivo220, str] = {
+    Motivo220.NO_ES_PDF: "El archivo no es un PDF que se pueda leer.",
+    # Sin salida estructurada: el modelo se negó o se quedó sin presupuesto. Lo que puede hacer
+    # quien subió el archivo es mandar una copia mejor; el detalle técnico va al log.
+    Motivo220.SIN_SALIDA: (
+        "No se pudieron leer las cifras del certificado. Si está escaneado o se ve borroso, "
+        "una copia más nítida ayuda."
+    ),
+    Motivo220.VARIOS_CERTIFICADOS: (
+        "El archivo trae más de un certificado, y hay que subirlos de a uno."
+    ),
+    Motivo220.OTRO_ANIO: (
+        "El certificado es de otro año gravable: se necesita el del año que se está declarando."
+    ),
+    Motivo220.NO_RECONCILIA: (
+        "Las cifras leídas no suman el total impreso en el certificado, así que hay que "
+        "revisarlo a mano."
+    ),
+    Motivo220.TIENE_PENSIONES: (
+        "El certificado incluye pagos de pensión, que se registran aparte de los salarios."
+    ),
+}
+
+# Para una falla que no viene de un guard con motivo: la validación del esquema, o un guard nuevo
+# al que nadie le escribió su pista.
+PISTA_GENERICA = "El certificado no quedó legible."
 
 
 def leer_220(
@@ -39,13 +82,14 @@ def leer_220(
             content, anio_esperado=anio_esperado, client=client
         )
     except ValueError as exc:
-        # `ValueError` cubre las dos formas de falla del extractor: sus propios guards y la
-        # validación del esquema (la de pydantic hereda de `ValueError`). El texto queda en
-        # el log, recortado, y no viaja en `details`: `to_payload` los devuelve por la API.
-        log.warning("documents.cert_220.unreadable", detalle=str(exc)[:200])
+        # `ValueError` cubre las dos formas de falla del extractor: sus propios guards (que
+        # además dicen cuál falló) y la validación del esquema, cuyo error de pydantic hereda de
+        # `ValueError` y no trae motivo. El texto técnico queda en el log, recortado, y no viaja
+        # en `details`: `to_payload` los devuelve por la API.
+        motivo = exc.motivo if isinstance(exc, Extraccion220InvalidaError) else None
+        log.warning("documents.cert_220.unreadable", motivo=motivo, detalle=str(exc)[:200])
         raise DocumentUnreadableError(
-            "No se pudo leer el certificado de ingresos y retenciones. Revisa que sea el "
-            "certificado del año que se está declarando y que el archivo esté completo.",
+            PISTAS.get(motivo, PISTA_GENERICA) if motivo else PISTA_GENERICA,
             parser=PARSER_220,
         ) from exc
     except Exception as exc:
