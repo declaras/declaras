@@ -12,6 +12,14 @@ partidas resueltas en el `CasoTributario` que el motor liquida.
 
 from declaras.services.conciliacion.conceptos import Concepto, concepto_de_codigo
 from declaras.services.conciliacion.cruce import TIPO_A_CLAVE, abrir, incorporar
+from declaras.services.conciliacion.mapeo import (
+    DECISIONES_CON_HECHO,
+    DIVIDENDOS_SIN_DESAGREGAR,
+    PENSION_DISTRIBUIDA_UNIFORME,
+    RETENCION_SIN_INGRESO,
+    a_caso,
+    avisos,
+)
 from declaras.services.conciliacion.modelos import (
     Decision,
     EstadoPartida,
@@ -32,8 +40,12 @@ from declaras.services.conciliacion.resolucion import (
 )
 
 __all__ = [
+    "DECISIONES_CON_HECHO",
+    "DIVIDENDOS_SIN_DESAGREGAR",
     "NOTA_VALORES_CAMBIARON",
+    "PENSION_DISTRIBUIDA_UNIFORME",
     "QUIEN_SISTEMA",
+    "RETENCION_SIN_INGRESO",
     "TIPO_A_CLAVE",
     "Concepto",
     "Decision",
@@ -44,8 +56,10 @@ __all__ = [
     "Partida",
     "Resolucion",
     "Valor",
+    "a_caso",
     "abrir",
     "autorresolver",
+    "avisos",
     "concepto_de_codigo",
     "incorporar",
     "pendientes",

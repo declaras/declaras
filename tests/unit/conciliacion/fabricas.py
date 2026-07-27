@@ -103,3 +103,20 @@ def partida_pension(total: int = 66_000_000) -> Partida:
         ),
         estado=EstadoPartida.SOLO_DIAN,
     )
+
+
+def partida_dividendos(total: int = 14_000_000) -> Partida:
+    """Dividendos reportados por la exógena. A MANO, por la misma razón que la pensión:
+    ningún código mapea aún a DIVIDENDOS."""
+    return Partida(
+        id="900555666:DIVIDENDOS",
+        nit_tercero="900555666",
+        nombre_tercero="SOCIEDAD W",
+        concepto=Concepto.DIVIDENDOS,
+        codigos_crudos=["5043"],
+        version_dian=Valor(
+            monto=total, retencion=None, lado=Lado.DIAN,
+            tercero="SOCIEDAD W", celda="A22", confianza=1.0,
+        ),
+        estado=EstadoPartida.SOLO_DIAN,
+    )
