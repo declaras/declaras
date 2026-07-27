@@ -68,19 +68,38 @@ TIPO_A_CLAVE: dict[str, _ClaveDocumento] = {
 
 @dataclass
 class _Grupo:
-    """Acumulador de las filas de exógena que comparten llave."""
+    """Acumulador de las filas de exógena que comparten llave.
 
+    LA LLAVE Y EL ID DERIVAN DEL MISMO DISCRIMINANTE COMPLETO (ref, clave, reportado_a):
+    si el grupo separa por algo que el id no ve, nacen dos partidas con el mismo id y
+    cualquier indexado (resoluciones, refrescar, Fuente.conciliacion) se come una de las
+    dos según el orden del XLSX.
+    """
+
+    # Identidad del tercero: su NIT, o el respaldo de `_ref_tercero` cuando no lo trae.
+    ref: str
     nit: str
     nombre: str
     clave: str
     concepto: Concepto | None
     # A quién le reportó el tercero cuando no fue al titular (None = sí fue al titular).
+    # Discrimina por VALOR: lo reportado a dos cédulas distintas es plata de dos personas
+    # distintas y no se puede sumar bajo una sola partida.
     reportado_a: str | None
     nota: str | None
     codigos: list[str] = field(default_factory=list)
     celdas: list[str] = field(default_factory=list)
     monto: int = 0
     retencion: int = 0
+
+    @property
+    def id(self) -> str:
+        """`nit:concepto` en el caso normal (contrato del plan); las variantes que el
+        contrato no contempla extienden el id en vez de colisionar con él."""
+        base = f"{self.ref}:{self.clave}"
+        if self.reportado_a is not None:
+            return f"{base}:reportado-a:{self.reportado_a}"
+        return base
 
 
 def abrir(exogena: DocumentReading) -> list[Partida]:
@@ -90,10 +109,12 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
     filas), y cada grupo nace SOLO_DIAN — o CONCEPTO_DESCONOCIDO si su código no mapea.
     """
     titular = str(exogena.field("id_number") or "").strip()
-    grupos: dict[tuple[str, str, bool], _Grupo] = {}
-    for fila in exogena.rows:
+    grupos: dict[tuple[str, str, str | None], _Grupo] = {}
+    for posicion, fila in enumerate(exogena.rows):
         valores = fila.values
         nit = str(valores.get("reporter_nit") or "").strip()
+        nombre = str(valores.get("reporter_name") or "").strip()
+        ref = _ref_tercero(nit, nombre, fila.source, posicion)
         codigo = str(valores.get("concept_code") or "").strip()
         concepto = concepto_de_codigo(codigo)
 
@@ -102,14 +123,18 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         # es del titular, y nunca aportará hecho.
         reportado_a, nota = _reportado_a(titular, valores)
 
-        # Para un código sin mapear, la identidad del grupo es el código crudo: fusionar dos
-        # códigos desconocidos distintos sería asumir que son el mismo hecho.
-        clave = str(concepto) if concepto is not None else (codigo or "desconocido")
+        # Para un código sin mapear, la identidad del grupo es el código crudo, y a falta
+        # de código el texto del concepto: fusionar dos conceptos desconocidos distintos
+        # sería asumir que son el mismo hecho (aportes a salud + consignaciones bancarias
+        # del mismo tercero no son una partida de 44,5 millones).
+        texto = str(valores.get("concept") or "").strip()
+        clave = str(concepto) if concepto is not None else (codigo or texto or "desconocido")
         grupo = grupos.setdefault(
-            (nit, clave, reportado_a is not None),
+            (ref, clave, reportado_a),
             _Grupo(
+                ref=ref,
                 nit=nit,
-                nombre=str(valores.get("reporter_name") or ""),
+                nombre=nombre,
                 clave=clave,
                 concepto=concepto,
                 reportado_a=reportado_a,
@@ -123,6 +148,20 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         if fila.source:
             grupo.celdas.append(fila.source)
     return [_partida_dian(grupo) for grupo in grupos.values()]
+
+
+def _ref_tercero(nit: str, nombre: str, fuente: str | None, posicion: int) -> str:
+    """Identidad del tercero para la llave y el id, con el NIT como caso normal.
+
+    Sin NIT se cae al nombre, y sin nombre a la fila de origen: dos terceros distintos
+    jamás pueden caer en la misma partida. Es el espejo del cuidado que ya tiene el
+    camino sin NIT de `incorporar` (que usa el sha del documento).
+    """
+    if nit:
+        return nit
+    if nombre:
+        return f"nombre:{nombre}"
+    return f"fila:{fuente or posicion}"
 
 
 def _reportado_a(titular: str, valores: dict[str, object]) -> tuple[str | None, str | None]:
@@ -156,10 +195,7 @@ def _partida_dian(grupo: _Grupo) -> Partida:
         else EstadoPartida.SOLO_DIAN
     )
     return Partida(
-        # El contrato fija id = f"{nit}:{concepto}". Una partida ajena comparte id con su
-        # gemela reportada al titular si ambas existieran; `incorporar` prefiere la del
-        # titular al emparejar.
-        id=f"{grupo.nit}:{grupo.clave}",
+        id=grupo.id,
         nit_tercero=grupo.nit,
         nombre_tercero=grupo.nombre,
         concepto=grupo.concepto,
@@ -219,7 +255,7 @@ def incorporar(
         )
         return [*partidas, suelta]
 
-    objetivo = _indice_emparejable(partidas, f"{nit}:{clave.concepto}")
+    objetivo = _indice_emparejable(partidas, nit, clave.concepto)
     if objetivo is None:
         # La DIAN no conoce este hecho (todavía): el documento es la única versión.
         nueva = Partida(
@@ -255,20 +291,25 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
     )
 
 
-def _indice_emparejable(partidas: list[Partida], id_partida: str) -> int | None:
+def _indice_emparejable(partidas: list[Partida], nit: str, concepto: Concepto) -> int | None:
     """Contra qué partida cruza el documento, prefiriendo la reportada al titular.
 
-    Pueden compartir id la partida del titular y una gemela que el tercero le reportó a otra
-    identificación: el documento confirma a la del titular. La gemela solo se toma si es la
-    única, para que el certificado quede a la vista en vez de perderse en silencio.
+    La del titular se encuentra por su id exacto (`nit:concepto`). Una gemela ajena del
+    mismo tercero y concepto tiene OTRO id (lleva a quién se lo reportaron), así que se
+    busca por estructura, y solo se toma si es la única: el certificado queda a la vista
+    en vez de perderse en silencio.
     """
+    id_titular = f"{nit}:{concepto}"
     ajena: int | None = None
     for i, partida in enumerate(partidas):
-        if partida.id != id_partida:
-            continue
-        if not _es_ajena(partida):
+        if partida.id == id_titular:
             return i
-        if ajena is None:
+        if (
+            ajena is None
+            and _es_ajena(partida)
+            and partida.nit_tercero == nit
+            and partida.concepto is concepto
+        ):
             ajena = i
     return ajena
 

@@ -137,6 +137,54 @@ def test_documento_de_tipo_que_no_se_sabe_cruzar_revienta():
         incorporar([], doc)
 
 
+def test_titular_y_ajena_del_mismo_tercero_tienen_ids_distintos():
+    """Dos partidas con el mismo id son indistinguibles para cualquier indexado
+    (resoluciones, refrescar, Fuente.conciliacion): una de las dos desaparece según
+    el orden del XLSX. El id deriva del mismo discriminante completo que la llave."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 50_000_000),
+                              _fila("900111222", "5001", 9_000_000, reportado_a="99999")))
+    assert len(partidas) == 2
+    assert len({p.id for p in partidas}) == 2
+    por_destino = {p.reportado_a: p for p in partidas}
+    assert por_destino[None].version_dian.monto == 50_000_000
+    assert por_destino["99999"].version_dian.monto == 9_000_000
+
+
+def test_ajenas_a_personas_distintas_no_se_suman():
+    """9M reportados a una cédula y 7M a otra son plata de dos personas distintas:
+    no pueden quedar bajo una sola partida (ni una sola resolución)."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999"),
+                              _fila("901999888", "5001", 7_000_000, reportado_a="88888")))
+    assert len(partidas) == 2
+    assert sorted(p.version_dian.monto for p in partidas) == [7_000_000, 9_000_000]
+    assert len({p.id for p in partidas}) == 2
+
+
+def test_conceptos_distintos_sin_codigo_no_se_fusionan():
+    """`concept_code` es `str | None` de verdad: dos conceptos sin código del mismo
+    tercero no son el mismo hecho y no se pueden sumar."""
+    salud = _fila("900111222", "", 3_500_000)
+    salud["concept"] = "Aportes obligatorios a salud"
+    salud["concept_code"] = None
+    consignaciones = _fila("900111222", "", 41_000_000)
+    consignaciones["concept"] = "Consignaciones bancarias"
+    consignaciones["concept_code"] = None
+    partidas = abrir(_exogena(salud, consignaciones))
+    assert len(partidas) == 2
+    assert {p.estado for p in partidas} == {EstadoPartida.CONCEPTO_DESCONOCIDO}
+    assert sorted(p.version_dian.monto for p in partidas) == [3_500_000, 41_000_000]
+
+
+def test_terceros_sin_nit_no_se_fusionan():
+    """Dos empresas sin NIT no pueden terminar sumadas bajo el nombre de la primera."""
+    a = _fila("", "5001", 10_000_000, nombre="EMPRESA A")
+    b = _fila("", "5001", 20_000_000, nombre="EMPRESA B")
+    partidas = abrir(_exogena(a, b))
+    assert len(partidas) == 2
+    assert sorted(p.version_dian.monto for p in partidas) == [10_000_000, 20_000_000]
+    assert len({p.id for p in partidas}) == 2
+
+
 def test_misma_cedula_otro_nombre_queda_marcada_para_confirmar():
     """El parser ya decidió (`reported_to_titular=False`): la cédula es la del titular pero
     el nombre es de otra persona. No puede llegar limpia al contador como si fuera suya."""
