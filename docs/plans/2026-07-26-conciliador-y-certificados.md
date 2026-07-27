@@ -622,7 +622,7 @@ def test_partida_resuelta_produce_hecho_con_proveniencia():
     lab = caso.laborales[0]
     assert lab.salarios == 85_000_000
     assert lab.fuente.clase == "conciliacion"
-    assert lab.fuente.ref == "900111222:5001"
+    assert lab.fuente.ref == "900111222:SALARIOS"
 
 
 def test_ajeno_no_entra_al_caso():
