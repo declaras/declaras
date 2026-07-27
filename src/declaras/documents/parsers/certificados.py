@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from declaras.documents.models import DocumentReading, ExtractedField
-from declaras.domain.errors import DocumentUnreadableError
+from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
 from declaras.extraccion.f220 import extraer_220_con_metadatos, id_documento
 from declaras.observability import get_logger
 
@@ -48,6 +48,19 @@ def leer_220(
             "certificado del año que se está declarando y que el archivo esté completo.",
             parser=PARSER_220,
         ) from exc
+    except Exception as exc:
+        # Todo lo demás es el lector, no el documento: sin credencial el SDK ni siquiera falla
+        # con `ValueError` (revienta con `TypeError` al resolver la autenticación), y una cuota
+        # agotada, un 429 o un 529 tampoco son culpa del archivo. Sin esta rama suben hasta el
+        # manejador genérico —500, `retryable: false`— y el certificado queda en el expediente
+        # sin lectura y sin alerta, que es el mismo silencio que esta frontera existe para
+        # tapar, abierto justo para la falla más probable.
+        log.warning(
+            "documents.cert_220.reader_unavailable",
+            error=type(exc).__name__,
+            detalle=str(exc)[:200],
+        )
+        raise DocumentReaderUnavailableError(parser=PARSER_220) from exc
 
     confianza = laboral.fuente.confianza or 0.0
     campos: dict[str, Any] = {

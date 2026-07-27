@@ -87,6 +87,29 @@ class DocumentUnreadableError(DeclarasError):
     )
 
 
+class DocumentReaderUnavailableError(DeclarasError):
+    """El lector no pudo trabajar: el documento no tiene nada malo.
+
+    Es la tercera respuesta posible al leer, y se distingue de las otras dos porque lleva a una
+    accion distinta. Que no haya lector (`UnsupportedDocumentTypeError`) no se arregla
+    reintentando ni volviendo a pedir el archivo; que el documento este dañado
+    (`DocumentUnreadableError`) se arregla volviendolo a pedir; que el lector con modelo no este
+    disponible —sin credencial, sin cuota, con el proveedor caido— se arregla reintentando el
+    mismo archivo, y por eso es el unico de los tres que es `retryable`.
+
+    Sin esta clase, esas fallas subian hasta el manejador generico: 500 con `retryable: false`,
+    o sea la respuesta contraria a la unica que sirve.
+    """
+
+    code = "DOCUMENT_READER_UNAVAILABLE"
+    http_status = 503
+    retryable = True
+    default_message = (
+        "El lector de documentos no está disponible en este momento. "
+        "El archivo quedó guardado; hay que volver a intentar la lectura."
+    )
+
+
 # ─────────────────────────── Errores del portal DIAN ───────────────────────────
 
 

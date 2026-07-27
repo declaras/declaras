@@ -14,10 +14,10 @@ from declaras.documents import registry
 from declaras.documents.models import DocumentReading
 from declaras.documents.parsers import certificados, exogena
 from declaras.documents.service import DocumentReaderService
-from declaras.domain.errors import DocumentUnreadableError
+from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
 from declaras.domain.models import document_label
 from declaras.extraccion.f220 import Extraccion220
-from tests.unit.documents.dobles import ClienteFalso
+from tests.unit.documents.dobles import ClienteFalso, ClienteQueRevienta
 
 EXTRACCION = Extraccion220(
     empleador_nit="900123456", empleador_nombre="ACME SAS",
@@ -81,6 +81,21 @@ def test_una_falla_del_extractor_cruza_como_falla_de_dominio_sin_texto_tecnico()
     assert "refusal" not in mensaje
     assert "stop_reason" not in mensaje
     assert exc.value.details["parser"] == certificados.PARSER_220
+
+
+def test_una_falla_de_infraestructura_del_modelo_es_reintentable_y_no_dice_ilegible():
+    """Sin `ANTHROPIC_API_KEY` el SDK revienta con un `TypeError` al hacer la request. No es
+    `ValueError`, así que sin esta traducción sube hasta el manejador genérico: 500
+    `INTERNAL_ERROR` con `retryable: false`, y el documento queda guardado sin lectura y sin
+    alerta. El documento no tiene nada malo y reintentar sí sirve, así que ni el código ni la
+    reintentabilidad pueden ser los de un documento ilegible."""
+    cliente = ClienteQueRevienta(TypeError("Could not resolve authentication method"))
+    with pytest.raises(DocumentReaderUnavailableError) as exc:
+        certificados.leer_220(b"%PDF-x", client=cliente)
+    assert exc.value.retryable
+    # Ni el texto del SDK ni el nombre de la excepción viajan al mensaje.
+    assert "authentication" not in exc.value.message
+    assert "TypeError" not in exc.value.message
 
 
 def test_un_archivo_que_no_es_un_pdf_se_reporta_ilegible_sin_llamar_al_modelo():

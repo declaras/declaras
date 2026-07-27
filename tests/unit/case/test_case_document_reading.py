@@ -18,6 +18,8 @@ from declaras.adapters.storage.local import LocalDocumentStore
 from declaras.documents import registry
 from declaras.documents.models import DocumentReading
 from declaras.documents.service import DocumentReaderService
+from declaras.domain.case import FlagSeverity
+from declaras.domain.errors import DocumentReaderUnavailableError
 from declaras.domain.models import IdDocumentKind
 from declaras.services.case_service import CaseService
 
@@ -69,6 +71,25 @@ async def test_el_expediente_le_pasa_al_lector_el_anio_del_caso(expediente, monk
 
     await _subir_un_220(expediente, lector, monkeypatch)
     assert vistos == [TAX_YEAR]
+
+
+async def test_una_falla_pasajera_del_lector_deja_alerta_en_vez_de_silencio(
+    expediente, monkeypatch
+):
+    """El caso peor: el documento se guarda con su evento, sin lectura y sin alerta, y el
+    contador ve un certificado que simplemente no tiene cifras. Como reintentar sí sirve, el
+    aviso es de los que piden atención, no de los que dicen que el documento está malo."""
+
+    def lector(content: bytes, *, anio_esperado: int | None = None, client: object = None):
+        raise DocumentReaderUnavailableError()
+
+    updated = await _subir_un_220(expediente, lector, monkeypatch)
+
+    assert updated.documents[0].reading is None
+    (flag,) = updated.open_flags
+    assert flag.code == "DOCUMENT_READER_UNAVAILABLE"
+    assert flag.severity is FlagSeverity.WARNING
+    assert flag.message.startswith("No se pudo leer el certificado de ingresos y retenciones")
 
 
 async def test_la_lectura_no_corre_en_el_hilo_del_event_loop(expediente, monkeypatch):

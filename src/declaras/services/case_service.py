@@ -26,6 +26,7 @@ from declaras.domain.case import (
 from declaras.domain.case_ports import CaseRepository, ClientRepository
 from declaras.domain.errors import (
     CaseNotFoundError,
+    DocumentReaderUnavailableError,
     DocumentUnreadableError,
     FlagNotFoundError,
     TaxpayerMismatchError,
@@ -305,6 +306,20 @@ class CaseService:
                 code=exc.code,
                 message=f"No se pudo leer {document_label(doc_type)}: {exc.message}",
                 severity=FlagSeverity.BLOCKING,
+                source_document_id=case_doc.id,
+            )
+            return None
+        except DocumentReaderUnavailableError as exc:
+            # El lector no pudo trabajar y el documento no tiene nada malo. Igual queda alerta:
+            # sin ella el certificado se queda sin cifras y nadie se entera. `WARNING` y no
+            # `BLOCKING` por la misma razon que los documentos que la DIAN no entrego (arriba):
+            # lo que es reintentable pide atencion, no declara al documento inservible.
+            log.warning("case.reader_unavailable", case_id=str(case_id), doc_type=doc_type)
+            await self._cases.add_flag(
+                case_id=case_id,
+                code=exc.code,
+                message=f"No se pudo leer {document_label(doc_type)}: {exc.message}",
+                severity=FlagSeverity.WARNING,
                 source_document_id=case_doc.id,
             )
             return None

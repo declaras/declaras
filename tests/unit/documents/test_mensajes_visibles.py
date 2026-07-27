@@ -172,15 +172,18 @@ _NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/
 #
 #   1. HTTP generico (`api/errors.py`, manejador de `Exception`). CERRADO: responde con
 #      `DeclarasError()` pelado y no repite el texto de la excepcion. Verificado.
-#   2. El worker de extracciones (`services/extraction.py`, rama `except Exception`) y la alerta
-#      del expediente (`services/case_service.py`, rama `except DocumentUnreadableError`, que
-#      escribe `exc.message` en un flag que lee el contador). El primero envuelve el texto crudo
-#      de CUALQUIER excepcion (`DeclarasError(str(exc)[:200])`), `mark_failed` lo persiste y
-#      `ExtractionResponse.error` lo devuelve por `GET /v1/extractions/{id}`: es el camino que
-#      justifica la regex ancha de Juan. El nucleo entraba por aca al registrarse `leer_220` como
-#      lector del 220, y por eso `documents/parsers/certificados.py` traduce el `ValueError` del
-#      extractor a `DocumentUnreadableError` con un mensaje propio: ese mensaje SI lo revisa la
-#      comprobacion de abajo, porque `documents/` no esta excluido. CERRADO para los lectores.
+#   2. La alerta del expediente (`services/case_service.py`, ramas `except DocumentUnreadableError`
+#      y `except DocumentReaderUnavailableError`, que escriben `exc.message` dentro de un flag que
+#      lee el contador). Es el camino por el que el nucleo entraba al registrarse `leer_220` como
+#      lector del 220: `case_service` es el unico que llama a un lector, y por eso
+#      `documents/parsers/certificados.py` traduce ahi las fallas del extractor con mensajes
+#      propios, que SI revisa la comprobacion de abajo porque `documents/` no esta excluido.
+#      CERRADO para los lectores.
+#      El worker de extracciones (`services/extraction.py`, rama `except Exception`) envuelve el
+#      texto crudo de CUALQUIER excepcion (`DeclarasError(str(exc)[:200])`), `mark_failed` lo
+#      persiste y `ExtractionResponse.error` lo devuelve por `GET /v1/extractions/{id}`: es el
+#      camino que justifica la regex ancha de Juan, pero ese servicio baja y guarda documentos y
+#      NO llama a ningun lector, asi que el nucleo de calculo no pasa por ahi.
 #   3. `_domain_validation_error` (`api/errors.py`). ABIERTO: hace eco de los mensajes de los
 #      validadores de pydantic en un 422. En el nucleo excluido hay SIETE: `caso/modelos.py:44`,
 #      alcanzable con datos del cliente, y `parametros/modelos.py:70,72,78,86,92,97`, que solo

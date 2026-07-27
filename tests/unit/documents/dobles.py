@@ -35,3 +35,24 @@ class MessagesFalso:
 class ClienteFalso:
     def __init__(self, parsed: Any, stop_reason: str = "end_turn") -> None:
         self.messages = MessagesFalso(parsed, stop_reason)
+
+
+class MessagesQueRevienta:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def parse(self, **_kwargs: Any) -> Any:
+        raise self._error
+
+
+class ClienteQueRevienta:
+    """Cliente cuya request falla, como falla el SDK de verdad.
+
+    Sirve para la falla mas probable en un demo y la que peor se degrada: sin
+    `ANTHROPIC_API_KEY` el cliente SE CONSTRUYE bien y revienta al hacer la request con un
+    `TypeError` ("Could not resolve authentication method"), que no es `ValueError` y no se
+    parece en nada a un documento ilegible.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self.messages = MessagesQueRevienta(error)
