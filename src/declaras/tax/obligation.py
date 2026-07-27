@@ -12,7 +12,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from declaras.tax.uvt import in_pesos
+from declaras.tax.uvt import in_pesos, uvt_for
 
 
 class ThresholdCode(StrEnum):
@@ -92,8 +92,6 @@ def assess(*, tax_year: int, reported: dict[ThresholdCode, int]) -> ObligationAs
     cinco topes (aunque cuatro esten en cero) es lo que le explica por que esta o no
     obligado, y omitir uno haria parecer que no se reviso.
     """
-    from declaras.tax.uvt import uvt_for
-
     evaluations = [
         ThresholdEvaluation(
             code=code,
@@ -101,6 +99,7 @@ def assess(*, tax_year: int, reported: dict[ThresholdCode, int]) -> ObligationAs
             reported_amount=reported.get(code, 0),
             limit_amount=limit_for(code, tax_year),
             limit_in_uvt=THRESHOLD_LIMITS_IN_UVT[code],
+            # "iguales o superiores": estar exactamente en el tope ya obliga.
             exceeded=reported.get(code, 0) >= limit_for(code, tax_year),
         )
         for code in ThresholdCode

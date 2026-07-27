@@ -77,6 +77,30 @@ def test_confianza_admite_los_bordes_y_nulo():
     assert Fuente(clase="documento", ref="d1").confianza is None
 
 
+def test_conciliacion_es_una_clase_de_fuente_propia():
+    """Lo que resuelve el contador sobre una partida no es un dato digitado a mano.
+
+    `ref` guarda la partida, así que desde el hecho se puede volver a la discrepancia.
+    """
+    f = Fuente.conciliacion("p-42", "acepta el certificado del banco")
+    assert f.clase == "conciliacion"
+    assert f.ref == "p-42"
+    assert f.detalle == "acepta el certificado del banco"
+    assert f.confianza is None
+
+
+def test_celda_es_opcional_y_no_altera_las_fuentes_existentes():
+    """La granularidad de la capa de documentos entra sin obligar a las demás fuentes."""
+    assert Fuente.documento("exogena", "d1").celda is None
+    assert Fuente.manual("contador").celda is None
+    assert Fuente(clase="documento", ref="d1", celda="Hoja1!C14").celda == "Hoja1!C14"
+
+
+def test_una_clase_de_fuente_inventada_revienta():
+    with pytest.raises(ValidationError):
+        Fuente(clase="conciliacon", ref="p-42")
+
+
 def test_impuesto_neto_anterior_no_negativo():
     with pytest.raises(ValidationError):
         Creditos(impuesto_neto_anio_anterior=-1)

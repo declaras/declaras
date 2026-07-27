@@ -21,16 +21,36 @@ class _Modelo(BaseModel):
 
 
 class Fuente(_Modelo):
-    """Proveniencia de un hecho: de dónde salió y con qué confianza."""
+    """Proveniencia de un hecho: de dónde salió y con qué confianza.
 
-    clase: Literal["documento", "manual", "fixture", "exogena"]
+    Es la ÚNICA proveniencia del proyecto. La capa de documentos anota lo mismo por campo
+    leído (`ExtractedField.source`, `.confidence`); al pasar de una lectura a un hecho del
+    caso, eso se traduce acá y no se inventa un segundo modelo: si cada capa guarda la
+    procedencia a su manera, al contador le llega una cifra sin saber de dónde salió.
+    """
+
+    clase: Literal["documento", "manual", "fixture", "exogena", "conciliacion"]
     ref: str
     detalle: str | None = None
+    # Celda del XLSX o casilla del formulario que respalda el valor (el `source` de la
+    # lectura del documento). Opcional: un hecho manual o de una exógena agregada no tiene
+    # una celda que señalar, y exigirla obligaría a inventarla.
+    celda: str | None = None
     confianza: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @classmethod
     def manual(cls, quien: str) -> "Fuente":
         return cls(clase="manual", ref=quien)
+
+    @classmethod
+    def conciliacion(cls, partida_id: str, detalle: str) -> "Fuente":
+        """Hecho producido por una resolución del contador sobre una partida.
+
+        No es `manual`: el contador no digitó el número, resolvió una partida que el
+        conciliador le puso al frente. `ref` es la partida, así que desde el hecho se
+        puede volver a la discrepancia que lo originó.
+        """
+        return cls(clase="conciliacion", ref=partida_id, detalle=detalle)
 
     @classmethod
     def fixture(cls, nombre: str) -> "Fuente":

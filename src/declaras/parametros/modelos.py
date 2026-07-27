@@ -59,6 +59,36 @@ class ParametrosAnio(BaseModel):
         return pesos(Decimal(str(n)) * self.uvt)
 
     @model_validator(mode="after")
+    def _validar_uvt_contra_la_tabla(self) -> Self:
+        """El YAML repite la UVT del año; acá se ata a la tabla única de `parametros`.
+
+        El motor lee `uvt` y `uvt_siguiente` de acá (es lo que hace `uvt_pesos`), así que
+        el valor tiene que estar en el YAML. Pero un valor repetido es un valor que puede
+        quedar viejo: si el decreto sube la UVT y solo se actualiza la tabla, este YAML
+        seguiría liquidando con la del año pasado y ningún test lo notaría.
+
+        Un año que la tabla todavía no conoce se deja pasar: el YAML de un año gravable
+        nuevo tiene que poder cargarse sin que esta guarda lo bloquee.
+        """
+        # Import diferido: `parametros/__init__` importa este módulo, así que a nivel de
+        # módulo sería circular. Al validar, el paquete ya está cargado.
+        from declaras.parametros import UVT_POR_ANIO
+
+        esperada = UVT_POR_ANIO.get(self.anio)
+        if esperada is not None and self.uvt != esperada:
+            raise ValueError(
+                f"uvt: el YAML del año {self.anio} declara {self.uvt}, pero la tabla de "
+                f"parametros dice {esperada}"
+            )
+        siguiente = UVT_POR_ANIO.get(self.anio + 1)
+        if siguiente is not None and self.uvt_siguiente != siguiente:
+            raise ValueError(
+                f"uvt_siguiente: el YAML del año {self.anio} declara {self.uvt_siguiente} "
+                f"para {self.anio + 1}, pero la tabla de parametros dice {siguiente}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validar_tabla_241(self) -> Self:
         """La tabla debe cubrir [0, ∞) en tramos ascendentes y contiguos.
 
