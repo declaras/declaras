@@ -22,6 +22,7 @@ El texto técnico va al log, que es donde sirve, y nunca al mensaje ni a `detail
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from declaras.documents.models import DocumentReading, ExtractedField
@@ -30,7 +31,6 @@ from declaras.extraccion.f220 import (
     Extraccion220InvalidaError,
     Motivo220,
     extraer_220_con_metadatos,
-    id_documento,
 )
 from declaras.observability import get_logger
 
@@ -125,6 +125,10 @@ def leer_220(
     return DocumentReading(
         doc_type="CERT_INGRESOS_220",
         parser=PARSER_220,
-        content_sha256=id_documento(content),
+        # El digest COMPLETO, como los cuatro lectores del portal y como el documento del
+        # expediente: `content_sha256` no puede significar una cosa en una familia y otra en la
+        # otra, o un cruce lectura↔documento por hash falla solo para el 220. El prefijo de 12
+        # con el que `Fuente.ref` identifica el documento se saca de acá (`id_documento`).
+        content_sha256=hashlib.sha256(content).hexdigest(),
         fields=[ExtractedField(name=k, value=v, confidence=confianza) for k, v in campos.items()],
     )

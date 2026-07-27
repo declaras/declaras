@@ -8,6 +8,8 @@ falla del dominio, sin arrastrar el texto técnico que el modelo o el SDK produj
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from declaras.documents import registry
@@ -16,7 +18,7 @@ from declaras.documents.parsers import certificados, exogena
 from declaras.documents.service import DocumentReaderService
 from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
 from declaras.domain.models import document_label
-from declaras.extraccion.f220 import Extraccion220, Motivo220
+from declaras.extraccion.f220 import Extraccion220, Motivo220, id_documento
 from tests.unit.documents.dobles import ClienteFalso, ClienteQueRevienta
 
 # Las reglas de un texto que lee una persona se definen una sola vez, en el meta-test.
@@ -119,6 +121,17 @@ def test_la_lectura_lleva_el_anio_gravable_del_certificado():
     el único dato con el que un conciliador puede detectar el desfase después."""
     lectura = certificados.leer_220(b"%PDF-x", client=ClienteFalso(EXTRACCION))
     assert lectura.field("anio_gravable") == 2025
+
+
+def test_el_sha_de_la_lectura_es_el_completo_como_en_los_otros_lectores():
+    """`content_sha256` tiene que significar lo mismo en las dos familias: los cuatro parsers
+    del portal y el `CaseDocument` del mismo archivo guardan el digest completo, así que un
+    cruce lectura↔documento por hash fallaría solo para el 220. El prefijo de 12 con el que
+    `Fuente.ref` identifica el documento se deriva del completo, no al revés."""
+    lectura = certificados.leer_220(b"%PDF-x", client=ClienteFalso(EXTRACCION))
+    assert lectura.content_sha256 == hashlib.sha256(b"%PDF-x").hexdigest()
+    assert len(lectura.content_sha256) == 64
+    assert lectura.content_sha256[:12] == id_documento(b"%PDF-x")
 
 
 def test_el_certificado_tiene_nombre_legible_para_las_alertas():
