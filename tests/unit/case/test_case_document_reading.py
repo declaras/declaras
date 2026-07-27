@@ -7,6 +7,8 @@ no necesitaba contexto del caso, no costaba dinero y no tardaba nada.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -67,5 +69,20 @@ async def test_el_expediente_le_pasa_al_lector_el_anio_del_caso(expediente, monk
 
     await _subir_un_220(expediente, lector, monkeypatch)
     assert vistos == [TAX_YEAR]
+
+
+async def test_la_lectura_no_corre_en_el_hilo_del_event_loop(expediente, monkeypatch):
+    """Un lector con modelo tarda decenas de segundos en una llamada HTTP bloqueante. Si corre
+    en el hilo del loop, no se demora esta request: se detienen TODAS, `/health` incluido, y
+    también el worker de extracciones, que es una task del mismo loop — o sea que la consulta a
+    la DIAN de otro cliente se congela mientras se lee este PDF."""
+    hilos: list[int] = []
+
+    def lector(content: bytes, *, anio_esperado: int | None = None, client: object = None):
+        hilos.append(threading.get_ident())
+        return _lectura_valida()
+
+    await _subir_un_220(expediente, lector, monkeypatch)
+    assert hilos and hilos[0] != threading.get_ident()
 
 

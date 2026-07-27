@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi.concurrency import run_in_threadpool
+
 from declaras.documents.models import DocumentReading, ReadingWarning
 from declaras.documents.service import DocumentReaderService
 from declaras.domain.case import (
@@ -280,8 +282,14 @@ class CaseService:
         """
         try:
             content = await self._store.read(case_doc.storage_uri)
-            reading = self._reader.read(
-                content=content, doc_type=doc_type, anio_esperado=anio_esperado
+            # Al threadpool y no en el loop: leer es bloqueante, y un lector con modelo tarda
+            # decenas de segundos. En el loop congelaria todas las demas requests y el worker
+            # de extracciones, que corre como task del mismo loop.
+            reading = await run_in_threadpool(
+                self._reader.read,
+                content=content,
+                doc_type=doc_type,
+                anio_esperado=anio_esperado,
             )
         except UnsupportedDocumentTypeError:
             # Todavia no hay parser para ese tipo: es una limitacion conocida del sistema,

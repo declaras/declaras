@@ -8,11 +8,17 @@ dos veces.
 
 Es sincronico a proposito (a diferencia de la extraccion DIAN): leer un documento toma
 segundos, no minutos, asi que un job por cada lectura seria complejidad sin beneficio.
+
+Sincronico para quien llama, pero NO en el hilo del event loop: `document_reader.read` es una
+funcion bloqueante, y desde que hay lectores que llaman a un modelo puede tardar decenas de
+segundos. Ejecutarla en el loop congelaria todas las demas requests y el worker de
+extracciones, que es una task del mismo loop; por eso va en el threadpool.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from declaras.api.deps import ApiKeyDep, ContainerDep
 from declaras.api.schemas import DocumentReadingResponse, ReadStoredDocumentRequest
@@ -48,8 +54,11 @@ async def read_document(
     ),
 ) -> DocumentReadingResponse:
     content = await file.read()
-    reading = container.document_reader.read(
-        content=content, doc_type=doc_type, anio_esperado=anio_esperado
+    reading = await run_in_threadpool(
+        container.document_reader.read,
+        content=content,
+        doc_type=doc_type,
+        anio_esperado=anio_esperado,
     )
     return DocumentReadingResponse.from_reading(reading)
 
@@ -65,5 +74,7 @@ async def read_stored_document(
     _auth: ApiKeyDep,
 ) -> DocumentReadingResponse:
     content = await container.store.read(payload.storage_uri)
-    reading = container.document_reader.read(content=content, doc_type=payload.doc_type)
+    reading = await run_in_threadpool(
+        container.document_reader.read, content=content, doc_type=payload.doc_type
+    )
     return DocumentReadingResponse.from_reading(reading)
