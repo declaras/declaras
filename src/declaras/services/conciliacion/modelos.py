@@ -6,6 +6,7 @@ que el tercero le reportó a la DIAN (exógena) y lo que dice el documento que e
 cliente. Conciliar es comparar esas dos versiones número a número.
 """
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,26 +70,80 @@ class Valor(_Modelo):
     confianza: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class Decision(StrEnum):
+    """Lo que se decidió hacer con la partida: de dónde sale la cifra que se declara.
+
+    `MARCAR_AJENO` y `CERRAR_SIN_SOPORTE` NO aportan hecho al caso (su `valor` queda en 0);
+    las otras tres sí. Qué decisión es posible sobre qué estado lo valida `resolver`.
+    """
+
+    USAR_DIAN = "USAR_DIAN"
+    USAR_DOCUMENTO = "USAR_DOCUMENTO"
+    USAR_OTRO = "USAR_OTRO"
+    MARCAR_AJENO = "MARCAR_AJENO"
+    CERRAR_SIN_SOPORTE = "CERRAR_SIN_SOPORTE"
+
+
+class Motivo(StrEnum):
+    """Por qué se tomó la decisión: es lo que el contador (o un auditor) lee después."""
+
+    COINCIDEN = "COINCIDEN"
+    ERROR_DEL_TERCERO = "ERROR_DEL_TERCERO"
+    ERROR_DEL_CERTIFICADO = "ERROR_DEL_CERTIFICADO"
+    NO_ES_MIO = "NO_ES_MIO"
+    FALTA_DOCUMENTO = "FALTA_DOCUMENTO"
+    DECISION_DEL_CONTADOR = "DECISION_DEL_CONTADOR"
+
+
+class Origen(StrEnum):
+    """Quién resolvió: el peso de la resolución cuando algo cambia.
+
+    Una de SISTEMA es provisional (existe para que el 210 preliminar exista sin esperar
+    documentos) y `refrescar` la reemplaza SIEMPRE; una de CONTADOR es la decisión de una
+    persona y solo sobrevive si su `huella` sigue coincidiendo con lo que hay.
+    """
+
+    SISTEMA = "SISTEMA"
+    CONTADOR = "CONTADOR"
+
+
+class Resolucion(_Modelo):
+    """El desenlace que una persona (o el automatismo) le dio a una partida.
+
+    `valor` es el monto en pesos que la resolución hace valer (0 cuando la decisión no
+    aporta hecho). `huella` es el hash de las cifras de las dos versiones que el
+    resolvedor vio al decidir (`resolucion._huella`): si al refrescar la huella ya no
+    coincide, los valores cambiaron desde la resolución y la partida vuelve a pendiente.
+    """
+
+    decision: Decision
+    valor: int
+    motivo: Motivo
+    origen: Origen
+    huella: str
+    nota: str | None = None
+    quien: str
+    cuando: datetime
+
+
 class Partida(_Modelo):
     """Un hecho económico entre un tercero y el contribuyente, visto desde los dos lados.
 
-    `resolucion: Resolucion | None` llega con las resoluciones del contador (la siguiente
-    tarea del plan define `Resolucion` en este mismo módulo); declararla hoy obligaría a
-    inventar un modelo que esa tarea ya especifica completo.
-
-    TRAMPA VERIFICADA para quien escriba esa tarea: `model_copy(update={...})` NO respeta
-    `extra="forbid"` — acepta claves que no existen en el modelo y las descarta del
-    `model_dump()` sin error. Un `update={"resolucion": r}` escrito ANTES de que el campo
-    exista no revienta: pierde la resolución en silencio. Agregar el campo primero.
+    TRAMPA VERIFICADA: `model_copy(update={...})` NO respeta `extra="forbid"` — acepta
+    claves que no existen en el modelo y las descarta del `model_dump()` sin error. Un
+    typo en la clave de un `update` es un no-op silencioso: las transiciones de estado
+    del conciliador escriben las claves literales y los tests fijan los valores.
 
     SIN VALIDADORES DE COHERENCIA entre campos, medido en el cierre de T4: pydantic
     acepta estados que `abrir`/`incorporar` nunca producen — un COINCIDE sin versiones,
     una ajena con las dos versiones adjuntas, un `version_que_rige` que no está en
-    `versiones_documento`. Son inalcanzables por el cruce pero SÍ construibles a mano, y
-    las fábricas de la tarea siguiente construyen partidas a mano: el único guard que
-    existe es `reportado_a` → diferencias 0 (una property, no un validador). Quien
-    escriba esas fábricas decide si endurecer esto con `model_validator`; hasta entonces,
-    la coherencia la garantiza construir SOLO vía `abrir`/`incorporar`.
+    `versiones_documento`. Son inalcanzables por el cruce pero SÍ construibles a mano.
+    Decisión de T5: NO se endurecen con `model_validator` — los tests del cruce
+    construyen esos estados a propósito como defensas (p. ej. el guard `reportado_a` →
+    diferencias 0), y las fábricas de los tests construyen vía `abrir`/`incorporar`, que
+    es la única garantía real de coherencia. Los guards de negocio viven donde se usa la
+    partida: `resolver` valida decisión contra estado, y `a_caso` rechaza hechos sin
+    concepto y aportes sin ingreso.
     """
 
     # Estable: f"{nit}:{concepto}" para conceptos conocidos. Es la referencia con que una
@@ -156,6 +211,12 @@ class Partida(_Modelo):
     # `refrescar` de T5 reescribe por spec (la lección de I5)—. Campo adicional al
     # contrato del plan, autorizado en la ronda de fixes 4 de la T4.
     documentos_por_cruzar: list[str] = Field(default_factory=list)
+    # None = pendiente de resolver. La ponen `resolver` (una persona) y `autorresolver`
+    # (el sistema, provisional); `refrescar` decide si sobrevive cuando llegan datos
+    # nuevos. Una partida cuyo id desaparece entre consultas (ids inestables documentados
+    # en `_Grupo.id`) NO transfiere su resolución a ningún lado: la partida nueva nace
+    # con None y vuelve a la cola — pendiente de nuevo, nunca resuelta por arrastre.
+    resolucion: Resolucion | None = None
 
     @property
     def diferencia_monto(self) -> int:
