@@ -32,7 +32,7 @@ def uvt_for(year: int) -> int:
     value = UVT_BY_YEAR.get(year)
     if value is None:
         raise ValidationError(
-            f"no hay UVT registrada para el anio {year}",
+            f"No hay UVT registrada para el año {year}.",
             year=year,
             available=sorted(UVT_BY_YEAR),
         )

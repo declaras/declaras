@@ -203,6 +203,21 @@ class StorageError(DeclarasError):
     default_message = "No se pudo guardar o leer el documento."
 
 
+class InvalidStorageReferenceError(StorageError):
+    """La referencia apunta fuera del almacenamiento.
+
+    Es distinto de una falla de almacenamiento y hay que tratarlo distinto: no es que el disco
+    haya fallado, es que la peticion es invalida. Clasificarlo como falla reintentable, que era
+    lo que pasaba, le decia a quien la mandara que valia la pena repetirla, y eso es exactamente
+    lo que no se quiere responderle a un intento de salir del directorio.
+    """
+
+    code = "INVALID_STORAGE_REFERENCE"
+    http_status = 400
+    retryable = False
+    default_message = "La referencia del documento no es válida."
+
+
 # ─────────────────────────── Errores del expediente ───────────────────────────
 
 

@@ -184,3 +184,21 @@ async def test_el_documento_se_puede_ver_sin_descargarlo(client):
     assert vista.headers["content-disposition"].startswith("inline")
     descarga = await client.get(url)
     assert descarga.headers["content-disposition"].startswith("attachment")
+
+
+async def test_no_se_puede_abrir_una_declaracion_con_una_cedula_que_no_es_numerica(client):
+    """La regla vive en el dominio, y este esquema repetia los limites de cada campo pero no la
+    regla. Se desincronizaron, y la API aceptaba abrir una declaracion a nombre de "abc123":
+    entraba basura al sistema y reventaba mas adelante, al consultar la DIAN, de una forma que
+    no apuntaba al origen."""
+    respuesta = await client.post("/v1/cases", json={"id_number": "abc123", "tax_year": 2025})
+    assert respuesta.status_code == 422
+    assert respuesta.json()["code"] == "VALIDATION_ERROR"
+
+
+async def test_un_pasaporte_si_puede_tener_letras(client):
+    """La regla es de las cedulas y los NIT, no de cualquier documento."""
+    respuesta = await client.post(
+        "/v1/cases", json={"id_kind": "PA", "id_number": "AB1234567", "tax_year": 2025}
+    )
+    assert respuesta.status_code == 201

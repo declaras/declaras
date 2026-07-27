@@ -35,7 +35,7 @@ class PortalClient:
         response = await self.get(self.dashboard_url)
         html = response.text
         if DASHBOARD_FORM.authenticated_marker not in html:
-            raise DianSessionExpiredError("la sesion en el portal ya no es valida")
+            raise DianSessionExpiredError("La sesión en el portal de la DIAN ya no es válida.")
         return html
 
     async def get(self, url: str) -> httpx.Response:

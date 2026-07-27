@@ -106,13 +106,14 @@ class ExtractionService:
             raise JobNotFoundError(job_id=str(job_id))
         if job.status is not JobStatus.AWAITING_CHALLENGE:
             raise JobStateConflictError(
-                "el job no esta esperando verificacion", status=job.status.value
+                "El trabajo no está esperando una verificación.", status=job.status.value
             )
 
         session = await self._registry.get(job_id)
         if session is None:
             error = DianSessionExpiredError(
-                "la sesion expiro antes de recibir la respuesta; hay que reiniciar"
+                "La sesión con la DIAN se venció antes de recibir la respuesta, "
+                "así que hay que empezar de nuevo."
             )
             await self._jobs.mark_failed(job_id, error=error.to_payload())
             raise error
@@ -169,7 +170,7 @@ class ExtractionService:
         credentials = await self._vault.get(job.id)
         if credentials is None:
             raise DianSessionExpiredError(
-                "las credenciales del job expiraron; el usuario debe reiniciar el proceso"
+                "La clave ya no está en memoria, así que hay que empezar la consulta de nuevo."
             )
 
         subject = request.taxpayer.subject_key
@@ -250,7 +251,7 @@ class ExtractionService:
         if not documents and failures:
             # Nada se logro: es una falla del job, no una extraccion parcial.
             first = failures[0]
-            raise DianError(f"ningun documento pudo descargarse ({first.code})")
+            raise DianError(f"No se pudo traer ningún documento de la DIAN ({first.code}).")
 
         now = datetime.now(UTC)
         return ExtractionResult(

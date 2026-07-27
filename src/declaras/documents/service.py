@@ -32,7 +32,7 @@ class DocumentReaderService:
         le pidio, y vive aparte en `sniff.py`.
         """
         if not content:
-            raise ValidationError("el documento esta vacio")
+            raise ValidationError("El documento llegó vacío.")
 
         digest = hashlib.sha256(content).hexdigest()
         key = f"{doc_type}:{digest}"
@@ -44,7 +44,7 @@ class DocumentReaderService:
         reader = reader_for(doc_type)
         if reader is None:
             raise UnsupportedDocumentTypeError(
-                f"no hay lector para {doc_type}",
+                f"Todavía no hay lector para {doc_type}.",
                 doc_type=doc_type,
                 supported=supported_types(),
             )

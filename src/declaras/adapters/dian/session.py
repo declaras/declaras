@@ -48,7 +48,9 @@ class PlaywrightDianSession:
         self._assert_ready()
         downloader = DOWNLOADERS.get(doc_type)
         if downloader is None:
-            raise ValidationError(f"{doc_type.value} no es descargable", doc_type=doc_type.value)
+            raise ValidationError(
+                f"El documento {doc_type.value} no se puede descargar.", doc_type=doc_type.value
+            )
 
         log.info("dian.download.start", doc_type=doc_type.value, session_id=self.session_id)
         document = await downloader(self._page, self._base_url, taxpayer)
@@ -69,7 +71,7 @@ class PlaywrightDianSession:
 
     async def answer_challenge(self, answer: ChallengeAnswer) -> None:
         if self._challenge is None:
-            raise ValidationError("la sesion no tiene ninguna verificacion pendiente")
+            raise ValidationError("La sesión no tiene ninguna verificación pendiente.")
         outcome = await resolve_challenge(self._page, answer.answers)
         if outcome.authenticated:
             self._challenge = None
@@ -85,8 +87,8 @@ class PlaywrightDianSession:
     def _assert_ready(self) -> None:
         if self._challenge is not None:
             raise DianIdentityChallengeError(
-                "la sesion espera la verificacion de identidad del contribuyente",
+                "La sesión espera la verificación de identidad del titular.",
                 challenge=self._challenge.model_dump(mode="json"),
             )
         if self._closed:
-            raise ValidationError("la sesion ya fue cerrada")
+            raise ValidationError("La sesión ya fue cerrada.")

@@ -17,7 +17,7 @@ def build_document_store(settings: Settings) -> DocumentStore:
         from declaras.adapters.storage.gcs import GcsDocumentStore
 
         if not settings.storage_gcs_bucket:
-            raise ValueError("DECLARAS_STORAGE_GCS_BUCKET es obligatorio con backend gcs")
+            raise ValueError("Falta configurar el bucket de almacenamiento.")
         return GcsDocumentStore(settings.storage_gcs_bucket)
 
-    raise ValueError(f"backend de almacenamiento no soportado: {settings.storage_backend}")
+    raise ValueError(f"El almacenamiento {settings.storage_backend} no está soportado.")

@@ -10,7 +10,7 @@ from declaras.domain.ports import DianConnector
 def build_dian_connector(settings: Settings) -> DianConnector:
     if settings.dian_adapter is DianAdapterKind.FAKE:
         if settings.is_production:
-            raise ValueError("el conector fake no puede usarse en produccion")
+            raise ValueError("El conector de prueba no puede usarse en producción.")
         from declaras.adapters.dian.fake import FakeDianConnector
 
         return FakeDianConnector(challenge_ttl_s=settings.dian_challenge_ttl_s)

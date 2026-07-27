@@ -65,7 +65,7 @@ async def _begin_session(client: httpx.AsyncClient, *, base_url: str) -> tuple[s
     ide_request = candidates[0] if candidates else ""
     if not ide_request:
         raise DianLayoutChangedError(
-            "la entrada del portal no entrego ideRequest",
+            "La entrada del portal de la DIAN no entregó los datos del formulario.",
             selector="login_entry.ideRequest",
             final_url=str(response.url)[:160],
         )
@@ -74,13 +74,16 @@ async def _begin_session(client: httpx.AsyncClient, *, base_url: str) -> tuple[s
         padded = ide_request + "=" * (-len(ide_request) % 4)
         decoded = json.loads(base64.b64decode(padded))
     except (binascii.Error, ValueError, json.JSONDecodeError) as exc:
-        raise DianLayoutChangedError("el ideRequest no es un JSON en base64") from exc
+        raise DianLayoutChangedError(
+            "El portal de la DIAN cambió la forma del formulario de ingreso."
+        ) from exc
 
     client_id = decoded.get("clientId")
     redirect_uri = decoded.get("redirect_uri") or decoded.get("redirectUri")
     if not client_id or not redirect_uri:
         raise DianLayoutChangedError(
-            "el ideRequest no trae clientId o redirect_uri", keys=list(decoded)[:8]
+            "El portal de la DIAN cambió los datos del formulario de ingreso.",
+            keys=list(decoded)[:8],
         )
     return ide_request, client_id, redirect_uri
 
@@ -98,7 +101,7 @@ async def _submit_credentials(
     id_code = PORTAL_ID_CODES.get(credentials.id_kind.value)
     if id_code is None:
         raise DianLayoutChangedError(
-            f"tipo de documento sin equivalente en el portal: {credentials.id_kind.value}"
+            f"El portal de la DIAN no reconoce el tipo de documento {credentials.id_kind.value}."
         )
 
     payload = {
@@ -122,7 +125,9 @@ async def _submit_credentials(
     try:
         response = await client.post(f"{root}{ENDPOINTS.weblogin}", data=payload, headers=headers)
     except httpx.TimeoutException as exc:
-        raise DianTimeoutError("el portal no respondio al enviar las credenciales") from exc
+        raise DianTimeoutError(
+            "El portal de la DIAN no respondió al enviar las credenciales."
+        ) from exc
     except httpx.HTTPError as exc:
         raise DianPortalUnavailableError(reason=str(exc)[:160]) from exc
 
@@ -130,7 +135,7 @@ async def _submit_credentials(
         # El portal responde 500 cuando el envio no cumple su contrato (por ejemplo,
         # sin Origin/Referer). Es falla nuestra o del portal, no del usuario.
         raise DianLayoutChangedError(
-            "el servicio de login rechazo la peticion",
+            "El servicio de ingreso de la DIAN rechazó la petición.",
             status_code=response.status_code,
         )
 

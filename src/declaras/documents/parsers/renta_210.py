@@ -257,7 +257,7 @@ def _read_pdf(content: bytes) -> tuple[list[_Positioned], str]:
         raw_text = page.extract_text()
     except Exception as exc:
         raise DocumentUnreadableError(
-            "el archivo no es un PDF legible", parser=PARSER_NAME
+            "El archivo no es un PDF que se pueda leer.", parser=PARSER_NAME
         ) from exc
 
     marks = [

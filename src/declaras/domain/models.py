@@ -120,7 +120,7 @@ class TaxpayerRef(BaseModel):
     def _only_digits_for_local_ids(cls, value: str, info: Any) -> str:
         kind = (info.data or {}).get("id_kind")
         if kind in {IdDocumentKind.CC, IdDocumentKind.NIT} and not value.isdigit():
-            raise ValueError("el numero de documento debe ser numerico")
+            raise ValueError("El número de documento debe ser solo dígitos.")
         return value.strip()
 
     @property
@@ -213,7 +213,7 @@ class ExtractionRequest(BaseModel):
         found = non_requestable & set(value)
         if found:
             names = ", ".join(sorted(d.value for d in found))
-            raise ValueError(f"{names} no son solicitables al conector DIAN")
+            raise ValueError(f"No se le puede pedir {names} al conector de la DIAN.")
         return list(dict.fromkeys(value))
 
 

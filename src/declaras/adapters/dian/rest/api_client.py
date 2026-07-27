@@ -53,16 +53,16 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     if codigo < 400:
         return
     if codigo == httpx.codes.UNAUTHORIZED:
-        raise DianSessionExpiredError("el token de la API ya no es valido")
+        raise DianSessionExpiredError("La sesión con la DIAN se venció.")
     if codigo == httpx.codes.NOT_FOUND:
-        raise DianDocumentUnavailableError("la DIAN no tiene ese documento", url=url, status=codigo)
-    if codigo == httpx.codes.TOO_MANY_REQUESTS:
-        raise DianRateLimitedError("la API de la DIAN esta limitando las consultas")
-    if codigo >= 500:
-        raise DianPortalUnavailableError(
-            "la API de la DIAN respondio con un error", url=url, status=codigo
+        raise DianDocumentUnavailableError(
+            "La DIAN no tiene ese documento.", url=url, status=codigo
         )
-    raise DianError(f"la API de la DIAN rechazo la consulta ({codigo})", url=url, status=codigo)
+    if codigo == httpx.codes.TOO_MANY_REQUESTS:
+        raise DianRateLimitedError("La DIAN está limitando las consultas.")
+    if codigo >= 500:
+        raise DianPortalUnavailableError("La DIAN respondió con un error.", url=url, status=codigo)
+    raise DianError(f"La DIAN rechazó la consulta ({codigo}).", url=url, status=codigo)
 
 
 def build_digest(cookie_value: str) -> str:
@@ -86,7 +86,7 @@ class DianApiClient:
         """Canjea la cookie de sesion del portal por un token de la API."""
         cookie = self._client.cookies.get(_SESSION_COOKIE)
         if not cookie:
-            raise DianSessionExpiredError("no hay sesion en el portal: falta la cookie de Muisca")
+            raise DianSessionExpiredError("No hay sesión abierta en el portal de la DIAN.")
         try:
             response = await self._client.post(
                 f"{DIAN_API.base_url}{DIAN_API.token_from_cookies}",
@@ -97,17 +97,17 @@ class DianApiClient:
                 },
             )
         except httpx.TimeoutException as exc:
-            raise DianTimeoutError("la API de la DIAN no respondio") from exc
+            raise DianTimeoutError("La DIAN no respondió a tiempo.") from exc
 
         if response.status_code != httpx.codes.OK:
             raise DianSessionExpiredError(
-                "la API rechazo el canje de la sesion", status_code=response.status_code
+                "La DIAN rechazó el canje de la sesión.", status_code=response.status_code
             )
 
         payload = response.json()
         self._bearer = payload.get("idToken")
         if not self._bearer:
-            raise DianPortalUnavailableError("la API no entrego idToken")
+            raise DianPortalUnavailableError("La DIAN no entregó el token de acceso.")
         log.info("dian.api.authenticated", expires_in=payload.get("expireIn"))
 
     async def get_json(self, path: str) -> Any:

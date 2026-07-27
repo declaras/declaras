@@ -48,3 +48,23 @@ async def test_rechaza_rutas_fuera_del_almacenamiento(tmp_path):
     store = LocalDocumentStore(tmp_path)
     with pytest.raises(StorageError):
         await store.read("file://../../../etc/passwd")
+
+
+async def test_una_ruta_que_sale_del_almacenamiento_es_peticion_invalida_no_falla_del_disco(
+    tmp_path,
+):
+    """El bloqueo ya existia, pero clasificado como falla reintentable: le decia a quien mandara
+    la peticion que valia la pena repetirla, y eso es justo lo que no se le responde a un intento
+    de salir del directorio."""
+    from declaras.adapters.storage.local import LocalDocumentStore
+    from declaras.domain.errors import InvalidStorageReferenceError
+
+    store = LocalDocumentStore(root=tmp_path)
+    with pytest.raises(InvalidStorageReferenceError) as capturado:
+        await store.read("file://../../../etc/passwd")
+
+    assert capturado.value.http_status == 400
+    assert not capturado.value.retryable
+    # El mensaje no repite la ruta pedida: devolverla confirma como esta montado el disco.
+    assert "passwd" not in capturado.value.message
+    assert "etc" not in str(capturado.value.details)

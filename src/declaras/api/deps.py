@@ -17,7 +17,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 class UnauthorizedError(DeclarasError):
     code = "UNAUTHORIZED"
     http_status = 401
-    default_message = "Falta o es invalida la llave de API."
+    default_message = "Falta la llave de API o no es válida."
 
 
 def get_container(request: Request) -> Container:

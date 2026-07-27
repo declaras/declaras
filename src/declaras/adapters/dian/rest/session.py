@@ -47,7 +47,7 @@ class HttpDianSession:
         downloader = DOWNLOADERS.get(doc_type)
         if downloader is None:
             raise DianLayoutChangedError(
-                f"{doc_type.value} aun no esta calibrado para el conector HTTP",
+                f"La descarga de {doc_type.value} todavía no está calibrada para este conector.",
                 doc_type=doc_type.value,
             )
         log.info("dian.http.download_start", doc_type=doc_type.value, session_id=self.session_id)
@@ -70,7 +70,7 @@ class HttpDianSession:
         )
 
     async def answer_challenge(self, answer: ChallengeAnswer) -> None:
-        raise ValidationError("el conector HTTP no maneja verificacion de identidad")
+        raise ValidationError("Este conector no maneja la verificación de identidad.")
 
     async def close(self) -> None:
         if self._closed:
@@ -81,4 +81,4 @@ class HttpDianSession:
 
     def _assert_open(self) -> None:
         if self._closed:
-            raise ValidationError("la sesion ya fue cerrada")
+            raise ValidationError("La sesión ya fue cerrada.")

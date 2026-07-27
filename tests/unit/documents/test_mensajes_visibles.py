@@ -23,6 +23,17 @@ from tests.documents_fixtures import (
 # Un identificador del codigo que se escapo al texto: dos palabras unidas por guion bajo.
 _IDENTIFICADOR = re.compile(r"\b[a-z]+_[a-z_]+\b")
 
+# Palabras que en el codigo se escriben sin tilde por convencion (los comentarios y los nombres
+# van en ASCII) y que al llegar a un texto de usuario quedan mal escritas. Solo se listan formas
+# que no existen en espanol, para no marcar falsos positivos: "invalida" o "esta" son palabras
+# validas segun el contexto, "informacion" no lo es en ningun caso.
+_SIN_TILDE = re.compile(
+    r"\b(anio|codigo|numero|numerico|sesion|informacion|declaracion|identificacion|"
+    r"verificacion|operacion|electronica|expiro|solicito|categoria|dia|limite|"
+    r"credito|deposito|articulo|parrafo|mas)\b",
+    re.IGNORECASE,
+)
+
 
 def _todos_los_avisos():
     """Avisos de los cuatro lectores, forzando los casos que los producen."""
@@ -79,23 +90,53 @@ def test_hay_avisos_que_probar():
 
 
 def _todas_las_fallas():
-    from declaras.domain import errors
+    """Todas las fallas del sistema, esten donde esten.
 
-    return [
-        clase
-        for clase in vars(errors).values()
-        if isinstance(clase, type)
-        and issubclass(clase, errors.DeclarasError)
-        and clase.default_message
-    ]
+    Se recorren los modulos y no solo `domain.errors`, porque hay fallas definidas fuera: la de
+    autenticacion vive en la capa de API, y escapaba a esta comprobacion justamente por eso.
+    """
+    import importlib
+    import pkgutil
+
+    import declaras
+    from declaras.domain.errors import DeclarasError
+
+    for info in pkgutil.walk_packages(declaras.__path__, f"{declaras.__name__}."):
+        importlib.import_module(info.name)
+
+    def descendientes(clase):
+        for hija in clase.__subclasses__():
+            yield hija
+            yield from descendientes(hija)
+
+    return sorted(
+        {c for c in descendientes(DeclarasError) if c.default_message},
+        key=lambda c: c.__name__,
+    )
 
 
 @pytest.mark.parametrize("falla", _todas_las_fallas(), ids=lambda c: c.__name__)
 def test_la_falla_se_explica_en_espanol_correcto(falla):
-    mensaje = falla.default_message
-    assert mensaje[0].isupper(), f"empieza en minúscula: {mensaje!r}"
-    assert mensaje.rstrip().endswith("."), f"no termina en punto: {mensaje!r}"
-    assert _IDENTIFICADOR.search(mensaje) is None, f"filtra un nombre del código: {mensaje!r}"
+    _revisar_texto_de_usuario(falla.default_message)
+
+
+def _revisar_texto_de_usuario(texto: str) -> None:
+    """Las tres reglas de un texto que va a leer una persona.
+
+    Los huecos de formato (`{codigo}`) se quitan antes de revisar: son nombres de variables del
+    codigo, y lo que importa es como esta escrito el texto alrededor.
+    """
+    texto = re.sub(r"\{[^}]*\}", "", texto).strip() or texto
+    assert texto[0].isupper(), f"empieza en minúscula: {texto!r}"
+    assert texto.rstrip().endswith("."), f"no termina en punto: {texto!r}"
+
+    identificador = _IDENTIFICADOR.search(texto)
+    assert identificador is None, (
+        f"filtra un nombre del código ({identificador.group()}): {texto!r}"
+    )
+
+    sin_tilde = _SIN_TILDE.search(texto)
+    assert sin_tilde is None, f"le falta la tilde a «{sin_tilde.group()}» en: {texto!r}"
 
 
 def test_ninguna_falla_habla_de_expedientes_ni_de_flags():
@@ -103,3 +144,42 @@ def test_ninguna_falla_habla_de_expedientes_ni_de_flags():
     for falla in _todas_las_fallas():
         for palabra in ("expediente", "flag", "job "):
             assert palabra not in falla.default_message.lower(), falla.__name__
+
+
+# ─────── los mensajes escritos a mano al lanzar una falla ───────
+#
+# Un mensaje puesto en el sitio donde se lanza la falla reemplaza al de la clase, asi que llega
+# igual a la pantalla. Estaban casi todos en minuscula y sin tildes: no bastaba con revisar los
+# mensajes por defecto.
+
+# Captura el mensaje completo aunque este partido en varias lineas: Python concatena las cadenas
+# contiguas, asi que revisar solo el primer pedazo daria por incompleto un texto que si esta bien.
+_MENSAJE_AL_LANZAR = re.compile(r"\b[A-Z]\w*Error\(\s*((?:f?\"[^\"]*\"\s*)+)", re.MULTILINE)
+_PEDAZO = re.compile(r'f?"([^"]*)"')
+
+# El conector de navegador quedo superado por el de HTTP y no se ejecuta (ver ADR 0003).
+_NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/dian/selectors.py")
+
+
+def _mensajes_escritos_a_mano():
+    from pathlib import Path
+
+    import declaras
+
+    raiz = Path(declaras.__file__).parent
+    for archivo in sorted(raiz.rglob("*.py")):
+        relativo = str(archivo.relative_to(raiz))
+        if any(parte in relativo for parte in _NO_SE_EJECUTA):
+            continue
+        for bloque in _MENSAJE_AL_LANZAR.findall(archivo.read_text()):
+            mensaje = "".join(_PEDAZO.findall(bloque))
+            # Los mensajes muy cortos son marcadores internos, no frases para leer.
+            if len(mensaje) >= 12:
+                yield relativo, mensaje
+
+
+@pytest.mark.parametrize(
+    ("archivo", "mensaje"), list(_mensajes_escritos_a_mano()), ids=lambda x: str(x)[:40]
+)
+def test_el_mensaje_de_la_falla_esta_escrito_para_una_persona(archivo, mensaje):
+    _revisar_texto_de_usuario(mensaje)

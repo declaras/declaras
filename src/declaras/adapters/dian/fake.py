@@ -60,10 +60,11 @@ class FakeDianSession:
         if self._challenge is not None:
             raise DianIdentityChallengeError(challenge=self._challenge.model_dump(mode="json"))
         if self._closed:
-            raise ValidationError("la sesion ya fue cerrada")
+            raise ValidationError("La sesión ya fue cerrada.")
         if doc_type is DocumentType.EXOGENA and "noexo" in self._scenario:
             raise DianDocumentUnavailableError(
-                "la DIAN aun no publica la exogena del periodo", doc_label="exogena"
+                "La DIAN todavía no publica la información exógena del periodo.",
+                doc_label="exogena",
             )
         return RawDocument(
             doc_type=doc_type,
@@ -85,9 +86,9 @@ class FakeDianSession:
 
     async def answer_challenge(self, answer: ChallengeAnswer) -> None:
         if self._challenge is None:
-            raise ValidationError("la sesion no tiene ninguna verificacion pendiente")
+            raise ValidationError("La sesión no tiene ninguna verificación pendiente.")
         if answer.answers[0].strip() != _EXPECTED_CHALLENGE_ANSWER:
-            raise DianInvalidCredentialsError("la respuesta de verificacion fue rechazada")
+            raise DianInvalidCredentialsError("La respuesta de verificación fue rechazada.")
         self._challenge = None
 
     async def close(self) -> None:

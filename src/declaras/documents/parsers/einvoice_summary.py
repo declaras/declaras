@@ -63,12 +63,14 @@ def parse(content: bytes) -> DocumentReading:
         workbook = load_workbook(BytesIO(content), data_only=True)
     except Exception as exc:
         raise DocumentUnreadableError(
-            "el archivo no es un XLSX legible", parser=PARSER_NAME
+            "El archivo no es una hoja de cálculo que se pueda leer.", parser=PARSER_NAME
         ) from exc
 
     sheet = workbook.active
     if sheet is None:
-        raise DocumentUnreadableError("el XLSX no tiene hojas", parser=PARSER_NAME)
+        raise DocumentUnreadableError(
+            "El archivo no tiene ninguna hoja de cálculo.", parser=PARSER_NAME
+        )
 
     warnings: list[ReadingWarning] = []
     fields = _read_header(sheet)

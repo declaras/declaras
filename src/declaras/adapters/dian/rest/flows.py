@@ -68,7 +68,8 @@ async def download_from_year_modal(
     year = str(taxpayer.tax_year)
     if taxpayer.tax_year < modal.min_year:
         raise DianDocumentUnavailableError(
-            f"el portal sirve {doc_type.value} de {year} por otra via, aun no implementada",
+            f"El portal de la DIAN entrega {doc_type.value} de {year} por otra vía, "
+            "que todavía no está implementada.",
             doc_type=doc_type.value,
             tax_year=taxpayer.tax_year,
         )
@@ -131,7 +132,7 @@ async def _find_declaration(
         payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
     except DianDocumentUnavailableError as exc:
         raise DianDocumentUnavailableError(
-            f"la DIAN no tiene ninguna declaración {como_se_llama} a nombre del contribuyente",
+            f"La DIAN no tiene ninguna declaración {como_se_llama} a nombre del contribuyente.",
             doc_type=doc_type.value,
             tax_year=year,
         ) from exc
@@ -143,7 +144,7 @@ async def _find_declaration(
             return str(item["identificador"]["id"])
     tiene = f"; sí la tiene de {', '.join(str(a) for a in anios)}" if anios else ""
     raise DianDocumentUnavailableError(
-        f"la DIAN no tiene la declaración {como_se_llama} del año gravable {year}{tiene}",
+        f"La DIAN no tiene la declaración {como_se_llama} del año gravable {year}{tiene}.",
         doc_type=doc_type.value,
         tax_year=year,
         available_years=anios,
@@ -158,7 +159,7 @@ async def _download_declaration(
     content, headers = await ctx.api.get_bytes(path)
     if not jsf.looks_like_pdf(content):
         raise DianLayoutChangedError(
-            "la API no devolvio un PDF de la declaracion",
+            "La DIAN no devolvió un PDF de la declaración.",
             doc_type=doc_type.value,
             form_id=form_id,
         )
@@ -246,12 +247,12 @@ def _assert_is_document(
     content_type = response.headers.get("content-type", "")
     if "html" in content_type:
         raise DianDocumentUnavailableError(
-            "el portal devolvio una pagina en vez del documento",
+            "El portal de la DIAN devolvió una página en vez del documento.",
             doc_type=doc_type.value,
             **details,
         )
     raise DianLayoutChangedError(
-        "la respuesta del portal no es un documento reconocible",
+        "La respuesta del portal de la DIAN no es un documento reconocible.",
         doc_type=doc_type.value,
         content_type=content_type,
         **details,

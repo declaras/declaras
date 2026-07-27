@@ -95,7 +95,7 @@ async def cancel_extraction(
     if job is None:
         raise JobNotFoundError(job_id=str(job_id))
     if job.status.is_terminal:
-        raise JobStateConflictError("el job ya termino", status=job.status.value)
+        raise JobStateConflictError("El trabajo ya terminó.", status=job.status.value)
 
     await container.vault.discard(job_id)
     await container.registry.discard(job_id)

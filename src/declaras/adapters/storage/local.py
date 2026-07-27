@@ -9,7 +9,11 @@ from pathlib import Path
 from uuid import UUID
 
 from declaras.adapters.storage.paths import object_key
-from declaras.domain.errors import DocumentNotFoundError, StorageError
+from declaras.domain.errors import (
+    DocumentNotFoundError,
+    InvalidStorageReferenceError,
+    StorageError,
+)
 from declaras.domain.models import RawDocument, StoredDocument, TaxpayerRef
 from declaras.observability import get_logger
 
@@ -40,7 +44,7 @@ class LocalDocumentStore:
         try:
             await asyncio.to_thread(self._write, target, document.content)
         except OSError as exc:
-            raise StorageError(f"no se pudo escribir {key}", key=key) from exc
+            raise StorageError(f"No se pudo guardar el documento {key}.", key=key) from exc
 
         log.info(
             "document.stored",
@@ -67,7 +71,7 @@ class LocalDocumentStore:
         try:
             return await asyncio.to_thread(path.read_bytes)
         except OSError as exc:
-            raise StorageError(f"no se pudo leer {storage_uri}") from exc
+            raise StorageError(f"No se pudo leer el documento {storage_uri}.") from exc
 
     async def signed_url(self, storage_uri: str, ttl_seconds: int) -> str | None:
         """El backend local no expone URLs firmadas: se sirve por la API."""
@@ -85,5 +89,8 @@ class LocalDocumentStore:
         key = storage_uri.removeprefix(f"{self.scheme}://")
         path = (self._root / key).resolve()
         if not path.is_relative_to(self._root):
-            raise StorageError("ruta fuera del almacenamiento", storage_uri=storage_uri)
+            # No se registra la ruta pedida en el mensaje: si alguien esta tanteando rutas,
+            # devolverle lo que resolvio el servidor le confirma como esta montado el disco.
+            log.warning("storage.path_escape_attempt", storage_uri=storage_uri[:120])
+            raise InvalidStorageReferenceError()
         return path

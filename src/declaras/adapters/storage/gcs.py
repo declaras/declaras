@@ -27,7 +27,7 @@ class GcsDocumentStore:
         try:
             from google.cloud import storage
         except ImportError as exc:  # pragma: no cover
-            raise StorageError("falta el extra gcs: uv sync --extra gcs") from exc
+            raise StorageError("Falta instalar el soporte de almacenamiento en la nube.") from exc
         self._bucket_name = bucket_name
         self._bucket = storage.Client().bucket(bucket_name)
 
@@ -46,7 +46,7 @@ class GcsDocumentStore:
         try:
             await asyncio.to_thread(self._upload, key, document)
         except Exception as exc:  # pragma: no cover - depende de red
-            raise StorageError(f"no se pudo subir {key}", key=key) from exc
+            raise StorageError(f"No se pudo guardar el documento {key}.", key=key) from exc
 
         log.info("document.stored", doc_type=document.doc_type.value, storage_uri=f"gs://{key}")
         return StoredDocument(

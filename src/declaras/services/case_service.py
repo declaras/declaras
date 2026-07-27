@@ -105,7 +105,7 @@ class CaseService:
         """
         if extraction_job.status is not JobStatus.SUCCEEDED:
             raise ValidationError(
-                "el job de extraccion no esta en estado SUCCEEDED",
+                "La consulta a la DIAN todavía no ha terminado bien.",
                 job_id=str(extraction_job.id),
                 status=extraction_job.status.value,
             )
@@ -335,13 +335,13 @@ class CaseService:
             or result.taxpayer.id_number != client.id_number
         ):
             raise TaxpayerMismatchError(
-                "la extraccion pertenece a otro contribuyente",
+                "La consulta pertenece a otra persona.",
                 case_taxpayer=client.subject_key,
                 extraction_taxpayer=result.taxpayer.subject_key,
             )
         if result.taxpayer.tax_year != case.tax_year:
             raise TaxpayerMismatchError(
-                "la extraccion es de otro anio gravable",
+                "La consulta es de otro año gravable.",
                 case_tax_year=case.tax_year,
                 extraction_tax_year=result.taxpayer.tax_year,
             )

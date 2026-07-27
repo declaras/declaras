@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from declaras.api.schemas import DocumentReadingResponse
 from declaras.domain.case import (
@@ -20,11 +20,11 @@ from declaras.domain.case import (
     Client,
     FlagSeverity,
 )
-from declaras.domain.models import IdDocumentKind
+from declaras.domain.models import IdDocumentKind, TaxpayerRef
 
 
 class OpenCaseRequest(BaseModel):
-    """Abre un expediente. Crea el cliente si es la primera vez que se ve su documento."""
+    """Abre una declaracion. Crea el cliente si es la primera vez que se ve su documento."""
 
     id_kind: IdDocumentKind = IdDocumentKind.CC
     id_number: str = Field(min_length=5, max_length=15, examples=["1020304050"])
@@ -32,6 +32,20 @@ class OpenCaseRequest(BaseModel):
     full_name: str | None = None
     phone_number: str | None = Field(default=None, description="Numero de WhatsApp")
     email: str | None = None
+
+    @model_validator(mode="after")
+    def _cumple_las_reglas_del_dominio(self) -> OpenCaseRequest:
+        """Valida la identidad construyendo el objeto del dominio, en vez de repetir sus reglas.
+
+        Antes este esquema repetia los limites de cada campo pero no la regla de que una cedula
+        es solo digitos, que vive en `TaxpayerRef`. Las dos definiciones se desincronizaron y la
+        API aceptaba abrir una declaracion a nombre de "abc123": entraba basura al sistema y
+        reventaba mas adelante, al consultar la DIAN, de una forma que no apuntaba al origen.
+
+        Construir el objeto del dominio hace imposible que vuelvan a separarse.
+        """
+        TaxpayerRef(id_kind=self.id_kind, id_number=self.id_number, tax_year=self.tax_year)
+        return self
 
 
 class LinkExtractionRequest(BaseModel):
