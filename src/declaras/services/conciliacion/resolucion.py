@@ -296,6 +296,12 @@ def _huella(partida: Partida) -> str:
     contenido: dict[str, object] = {
         "dian": _cifras(partida.version_dian),
         "documento": _cifras(partida.version_documento),
+        # A quién pertenece la plata es parte de lo que el resolvedor vio (I2 de la
+        # ronda 2, el gemelo del M4): una partida que se volvió ajena conservando id y
+        # cifras invalida la decisión — que era sobre plata del titular. En el cruce
+        # real el sufijo `:reportado-a:` cambia el id y la resolución queda huérfana
+        # por esa vía; esto cierra el camino construible a mano.
+        "reportado_a": partida.reportado_a,
     }
     if not partida.nit_tercero:
         contenido["versiones"] = sorted(partida.versiones_documento)

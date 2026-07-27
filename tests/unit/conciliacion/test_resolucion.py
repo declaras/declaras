@@ -518,3 +518,18 @@ def test_refrescar_le_quita_la_resolucion_pegada_a_una_nueva_invalidada():
     [p] = refrescar(incrementales, guardadas)
     assert p.resolucion is None  # pendiente de verdad, no "resuelta con nota"
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
+
+
+def test_una_decision_del_contador_no_sobrevive_a_una_partida_que_se_volvio_ajena():
+    """I2 de la ronda 2, el gemelo del M4: la huella no cubría `reportado_a`. Con la
+    construcción exacta del test M4 pero con origen CONTADOR — guardada USAR_DIAN de
+    9M, la nueva conserva id y cifras y trae reportado_a — la huella coincidía, la
+    decisión se preservaba y a_caso metía 9M de otra persona como ingreso del
+    contribuyente."""
+    exogena = _exogena(_fila("901999888", "5001", 9_000_000))
+    [titular] = abrir(exogena)
+    guardadas = [resolver(titular, Decision.USAR_DIAN,
+                          motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")]
+    nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
+    [p] = refrescar([nueva_ajena], guardadas)
+    assert p.resolucion is None  # pendiente: la decisión era sobre una partida del titular
