@@ -38,6 +38,13 @@ from declaras.services.conciliacion.modelos import (
     Resolucion,
     Valor,
 )
+from declaras.services.conciliacion.peticiones import (
+    MAXIMO_PETICIONES,
+    UMBRAL_AHORRO,
+    Peticion,
+    costo_de_cerrar,
+    derivar_peticiones,
+)
 from declaras.services.conciliacion.resolucion import (
     NOTA_VALORES_CAMBIARON,
     QUIEN_SISTEMA,
@@ -54,6 +61,7 @@ __all__ = [
     "DIVIDENDOS_SIN_DESAGREGAR",
     "INGRESO_EXCLUIDO",
     "INGRESO_LLEVADO_A_MANO",
+    "MAXIMO_PETICIONES",
     "NOTA_VALORES_CAMBIARON",
     "PENSION_DISTRIBUIDA_UNIFORME",
     "POSIBLE_DOBLE_CONTEO",
@@ -61,6 +69,7 @@ __all__ = [
     "RETENCION_DESPLAZADA",
     "RETENCION_SIN_INGRESO",
     "TIPO_A_CLAVE",
+    "UMBRAL_AHORRO",
     "Concepto",
     "Decision",
     "EstadoPartida",
@@ -68,6 +77,7 @@ __all__ = [
     "Motivo",
     "Origen",
     "Partida",
+    "Peticion",
     "Resolucion",
     "Respuesta",
     "Valor",
@@ -76,6 +86,8 @@ __all__ = [
     "autorresolver",
     "avisos",
     "concepto_de_codigo",
+    "costo_de_cerrar",
+    "derivar_peticiones",
     "incorporar",
     "pendientes",
     "refrescar",
