@@ -19,6 +19,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from declaras.services.conciliacion.cruce import _con_nota
 from declaras.services.conciliacion.modelos import (
     Decision,
     EstadoPartida,
@@ -124,6 +125,43 @@ def pendientes(partidas: list[Partida]) -> list[Partida]:
         key=_plata_en_juego,
         reverse=True,
     )
+
+
+def refrescar(nuevas: list[Partida], guardadas: list[Partida]) -> list[Partida]:
+    """Reconcilia una re-derivación del cruce con las resoluciones que ya había.
+
+    `nuevas` es la lista fresca (abrir + reincorporar todo); `guardadas` la persistida.
+    Por id: una resolución de SISTEMA se reemplaza SIEMPRE (era provisional; el
+    autorresolver del final vuelve a poner las que sigan aplicando); una de CONTADOR se
+    preserva solo si su huella coincide con las cifras de la partida nueva — si no, la
+    partida vuelve a pendiente con la nota de que los valores cambiaron (sumada a la nota
+    fresca del cruce, no encima de ella). Una guardada cuyo id ya no existe en `nuevas`
+    no transfiere su resolución a nada: la partida que la reemplace nace pendiente (los
+    ids inestables están documentados en `_Grupo.id`; huérfana = a la cola otra vez).
+
+    RESIDUO ASUMIDO de esa decisión de diseño: si el contador había MARCADO AJENA una
+    partida sin marca estructural (p. ej. la `nombre:...` de un homónimo) y el id cambia,
+    la partida nueva entra por los automatismos del final como cualquier otra — un
+    SOLO_DIAN fresco recibe la provisional USAR_DIAN y esa plata vuelve al preliminar
+    hasta que la persona la marque otra vez. No hay con qué ligar el id viejo al nuevo
+    (ese es exactamente el problema documentado); las ajenas con marca estructural
+    (`reportado_a`) NO caen acá porque la marca se re-deriva en el cruce y el guard de
+    `autorresolver` las salta siempre.
+    """
+    previas = {p.id: p for p in guardadas}
+    resultado: list[Partida] = []
+    for nueva in nuevas:
+        previa = previas.get(nueva.id)
+        anterior = previa.resolucion if previa is not None else None
+        if anterior is None or anterior.origen is Origen.SISTEMA:
+            resultado.append(nueva)
+        elif anterior.huella == _huella(nueva):
+            resultado.append(nueva.model_copy(update={"resolucion": anterior}))
+        else:
+            resultado.append(nueva.model_copy(
+                update={"nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON)}
+            ))
+    return autorresolver(resultado)
 
 
 def _con_resolucion(

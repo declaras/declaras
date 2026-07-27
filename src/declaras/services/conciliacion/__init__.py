@@ -27,6 +27,7 @@ from declaras.services.conciliacion.resolucion import (
     QUIEN_SISTEMA,
     autorresolver,
     pendientes,
+    refrescar,
     resolver,
 )
 
@@ -48,5 +49,6 @@ __all__ = [
     "concepto_de_codigo",
     "incorporar",
     "pendientes",
+    "refrescar",
     "resolver",
 ]
