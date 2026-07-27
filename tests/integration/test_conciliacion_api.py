@@ -1030,6 +1030,157 @@ async def test_resolver_un_renglon_no_borra_la_marca_de_que_hay_que_conciliar(cl
     assert (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual_vigente"] is False
 
 
+async def test_resolver_no_contradice_a_los_otros_caminos(client, container):
+    """D1: resolver se armaba su propio `Estado` sin el veredicto de la huella, así que era
+    un quinto camino que contradecía a los otros cuatro: respondía
+    `falta_para_liquidar: null` mientras `GET /conciliacion`, en la request siguiente y sobre
+    el mismo caso, decía que los renglones no corresponden. Y `_recalcular` persistía una
+    versión derivada de los renglones VIEJOS, sin el 220 que ya está en el expediente."""
+    from uuid import UUID
+
+    case_id = await _conciliado(client)
+    versiones_antes = len(await container.conciliacion.versiones(UUID(case_id)))
+    await container.case_service.add_client_upload(
+        case_id=UUID(case_id), doc_type=DOC_220, content=_bytes_220(), filename="fuera.pdf"
+    )
+
+    resuelto = await client.post(
+        f"/v1/cases/{case_id}/conciliacion/890903938:RENDIMIENTOS/resolver",
+        json={"decision": "USAR_DIAN", "motivo": "FALTA_DOCUMENTO", "quien": "contador"},
+    )
+    assert resuelto.status_code == 200, resuelto.text
+    assert resuelto.json()["resumen"]["falta_para_liquidar"], (
+        "resolver decía que no falta nada mientras GET /conciliacion decía lo contrario"
+    )
+    del_otro_camino = (await client.get(f"/v1/cases/{case_id}/conciliacion")).json()
+    assert resuelto.json()["resumen"]["falta_para_liquidar"] == (
+        del_otro_camino["falta_para_liquidar"]
+    )
+    assert len(await container.conciliacion.versiones(UUID(case_id))) == versiones_antes, (
+        "se persistió una versión calculada sin el documento que ya está en el expediente"
+    )
+
+
+async def test_conciliar_sin_cambios_no_tumba_el_cierre(client):
+    """D2: `POST /conciliacion` es idempotente por contrato, y tumbaba el cierre con un
+    evento que decía "la declaración cambió" cuando no cambió nada. Dos razones medidas: las
+    listas se comparaban en órdenes distintos, y las provisionales del sistema se re-derivan
+    con `cuando` fresco."""
+    case_id = await _conciliado(client)
+    assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
+
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    assert detalle["status"] == "DRAFT_READY"
+    assert not [e for e in detalle["events"] if e["kind"] == "DRAFT_READY_INVALIDADO"]
+
+
+async def test_no_se_cierra_si_entra_un_documento_entre_la_revision_y_el_cierre(
+    client, container, monkeypatch
+):
+    """D3: la precondición de `cerrar` medía la revisión, que es justamente lo único que un
+    documento entrado por la puerta sin cruce NO mueve. Resultado medido: cierre 200,
+    `DRAFT_READY`, `actual_vigente False` — un cierre fechado con la cifra anterior al
+    documento. Y la red de la invalidación no dispara por ese camino."""
+    from uuid import UUID
+
+    from declaras.services import conciliacion_service as modulo
+
+    case_id = await _conciliado(client)
+    original = modulo.ConciliacionService._de_hoy
+
+    async def entra_un_documento(self, cid):
+        resultado = await original(self, cid)
+        await container.case_service.add_client_upload(
+            case_id=UUID(case_id), doc_type=DOC_220, content=_bytes_220(), filename="tarde.pdf"
+        )
+        return resultado
+
+    monkeypatch.setattr(modulo.ConciliacionService, "_de_hoy", entra_un_documento)
+    respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert respuesta.status_code == 409, respuesta.text
+    assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
+
+
+async def test_una_exogena_sin_filas_tambien_produce_su_210(client):
+    """D4: el sello vivía en las filas que sella, así que un expediente de CERO renglones lo
+    perdía y quedaba en 409 PARA SIEMPRE, con el mensaje "hay que conciliar" a quien ya
+    concilió. Y es un caso real: alguien sin nada reportado en exógena es justo el perfil
+    "fácil, sin movimientos" del producto — su declaración es la que más rápido sale."""
+    creado = await client.post(
+        "/v1/cases",
+        json={"id_number": ID_TITULAR, "tax_year": 2025, "full_name": NOMBRE_TITULAR},
+    )
+    case_id = creado.json()["id"]
+    vacia = build_exogena_xlsx(
+        id_number=ID_TITULAR, taxpayer_name=NOMBRE_TITULAR, detail_rows=[]
+    )
+    await _subir(client, case_id, "EXOGENA", "exogena-vacia.xlsx", vacia)
+    resumen = (await client.post(f"/v1/cases/{case_id}/conciliacion")).json()
+    assert resumen["total"] == 0
+    assert resumen["falta_para_liquidar"] is None
+
+    borrador = await client.get(f"/v1/cases/{case_id}/borrador")
+    assert borrador.status_code == 200, borrador.text
+    assert "Borrador Formulario 210" in borrador.text
+    assert (await client.get(f"/v1/cases/{case_id}/memoria")).status_code == 200
+    cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert cerrar.status_code == 200, cerrar.text
+    assert cerrar.json()["status"] == "DRAFT_READY"
+
+
+async def test_la_invalidacion_ve_un_cierre_que_ocurrio_a_mitad_de_la_request(
+    client, monkeypatch
+):
+    """D3, segunda mitad: la invalidación leía el estado del expediente del `detail` que su
+    llamador tomó al EMPEZAR. Si el cierre ocurre en medio, ahí el caso todavía no era
+    `DRAFT_READY` y la red de seguridad no disparaba. Se fuerza esa ventana exacta."""
+    from declaras.services import conciliacion_service as modulo
+
+    case_id = await _conciliado(client)
+    original = modulo.ConciliacionService._registrar_descartadas
+    hecho = {"cerrado": False}
+
+    async def cierra_en_medio(self, cid, descartadas):
+        await original(self, cid, descartadas)
+        if not hecho["cerrado"]:
+            hecho["cerrado"] = True
+            await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+
+    monkeypatch.setattr(modulo.ConciliacionService, "_registrar_descartadas", cierra_en_medio)
+    # Una exógena nueva cambia los renglones, así que la invalidación tiene que correr.
+    await _subir(client, case_id, "EXOGENA", "v2.xlsx", _exogena(FILA_SALARIO))
+    assert hecho["cerrado"], "la ventana no se ejercitó"
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    assert detalle["status"] == "READY_FOR_REVIEW"
+    assert [e for e in detalle["events"] if e["kind"] == "DRAFT_READY_INVALIDADO"]
+
+
+async def test_resolver_despues_de_cerrar_tumba_el_cierre(client):
+    """D6: el segundo disparador de la invalidación (una liquidación nueva) solo lo cuidaba
+    el test de carrera, que es no determinístico. Secuencial: cerrar y después corregir un
+    renglón deja el borrador por revisar otra vez."""
+    case_id = await _conciliado(client)
+    assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
+
+    corregido = await client.post(
+        f"/v1/cases/{case_id}/conciliacion/890903938:RENDIMIENTOS/resolver",
+        json={
+            "decision": "USAR_OTRO",
+            "motivo": "DECISION_DEL_CONTADOR",
+            "valor": 1_000_000,
+            "quien": "contador@declaras.co",
+        },
+    )
+    assert corregido.status_code == 200, corregido.text
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    assert detalle["status"] == "READY_FOR_REVIEW"
+    assert [e for e in detalle["events"] if e["kind"] == "DRAFT_READY_INVALIDADO"]
+
+
 async def test_cerrar_deja_de_valer_cuando_los_renglones_cambian(client):
     """`DRAFT_READY` era terminal de hecho: nada lo invalidaba. Un borrador "listo" que ya
     no corresponde al expediente es la misma mentira, persistida en el estado."""

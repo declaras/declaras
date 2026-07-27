@@ -19,11 +19,12 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from declaras.adapters.persistence.tables import (
+    CaseConciliacionRow,
     CaseLiquidacionRow,
     CasePartidaRow,
     CaseRespuestaRow,
@@ -72,31 +73,21 @@ class SqlConciliacionRepository:
         return await self._partidas(case_id, sin_partida=True)
 
     async def revision(self, case_id: UUID) -> int:
-        """La revision del bloque de partidas del expediente; 0 si todavia no hay ninguna."""
+        """La revision del cruce del expediente; 0 si nunca se concilio."""
         async with self._sessions() as session:
-            actual = (
-                await session.execute(
-                    select(func.max(CasePartidaRow.revision)).where(
-                        CasePartidaRow.case_id == str(case_id)
-                    )
-                )
-            ).scalar()
-            return int(actual or 0)
+            fila = await session.get(CaseConciliacionRow, str(case_id))
+            return fila.revision if fila is not None else 0
 
     async def huella(self, case_id: UUID) -> str | None:
         """La huella de los documentos con que se derivaron los renglones guardados.
 
-        None si no hay bloque: nunca se concilio. Es lo que distingue "no hay nada que
-        cruzar" de "hay documentos que todavia no se cruzaron".
+        None SOLO si nunca se concilio, que es un hecho del expediente y no de sus filas: un
+        expediente con cero renglones tambien tiene su sello. Es lo que distingue "no hay
+        nada que cruzar" de "hay documentos que todavia no se cruzaron".
         """
         async with self._sessions() as session:
-            return (
-                await session.execute(
-                    select(CasePartidaRow.huella_documentos)
-                    .where(CasePartidaRow.case_id == str(case_id))
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+            fila = await session.get(CaseConciliacionRow, str(case_id))
+            return fila.huella_documentos if fila is not None else None
 
     async def reemplazar_partidas(
         self,
@@ -105,9 +96,14 @@ class SqlConciliacionRepository:
         partidas: list[Partida],
         huerfanas: list[Partida],
         revision_esperada: int,
-        huella_documentos: str | None = None,
+        huella_documentos: str,
     ) -> int:
         """Deja EXACTAMENTE estas partidas y estas huerfanas, si nadie mas escribio antes.
+
+        `huella_documentos` es OBLIGATORIO y no acepta None. Con un default, un llamador
+        futuro que lo olvide borra el sello en silencio y devuelve el agujero que esta ronda
+        cerro: falla cerrado (todo se niega hasta conciliar), pero es exactamente el accidente
+        que no debe poder escribirse.
 
         CHEQUEO OPTIMISTA, no bloqueo. La ventana entre que quien llama lee el estado y
         llega aca es ancha (varias consultas y la liquidacion completa en medio), y sin
@@ -126,9 +122,9 @@ class SqlConciliacionRepository:
         No se usa `SELECT ... FOR UPDATE`: exigiria hilar una sesion por todo el caso de uso
         y no corre en SQLite, que es lo que usan las pruebas.
 
-        `IntegrityError` se traduce al mismo conflicto: dos primeras escrituras concurrentes
-        (revision 0, cuando todavia no hay bloque que comparar) chocan contra
-        `uq_partida_caso`, que es el mismo accidente visto desde la base. Sin esta
+        `IntegrityError` se traduce al mismo conflicto: dos PRIMERAS escrituras concurrentes
+        (revision 0, cuando todavia no hay fila que comparar) chocan contra la clave primaria
+        de `case_conciliacion`, que es el mismo accidente visto desde la base. Sin esta
         traduccion seria un 500 donde corresponde un 409.
         """
         ahora = _utcnow()
@@ -142,18 +138,31 @@ class SqlConciliacionRepository:
                     cambiadas = cast(
                         "CursorResult[Any]",
                         await session.execute(
-                            update(CasePartidaRow)
+                            update(CaseConciliacionRow)
                             .where(
-                                CasePartidaRow.case_id == str(case_id),
-                                CasePartidaRow.revision == revision_esperada,
+                                CaseConciliacionRow.case_id == str(case_id),
+                                CaseConciliacionRow.revision == revision_esperada,
                             )
-                            .values(revision=nueva)
+                            .values(
+                                revision=nueva,
+                                huella_documentos=huella_documentos,
+                                updated_at=ahora,
+                            )
                         ),
                     )
                     if not cambiadas.rowcount:
                         raise ConflictoDeConcurrenciaError(
                             revision_leida=revision_esperada
                         )
+                else:
+                    session.add(
+                        CaseConciliacionRow(
+                            case_id=str(case_id),
+                            revision=nueva,
+                            huella_documentos=huella_documentos,
+                            updated_at=ahora,
+                        )
+                    )
                 await session.execute(
                     delete(CasePartidaRow).where(CasePartidaRow.case_id == str(case_id))
                 )
@@ -166,8 +175,6 @@ class SqlConciliacionRepository:
                                 partida_id=partida.id,
                                 estado=partida.estado.value,
                                 sin_partida=sin_partida,
-                                revision=nueva,
-                                huella_documentos=huella_documentos,
                                 partida_json=partida.model_dump(mode="json"),
                                 updated_at=ahora,
                             )

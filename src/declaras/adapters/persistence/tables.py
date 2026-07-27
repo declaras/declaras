@@ -174,6 +174,36 @@ class CasePartidaRow(Base):
     )
 
 
+class CaseConciliacionRow(Base):
+    """Estado del cruce de un expediente: su revision y el sello de sus insumos.
+
+    VIVE POR EXPEDIENTE Y NO EN LAS FILAS DE PARTIDAS, donde estaba: un expediente puede
+    tener CERO renglones legitimamente —una exogena legible sin filas de terceros, que es el
+    perfil "facil, sin movimientos" del producto— y ahi el sello desaparecia junto con las
+    filas. El sistema lo trataba como "nunca se concilio" y ese expediente NO podia producir
+    un 210 nunca: 409 para siempre, con el mensaje "hay que conciliar" a quien ya concilio.
+
+    `revision` es la precondicion del chequeo optimista: quien leyo la revision N solo puede
+    escribir si sigue siendo N. Con la fila unica, el comparar-y-cambiar es un UPDATE de una
+    sola fila en vez de uno sobre el bloque entero.
+
+    `huella_documentos` es la identidad del conjunto de insumos del que SALIERON los
+    renglones (la exogena vigente mas los cruzables, en orden). Permite saber sin re-derivar
+    nada si los renglones siguen correspondiendo al expediente: un documento que entra por un
+    camino que no corre el cruce los deja viejos, y sin esto todo el mundo los trataba como
+    los de hoy. NO es nullable: un sello opcional es un sello que alguien olvida.
+    """
+
+    __tablename__ = "case_conciliacion"
+
+    case_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("cases.id"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    huella_documentos: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CaseRespuestaRow(Base):
     """Lo que el cliente contesto a una pregunta, o la peticion que el contador cerro.
 
