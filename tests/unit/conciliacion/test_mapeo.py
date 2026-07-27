@@ -403,3 +403,20 @@ def test_la_retencion_afirmada_en_cero_por_la_version_escogida_sigue_siendo_cero
     p = resolver(partidas[0], Decision.USAR_DIAN,
                  motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
     assert _a_caso([p]).laborales[0].retencion == 0
+
+
+def test_un_concepto_que_nadie_ensambla_revienta_en_vez_de_desaparecer(monkeypatch):
+    """I1 de la ronda 2: `conceptos.py` es tabla INCREMENTAL — un Concepto nuevo que
+    nadie agregue ni a `_ORDEN_INGRESOS` ni a `CONCEPTOS_FUERA_DEL_MOTOR` se caía del
+    caso EN SILENCIO (20M resueltos con hecho → ingresos_brutos_totales = 0, sin
+    excepción y sin aviso). El repro del revisor: quitar ARRENDAMIENTOS de la tupla."""
+    from declaras.services.conciliacion import mapeo
+
+    monkeypatch.setattr(mapeo, "_ORDEN_INGRESOS", tuple(
+        c for c in mapeo._ORDEN_INGRESOS if c is not Concepto.ARRENDAMIENTOS))
+    partidas = autorresolver(abrir(_exogena(
+        _fila("901333555", "5005", 20_000_000, nombre="INMOBILIARIA Z"))))
+    with pytest.raises(NotImplementedError, match="ARRENDAMIENTOS"):
+        _a_caso(partidas)
+    with pytest.raises(NotImplementedError, match="ARRENDAMIENTOS"):
+        avisos(partidas)

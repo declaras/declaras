@@ -214,6 +214,19 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
             "tercero que los reciba: hay que revisar esas resoluciones."
         )
 
+    # El cierre de la partición (I1 de la ronda 2): a esta altura todo concepto tiene
+    # dueño — RETENCION y los aportes se consumieron arriba, los fuera-del-motor ya
+    # reventaron, y lo que queda debe estar en `_ORDEN_INGRESOS`. La tabla de conceptos
+    # es INCREMENTAL: uno nuevo que nadie agregue ni acá ni a CONCEPTOS_FUERA_DEL_MOTOR
+    # se caía del caso EN SILENCIO (20M resueltos → brutos 0, sin excepción ni aviso).
+    sin_ensamble = sorted(str(c) for c in por_concepto if c not in _ORDEN_INGRESOS)
+    if sin_ensamble:
+        raise NotImplementedError(
+            f"Hay conceptos resueltos que el ensamble no sabe llevar al caso: "
+            f"{', '.join(sin_ensamble)}. Hay que mapearlos a un modelo del caso o "
+            "declararlos fuera del alcance del motor; que desaparezcan no es opción."
+        )
+
     for concepto in _ORDEN_INGRESOS:
         for indice, p in enumerate(por_concepto.get(concepto, [])):
             retencion = _retencion_afirmada(p)
