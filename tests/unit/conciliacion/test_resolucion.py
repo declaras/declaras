@@ -401,3 +401,19 @@ def test_refrescar_no_muta_sus_entradas():
     refrescar(nuevas, guardadas)
     assert nuevas[0].resolucion is None
     assert guardadas[0].resolucion.decision is Decision.USAR_DIAN
+
+
+def test_refrescar_nunca_arrastra_una_provisional_del_sistema():
+    """La provisional no es una decisión: NUNCA viaja de la lista guardada a la nueva,
+    ni siquiera con la huella intacta — se descarta y el automatismo del final decide
+    de cero. Si viajara, una partida que dejó de ser auto-resoluble conservando id y
+    cifras (acá: se volvió ajena, el camino paralelo del guard) quedaría resuelta con
+    plata de otra persona sin que nadie la mire. Mutación M4 del reporte: tratar
+    SISTEMA como CONTADOR pasa el resto de la suite porque autorresolver converge en
+    todos los demás caminos; este es el que diverge."""
+    exogena = _exogena(_fila("901999888", "5001", 9_000_000))
+    guardadas = autorresolver(abrir(exogena))
+    assert guardadas[0].resolucion is not None
+    nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
+    [p] = refrescar([nueva_ajena], guardadas)
+    assert p.resolucion is None
