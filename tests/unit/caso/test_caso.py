@@ -2,8 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from declaras.caso import (
-    CasoTributario, Contribuyente, Creditos, Fuente, IngresoLaboral, IngresoPension,
-    MontoDeclarado, Patrimonio,
+    Arriendo, CasoTributario, Contribuyente, Creditos, Fuente, IngresoLaboral, IngresoPension,
+    MontoDeclarado, Patrimonio, Rendimiento,
 )
 
 FX = Fuente.fixture("test")
@@ -112,3 +112,33 @@ def test_patrimonio_liquido_anterior_admite_negativo():
     """Un patrimonio líquido negativo es legítimo (deudas > activos)."""
     patrimonio = Patrimonio(patrimonio_liquido_anterior=-5_000_000)
     assert patrimonio.patrimonio_liquido_anterior == -5_000_000
+
+
+def test_ingresos_llevan_nit_opcional_para_el_cruce():
+    """El conciliador cruza por (NIT, concepto): sin NIT una partida no empareja con la
+    fila de la exogena. Pension, rendimientos y arriendo solo llevaban nombre, asi que sus
+    documentos no podian cruzar nunca. Opcionales porque la entrada manual puede no
+    tenerlos y los 6 goldens no los traen; que falte lo señala el conciliador, no el schema.
+    """
+    p = IngresoPension(
+        pagador="Colpensiones", pagador_nit="900123456", mesadas=[10_000_000] * 12, fuente=FX
+    )
+    assert p.pagador_nit == "900123456"
+    assert IngresoPension(pagador="X", mesadas=[0] * 12, fuente=FX).pagador_nit is None
+
+    r = Rendimiento(entidad="Bancolombia", entidad_nit="890903938", valor=4_000_000, fuente=FX)
+    assert r.entidad_nit == "890903938"
+    assert Rendimiento(entidad="X", valor=0, fuente=FX).entidad_nit is None
+
+    a = Arriendo(
+        inmueble="Apto 501",
+        contraparte_nombre="Inmobiliaria Demo",
+        contraparte_nit="900555666",
+        canon_total=24_000_000,
+        fuente=FX,
+    )
+    assert a.contraparte_nit == "900555666"
+    assert a.contraparte_nombre == "Inmobiliaria Demo"
+    vacio = Arriendo(inmueble="X", canon_total=0, fuente=FX)
+    assert vacio.contraparte_nit is None
+    assert vacio.contraparte_nombre is None

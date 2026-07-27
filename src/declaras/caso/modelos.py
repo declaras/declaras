@@ -33,6 +33,10 @@ class IngresoLaboral(_Modelo):
 
 class IngresoPension(_Modelo):
     pagador: str
+    # NIT opcional: el conciliador cruza por (NIT, concepto), asi que sin el la partida no
+    # empareja con la fila de la exogena. Los extractores lo llenan siempre; la entrada
+    # manual puede no tenerlo, y que falte lo señala el conciliador, no el schema.
+    pagador_nit: str | None = None
     mesadas: list[int]  # 12 valores, enero a diciembre (la exención es POR MES)
     retencion: int = Field(default=0, ge=0)
     fuente: Fuente
@@ -47,6 +51,7 @@ class IngresoPension(_Modelo):
 
 class Rendimiento(_Modelo):
     entidad: str
+    entidad_nit: str | None = None  # opcional para el cruce, ver IngresoPension.pagador_nit
     valor: int = Monto
     retencion: int = Field(default=0, ge=0)
     fuente: Fuente
@@ -65,6 +70,8 @@ class CostosArriendo(_Modelo):
 
 class Arriendo(_Modelo):
     inmueble: str
+    contraparte_nombre: str | None = None  # quien paga el canon (o la inmobiliaria)
+    contraparte_nit: str | None = None  # opcional para el cruce, ver IngresoPension.pagador_nit
     canon_total: int = Monto
     retencion: int = Field(default=0, ge=0)
     costos: CostosArriendo = CostosArriendo()
