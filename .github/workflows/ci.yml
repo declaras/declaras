@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # --locked: falla si uv.lock no corresponde a pyproject.toml, en vez de resolver
+      # versiones distintas a las locales y volver el verde de CI no reproducible.
+      # --all-extras: los adaptadores de Postgres y GCS son opcionales, pero su codigo
+      # entra igual a ruff y a mypy; sin sus dependencias el chequeo se saltaria justo
+      # los modulos que solo se ejercitan en produccion.
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest -q

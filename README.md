@@ -4,8 +4,8 @@ Backend de Declaras: declaracion de renta automatica (Colombia).
 
 El frontend vive en [declaras/declaras-front](https://github.com/declaras/declaras-front).
 
-Este repositorio es el monorepo del backend. Hoy contiene el **conector DIAN**; sobre
-la misma base entraran despues el motor tributario y la capa agentica.
+Este repositorio es el monorepo del backend. Hoy contiene el **conector DIAN** y el
+**motor tributario**; sobre la misma base entrara despues la capa agentica.
 
 ---
 
@@ -342,6 +342,62 @@ y los topes del articulo 592. La conversion de UVT a pesos **no redondea**, porq
 topes oficiales son la multiplicacion exacta: 1.400 UVT del anio gravable 2025 son
 $69.718.600, y redondear al millar inflaria el limite lo suficiente para que alguien
 apenas por encima del tope apareciera como no obligado.
+
+## El motor tributario
+
+Convierte un `CasoTributario` (los hechos, cada uno con su fuente) en una `Liquidacion`
+trazable del formulario 210. Es una funcion pura: el mismo caso con los mismos parametros y
+las mismas elecciones da siempre la misma cifra, y cada cifra queda con el nodo que la
+produjo, su formula y el articulo que la manda.
+
+```python
+from declaras.optimizador import optimizar
+from declaras.parametros import cargar
+from declaras.render import borrador_html, memoria_markdown
+
+p = cargar(2025)                          # parametros del anio gravable, desde ag2025.yaml
+r = optimizar(caso, p)                    # evalua las elecciones legales y elige la mejor
+r.liquidacion.valor("IMPUESTO_NETO")      # la cifra
+memoria_markdown(r.liquidacion, caso)     # el porque, renglon por renglon
+borrador_html(r.liquidacion, caso)        # el borrador del 210 para que alguien lo firme
+```
+
+| Modulo | Que hace |
+|---|---|
+| `parametros/` | UVT, topes y tabla del art. 241 de cada anio gravable, en YAML validado (`ag2025.yaml`). La tabla se valida entera: tramos ascendentes, contiguos, el primero desde cero y solo el ultimo abierto |
+| `caso/` | El `CasoTributario`: ingresos, beneficios, patrimonio y creditos, cada hecho con su `Fuente` |
+| `motor/` | La liquidacion: base bruta, cedula general (art. 336), cedula de pensiones, dividendos, tabla del art. 241 y cierre (descuentos, anticipo, saldo) |
+| `optimizador/` | Enumera las decisiones legales abiertas, liquida cada combinacion y se queda con la de menor impuesto, con desempate determinista |
+| `render/` | El borrador del 210 en HTML y la memoria de calculo en Markdown, en el orden de las casillas |
+| `dinero.py` | Unico punto de redondeo del sistema |
+
+Tres reglas de fondo:
+
+1. **El limite del art. 336 se aplica como manda la ley.** Las deducciones y rentas exentas
+   de la cedula general se topan en `min(40% de los ingresos netos, 1.340 UVT)`, y el motor
+   deja escrito en la traza el tope y lo que quedo por fuera. Los 72 UVT por dependiente van
+   *fuera* del tope y el 10% del art. 387 va *dentro*: por eso no son reglas fijas sino
+   elecciones que el optimizador enumera, porque cual conviene depende del caso.
+2. **La tabla del art. 241 se evalua con la formula publicada**, no con una tabla de
+   resultados: `(base − limite inferior del tramo) × tarifa + constante del tramo`, todo en
+   UVT del anio. Cambiar de anio gravable es cambiar el YAML, no el codigo.
+3. **Dinero en pesos enteros**, con un unico redondeo half-up en `dinero.pesos()`. Los
+   productos pasan por `dinero.porcentaje()` con `Decimal`: multiplicar en float antes de
+   redondear desviaba cifras con tarifas como 0,35.
+
+### Correr sus pruebas
+
+```bash
+uv run pytest tests/golden -q          # los 6 casos completos
+uv run pytest tests/unit/motor tests/unit/caso tests/unit/parametros \
+              tests/unit/optimizador tests/unit/render -q
+make test                              # toda la suite del repositorio
+```
+
+Los seis goldens son el candado del motor: casos completos de punta a punta (asalariado,
+pensionado, rentas de capital con dividendos, no obligado, pension no uniforme con anticipo
+por promedio) con el impuesto calculado a mano. Cualquier cambio que mueva una de esas
+cifras necesita justificacion normativa; no se ajusta el golden a lo que salio.
 
 ## Pendiente antes de produccion
 

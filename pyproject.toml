@@ -17,6 +17,11 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pypdf>=6.14.2",
     "python-multipart>=0.0.32",
+    # Motor tributario: parametros del ano gravable en YAML, borrador del 210 en Jinja
+    # y los extractores de certificados contra el SDK de Anthropic.
+    "pyyaml>=6",
+    "jinja2>=3.1",
+    "anthropic>=0.100",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +36,7 @@ dev = [
     "mypy>=1.14",
     "fpdf2>=2.8.7",
     "pytest-cov>=7.1.0",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]
@@ -50,11 +56,29 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+# El signo por (×) y el menos (−) son deliberados: la memoria de calculo y el borrador del 210
+# se escriben con la notacion que lee un contador ("min(40% × base, 1.340 UVT)"), y los tests
+# fijan ese texto renderizado. Sin esto, RUF001/002/003 marcan 72 usos legitimos.
+allowed-confusables = ["×", "−"]
 
 [tool.ruff.lint.per-file-ignores]
 # Los scripts de calibracion incluyen texto copiado del portal (con espacios duros)
 # y JS embebido; no se les exige el mismo rigor que al paquete.
 "scripts/*" = ["RUF001", "E501"]
+
+# ── Deuda de la fusion: el motor tributario entra intacto ─────────────────────────────────
+# El motor llego de una rama sin ruff, y en esta fusion viaja tal cual para que los 6 goldens
+# den las mismas cifras. Nada de esto es un defecto de fondo:
+#   RUF012  falso positivo sobre pydantic: `list[X] = []` es seguro, pydantic copia el default.
+#   E741    `l` es el laboral / la liquidacion en comprensiones de una linea.
+#   I001    bloques de imports sin ordenar.
+#   E501    una linea de 101 caracteres en motor/general.py.
+# Se limpia con un `ruff check --fix` y ocho renombres, en un commit aparte del de la fusion.
+"src/declaras/motor/*" = ["E741", "E501"]
+"src/declaras/caso/*" = ["I001", "E741", "RUF012"]
+"tests/golden/*" = ["I001"]
+"tests/unit/caso/*" = ["I001"]
+"tests/unit/motor/*" = ["I001"]
 # FastAPI exige File()/Form() como valor por defecto de los parametros: es el patron
 # idiomatico del framework, no una funcion que se ejecuta por accidente.
 "src/declaras/api/routers/documents_read.py" = ["B008"]
@@ -70,3 +94,20 @@ plugins = ["pydantic.mypy"]
 # Librerias sin stubs de tipos.
 module = ["google.cloud.*", "openpyxl.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Deuda de la fusion: cinco funciones del motor llegaron de una rama sin type-checking y les
+# falta anotar un parametro o el generico del dict. Se relajan solo las reglas de firma, NO
+# `ignore_errors`: `check_untyped_defs` sigue activo, asi que los cuerpos de esos cinco modulos
+# se siguen comprobando. El motor viaja intacto aqui; las anotaciones van en un commit aparte.
+module = [
+    "declaras.dinero",
+    "declaras.motor.traza",
+    "declaras.render.memoria",
+    "declaras.render.html",
+    "declaras.extraccion.f220",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false
