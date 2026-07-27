@@ -435,6 +435,7 @@ def _incorporar_clave(
             concepto=clave.concepto,
             version_documento=version,
             versiones_documento={sha: version},
+            version_que_rige=sha,
             estado=EstadoPartida.SOLO_DOCUMENTO,
             nota=_NOTA_SIN_NIT,
         )
@@ -451,6 +452,7 @@ def _incorporar_clave(
             concepto=clave.concepto,
             version_documento=version,
             versiones_documento={sha: version},
+            version_que_rige=sha,
             estado=EstadoPartida.SOLO_DOCUMENTO,
             nota=_NOTA_AJENAS if gemelas_ajenas else None,
         )
@@ -563,9 +565,8 @@ def _emparejar(
         # Los mismos bytes otra vez (retry del job de ingesta, el cliente re-sube el
         # primer archivo): NO-OP. Tomar 'el último PROCESADO' como versión que rige
         # cambiaba la cifra declarada sin documento nuevo (COINCIDE→DISCREPANCIA y al
-        # revés). De paso el orden de claves de `versiones_documento` queda como orden
-        # de llegada real —la última clave es la versión más nueva—, que es lo que le
-        # permite a `refrescar` de T5 distinguir 'versión nueva' de 'reenvío viejo'.
+        # revés). "Nuevo vs. reenvío" es MEMBRESÍA en `versiones_documento` — no el orden
+        # de las claves, que JSONB no preserva al persistir (cierre de T4).
         return partida
     # Sha nuevo: se guarda SIEMPRE en `versiones_documento` — nada desaparece —, pero lo
     # que se publica depende del tipo de documento.
@@ -584,7 +585,9 @@ def _emparejar(
         # literal por esta rama, que se evaluaba antes que la de rivales).
         publicada = _agregado(versiones)
         nota_rivales = None
-        version_que_rige = None
+        # Con varios documentos lo publicado es el agregado y ningún sha único lo
+        # respalda: el respaldo es el conjunto completo de `versiones_documento`.
+        version_que_rige = sha if len(versiones) == 1 else None
     elif rivales:
         # Tipo NO acumulable con versiones en disputa: el sha distingue bytes, no
         # documentos, así que esto es casi siempre el mismo certificado re-escaneado.
@@ -596,10 +599,13 @@ def _emparejar(
         version_que_rige = sha
     else:
         # Una sola versión, o varias con las MISMAS cifras: la publicada es la más
-        # reciente y no hay rivalidad que anotar.
+        # reciente y no hay rivalidad que anotar — pero el respaldo SÍ queda identificado.
+        # Antes solo se fijaba con rivales, y la procedencia publicada (celda, confianza)
+        # apuntaba a un documento imposible de identificar después de persistir: JSONB no
+        # conserva el orden de claves de un objeto (cierre de T4).
         publicada = version
         nota_rivales = None
-        version_que_rige = None
+        version_que_rige = sha
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
         "version_documento": publicada,

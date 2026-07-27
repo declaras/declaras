@@ -100,26 +100,36 @@ class Partida(_Modelo):
     # El aporte de cada documento, llaveado por su identificador corto (sha[:12], el mismo
     # del expediente): los mismos bytes otra vez son NO-OP (un retry de ingesta o un
     # reenvío del cliente no puede mover la cifra declarada), y un sha nuevo se GUARDA
-    # siempre — nada desaparece en silencio. Por ese no-op, el ORDEN de las claves es el
-    # orden de llegada real y la última clave es la versión más nueva: quien persista la
-    # partida debe conservar ese orden, porque es como `refrescar` de T5 distingue
-    # 'versión nueva' (sha que no estaba) de 'reenvío viejo' (sha ya visto). Lo que se
-    # publica arriba depende del tipo de documento (`acumulable` en TIPO_A_CLAVE): la suma
-    # cuando el tipo emite varios por tercero de verdad (un certificado por CDT), o la
+    # siempre — nada desaparece en silencio. El contrato es de MEMBRESÍA, no de orden:
+    # 'versión nueva vs. reenvío viejo' se decide por si el sha ya está acá, y qué
+    # documento respalda la cifra publicada lo dice `version_que_rige`. Después de
+    # persistir NADIE debe leer 'la última clave es la más nueva': JSONB no preserva el
+    # orden de claves de un objeto (las reordena por longitud y luego bytes; medido contra
+    # Postgres 17.10 en el cierre de T4) — la semántica del cruce da 0 diferencias bajo
+    # esos reórdenes justamente porque no se apoya en el orden. Lo que se publica arriba
+    # depende del tipo de documento (`acumulable` en TIPO_A_CLAVE): la suma cuando el tipo
+    # emite varios por tercero de verdad (un certificado por CDT, y solo con NIT), o la
     # última versión nueva con nota cuando no (el sha es identidad de bytes, no de
     # documento: el mismo 220 re-escaneado llega con otro hash y sumarlo duplicaría la
     # plata). Campo adicional al contrato del plan, autorizado en la ronda de fixes 1.
     versiones_documento: dict[str, Valor] = Field(default_factory=dict)
-    # Cuando hubo versiones rivales de un tipo NO acumulable: el sha corto del documento
-    # cuya versión se publicó en `version_documento` (la última NUEVA en llegar;
-    # reprocesar bytes ya vistos es no-op y no la cambia). None = sin rivales —una sola
-    # versión, o varias con las MISMAS cifras: la rivalidad es de cifras, no de bytes—,
-    # o tipo acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
-    # de `reportado_a`: la nota es texto libre que `refrescar` de T5 sobrescribe, y la
-    # huella de auditoría —"llegaron varios certificados y rigió este"— tiene que quedar
-    # en la partida, que es donde se busca la respuesta cuando el contador o la DIAN
-    # pregunten por qué se declaró esa cifra. Campo adicional al contrato del plan,
-    # autorizado en la ronda de fixes 3 de la T4.
+    # El sha corto del documento cuya versión respalda la cifra publicada en
+    # `version_documento` — SIEMPRE que lo publicado sea la versión de UN documento: una
+    # sola, varias con las mismas cifras, o rivales (rige la última NUEVA en llegar;
+    # reprocesar bytes ya vistos es no-op y no la cambia). None SOLO cuando lo publicado
+    # es el agregado acumulable de varios documentos: ahí el respaldo es el conjunto
+    # completo de `versiones_documento` y la procedencia publicada ya es la unión de sus
+    # celdas — por eso no hace falta un ordinal en `Valor` ni pasar las versiones a un
+    # array (la opción se evaluó en el cierre de T4 y se descartó: cambiaba el contrato
+    # para conservar un orden en el que la semántica no se apoya). Antes solo se fijaba
+    # con rivales, y con versiones de cifras iguales la procedencia publicada (celda,
+    # confianza) apuntaba a un documento imposible de identificar después de persistir en
+    # JSONB. OJO: "hubo rivales" NO se infiere de este campo — se deriva de las versiones
+    # (más de una con cifras distintas, o más de una sin NIT) y la huella dura sigue
+    # siendo `versiones_documento`. Es ESTRUCTURAL por la misma lección de `reportado_a`:
+    # la nota es texto libre que `refrescar` de T5 sobrescribe, y la respuesta a "por qué
+    # se declaró esta cifra" tiene que quedar en la partida. Campo adicional al contrato
+    # del plan, autorizado en la ronda de fixes 3 y redefinido en el cierre de T4.
     version_que_rige: str | None = None
     estado: EstadoPartida
     nota: str | None = None

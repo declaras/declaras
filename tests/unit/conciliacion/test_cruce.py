@@ -557,7 +557,7 @@ def test_versiones_con_las_mismas_cifras_no_son_rivales():
     [p] = partidas
     assert p.estado == EstadoPartida.COINCIDE
     assert p.nota is None
-    assert p.version_que_rige is None
+    assert p.version_que_rige == "b" * 12  # sin rivalidad, pero el respaldo se identifica
     assert set(p.versiones_documento) == {"a" * 12, "b" * 12}
 
 
@@ -593,9 +593,25 @@ def test_la_huella_de_rivales_es_estructural_y_dice_cual_rigio():
     assert reescrita.version_que_rige == "b" * 12  # sobrevive al refrescar de T5
 
 
-def test_sin_rivales_no_hay_version_que_rige():
+def test_la_cifra_publicada_siempre_dice_que_documento_la_respalda():
+    """`version_que_rige` se fija SIEMPRE que lo publicado sea la versión de UN documento,
+    no solo con rivales (redefinición del cierre de T4): con versiones de cifras iguales,
+    la procedencia publicada (celda, confianza) apuntaba a un documento imposible de
+    identificar después de persistir — JSONB no conserva el orden de claves de un objeto.
+    None queda reservado para el agregado acumulable de varios documentos, cuyo respaldo
+    es el conjunto completo de `versiones_documento`."""
+    # Un solo documento: el respaldo es ese documento.
     [p] = incorporar([], _cert_220("900111222", 85_000_000))
-    assert p.version_que_rige is None
+    assert p.version_que_rige == "b" * 12
+    # Cifras iguales en bytes distintos: sin rivalidad (F4), pero el respaldo no se pierde.
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(
+        partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
+    [q] = partidas
+    assert q.nota is None
+    assert q.version_que_rige == "b" * 12
 
 
 def test_la_nota_de_rivales_dice_el_numero_real_de_versiones():
@@ -629,18 +645,27 @@ def test_reincorporar_bytes_ya_vistos_no_cambia_la_cifra_declarada():
     assert p.version_que_rige == "b" * 12
 
 
-def test_el_orden_de_llegada_queda_en_las_claves_de_versiones_documento():
-    """`refrescar` de T5 tiene que poder distinguir 'versión nueva' (sha que no estaba en
-    `versiones_documento`) de 'reenvío viejo' (sha ya visto: no-op). Como el reenvío no
-    toca el dict, el orden de las claves es el orden de llegada real y la última clave es
-    la versión más nueva — Python no reordena al sobrescribir, así que sin el no-op esta
-    historia no existía."""
+def test_nuevo_contra_reenvio_se_distingue_por_membresia_no_por_orden():
+    """`refrescar` de T5 distingue 'versión nueva' (sha que NO está en
+    `versiones_documento`) de 'reenvío viejo' (sha ya visto: no-op) por MEMBRESÍA, y qué
+    documento respalda la cifra publicada lo dice `version_que_rige`. Nada depende del
+    orden de las claves: JSONB no lo preserva en objetos (las reordena por longitud y
+    bytes; medido contra Postgres 17.10 en el cierre de T4), así que después de persistir
+    nadie debe leer 'la última clave es la más nueva'."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
     viejo = _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
     nuevo = _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
     [p] = incorporar(incorporar(incorporar(partidas, viejo), nuevo), viejo)
-    assert list(p.versiones_documento) == ["a" * 12, "b" * 12]
+    assert set(p.versiones_documento) == {"a" * 12, "b" * 12}
     assert p.version_que_rige == "b" * 12  # la última NUEVA, no la última procesada
+    # El reorden que JSONB aplica al persistir no cambia la semántica: el reenvío del
+    # documento viejo sigue siendo no-op y el respaldo sigue identificado.
+    reordenada = p.model_copy(update={"versiones_documento": dict(
+        sorted(p.versiones_documento.items(), reverse=True))})
+    [otra] = incorporar([reordenada], viejo)
+    assert otra == reordenada
+    assert otra.version_documento.monto == 87_400_000
+    assert otra.version_que_rige == "b" * 12
 
 
 def test_un_reenvio_viejo_en_cualquier_posicion_no_cambia_el_desenlace():
@@ -691,6 +716,7 @@ def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monk
     assert p.version_documento.monto == 70_000_000
     assert p.estado == EstadoPartida.COINCIDE
     assert p.nota is None
+    assert p.version_que_rige is None  # el agregado no tiene un sha único que lo respalde
 
 
 def test_sin_nit_cada_version_lleva_su_nombre_y_la_partida_muestra_el_publicado():
