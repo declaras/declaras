@@ -1,7 +1,15 @@
 import pytest
 
 from declaras.documents.models import DocumentReading, ExtractedField, ExtractedRow
-from declaras.services.conciliacion import Concepto, EstadoPartida, Lado, abrir, incorporar
+from declaras.services.conciliacion import (
+    Concepto,
+    EstadoPartida,
+    Lado,
+    Partida,
+    Valor,
+    abrir,
+    incorporar,
+)
 
 
 def _exogena(*filas: dict) -> DocumentReading:
@@ -81,10 +89,17 @@ def test_solo_documento_de_un_beneficio_que_la_dian_no_ve():
 
 
 def test_reportado_a_otra_identificacion_no_se_cruza():
+    # DESVIACIÓN DEL BRIEF, autorizada en la ronda 4: el test original exigía UNA sola
+    # partida, con el certificado adjunto DENTRO de la ajena. Eso estacionaba el
+    # certificado del titular donde nadie lo ve (diferencias forzadas a 0, estado que la
+    # tabla de decisiones de T5 no puede resolver con USAR_DOCUMENTO). Ahora el
+    # certificado siempre abre su propia partida y la ajena guarda la marca estructural.
     partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
-    [p] = incorporar(partidas, _cert_220("901999888", 9_000_000))
-    assert p.estado == EstadoPartida.SOLO_DIAN
-    assert "otra identificación" in (p.nota or "")
+    resultado = incorporar(partidas, _cert_220("901999888", 9_000_000))
+    ajena = next(p for p in resultado if p.reportado_a is not None)
+    assert ajena.estado == EstadoPartida.SOLO_DIAN
+    assert "otra identificación" in (ajena.nota or "")
+    assert ajena.version_documento is None  # la fila ajena sigue sin aportar hecho
 
 
 def test_concepto_desconocido_no_se_asume():
@@ -253,14 +268,16 @@ def test_la_marca_de_ajena_no_vive_en_la_nota():
     reescrita = partidas[0].model_copy(
         update={"nota": "los valores cambiaron desde la resolución anterior"}
     )
-    [p] = incorporar([reescrita], _cert_220("901999888", 9_000_000))
-    assert p.estado == EstadoPartida.SOLO_DIAN
+    resultado = incorporar([reescrita], _cert_220("901999888", 9_000_000))
+    ajena = next(p for p in resultado if p.reportado_a is not None)
+    assert ajena.estado == EstadoPartida.SOLO_DIAN
+    assert ajena.version_documento is None
 
 
 def test_con_dos_gemelas_ajenas_el_certificado_no_elige_por_orden():
-    """La gemela ajena solo se toma si es la ÚNICA: con dos, pegarse a la primera del
-    XLSX es salida dependiente del orden. El certificado nace aparte, anotado, y las
-    ajenas quedan intactas."""
+    """Con dos gemelas ajenas, pegarse a la primera del XLSX sería salida dependiente
+    del orden. El certificado nace aparte, anotado, las ajenas quedan intactas y TODAS
+    conservan la marca de que llegó un certificado que podría corresponderles."""
     partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999"),
                               _fila("901999888", "5001", 7_000_000, reportado_a="88888")))
     resultado = incorporar(partidas, _cert_220("901999888", 9_000_000))
@@ -270,17 +287,102 @@ def test_con_dos_gemelas_ajenas_el_certificado_no_elige_por_orden():
     assert nueva.version_documento.monto == 9_000_000
     assert "a mano" in (nueva.nota or "")
     assert all(p.version_documento is None for p in resultado if p.reportado_a is not None)
+    assert all(p.documentos_por_cruzar == ["b" * 12]
+               for p in resultado if p.reportado_a is not None)
     [nueva_inv] = [p for p in invertido if p.estado == EstadoPartida.SOLO_DOCUMENTO]
     assert nueva_inv == nueva  # el desenlace no depende del orden del XLSX
 
 
 def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
-    """La fila de la DIAN es de un tercero ajeno y el certificado es del titular: restar
-    esos dos números no mide ninguna discrepancia real."""
-    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
-    [p] = incorporar(partidas, _cert_220("901999888", 85_000_000))
+    """Guard defensivo del modelo: la fila de la DIAN es de otra persona y el certificado
+    es del titular, así que restar esos dos números no mide ninguna discrepancia real — y
+    `pendientes` de T5 ordena por esta cifra. El cruce ya no adjunta documentos a una
+    ajena (el certificado abre su propia partida); el guard protege a quien construya la
+    partida por fuera."""
+    p = Partida(
+        id="901999888:SALARIOS:reportado-a:99999",
+        nit_tercero="901999888",
+        nombre_tercero="ACME SAS",
+        concepto=Concepto.SALARIOS,
+        version_dian=Valor(monto=9_000_000, retencion=8_000_000, lado=Lado.DIAN),
+        version_documento=Valor(monto=85_000_000, retencion=2_000_000, lado=Lado.DOCUMENTO),
+        estado=EstadoPartida.SOLO_DIAN,
+        reportado_a="99999",
+    )
     assert p.diferencia_monto == 0
     assert p.diferencia_retencion == 0
+
+
+def test_con_una_sola_ajena_el_certificado_abre_su_propia_partida():
+    """Asimetría que dejó la ronda 2: con DOS ajenas el certificado del titular abría su
+    propia partida SOLO_DOCUMENTO declarable; con UNA quedaba estacionado dentro de la
+    SOLO_DIAN ajena — diferencias forzadas a 0 (`pendientes` de T5 la ordena última) y un
+    estado sobre el que la tabla de decisiones no permite USAR_DOCUMENTO — mientras los
+    aportes del mismo 220 sí abrían partida propia: T5 podía armar un IngresoLaboral con
+    0 de salario y 7M de aportes. Unificado con el caso >=2 (ruling de la ronda 4): el
+    certificado SIEMPRE abre su propia partida."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    resultado = incorporar(partidas, _cert_220("901999888", 85_000_000))
+    assert len(resultado) == 2
+    ajena = next(p for p in resultado if p.reportado_a is not None)
+    assert ajena.estado == EstadoPartida.SOLO_DIAN
+    assert ajena.version_documento is None  # nada estacionado donde nadie lo ve
+    propia = next(p for p in resultado if p.reportado_a is None)
+    assert propia.estado == EstadoPartida.SOLO_DOCUMENTO
+    assert propia.id == "901999888:SALARIOS"
+    assert propia.version_documento.monto == 85_000_000
+    assert "a mano" in (propia.nota or "")
+
+
+def test_con_una_ajena_el_220_completo_no_pierde_el_salario():
+    """El desenlace concreto de la asimetría: `IngresoLaboral` de T5 armado con 0 de
+    salario y 7M de aportes. Con la unificación, el salario abre partida declarable
+    igual que los aportes."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    resultado = incorporar(partidas, _cert_220_completo("a", nit="901999888"))
+    por_concepto = {p.concepto: p for p in resultado if p.reportado_a is None}
+    assert set(por_concepto) == {Concepto.SALARIOS, Concepto.APORTES_SALUD,
+                                 Concepto.APORTES_PENSION}
+    assert por_concepto[Concepto.SALARIOS].estado == EstadoPartida.SOLO_DOCUMENTO
+    assert por_concepto[Concepto.SALARIOS].version_documento.monto == 85_000_000
+
+
+def test_la_ajena_conserva_la_marca_estructural_del_certificado_que_llego():
+    """Que llegó un certificado que podría corresponderle no puede vivir en `nota` (T5
+    la reescribe por spec — la lección de I5): queda en `documentos_por_cruzar`, que
+    sobrevive serialización y reescritura de nota, para que el contador lo cruce a mano."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    resultado = incorporar(partidas, _cert_220("901999888", 85_000_000))
+    ajena = next(p for p in resultado if p.reportado_a is not None)
+    assert ajena.documentos_por_cruzar == ["b" * 12]
+    reescrita = ajena.model_copy(update={"nota": "reescrita por refrescar"})
+    assert reescrita.documentos_por_cruzar == ["b" * 12]
+    revivida = Partida.model_validate(ajena.model_dump())
+    assert revivida == ajena
+
+
+def test_las_marcas_estructurales_sobreviven_el_viaje_de_ida_y_vuelta():
+    """`model_dump()` → `model_validate()` y una reescritura de `nota` no pueden borrar
+    ninguna marca estructural: `reportado_a`, `versiones_documento` (con su ORDEN),
+    `version_que_rige` y `documentos_por_cruzar`. T5 persiste y refresca sobre ellas."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "a", nit="901999888", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "b", nit="901999888", salarios=87_000_000, aportes_salud=0, aportes_pension=0))
+    ajena = next(p for p in partidas if p.reportado_a is not None)
+    propia = next(p for p in partidas if p.reportado_a is None)
+    assert ajena.documentos_por_cruzar == ["a" * 12, "b" * 12]
+    assert propia.version_que_rige == "b" * 12
+    for p in partidas:
+        revivida = Partida.model_validate(p.model_dump())
+        assert revivida == p
+        assert list(revivida.versiones_documento) == list(p.versiones_documento)
+        reescrita = revivida.model_copy(update={"nota": "reescrita por refrescar"})
+        assert (reescrita.reportado_a, reescrita.version_que_rige,
+                reescrita.documentos_por_cruzar, reescrita.versiones_documento) == (
+            p.reportado_a, p.version_que_rige,
+            p.documentos_por_cruzar, p.versiones_documento)
 
 
 def test_nit_con_puntos_y_dv_cruza_con_el_nit_limpio():

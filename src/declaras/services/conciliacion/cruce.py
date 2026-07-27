@@ -33,14 +33,11 @@ NOTA_OTRO_NOMBRE = (
 )
 
 _NOTA_SIN_NIT = "el documento no trae el NIT del tercero, así que no se pudo cruzar con la exógena"
-_NOTA_CERTIFICADO_SIN_RESPALDO = (
-    "llegó un certificado del tercero, pero no concilia contra un valor reportado a otra persona"
-)
 _NOTA_RETENCION_AMBIGUA = (
     "la DIAN asigna esta fila a retenciones y a otro renglón a la vez; hay que clasificarla a mano"
 )
-_NOTA_AJENAS_MULTIPLES = (
-    "el tercero tiene varias filas reportadas a otras personas; "
+_NOTA_AJENAS = (
+    "el tercero tiene filas reportadas a otras personas; "
     "el certificado queda aparte para cruzarlo a mano"
 )
 
@@ -440,8 +437,8 @@ def _incorporar_clave(
 
     objetivo, gemelas_ajenas = _indice_emparejable(partidas, nit, clave.concepto)
     if objetivo is None:
-        # La DIAN no conoce este hecho (todavía), o solo tiene filas ajenas ambiguas:
-        # el documento es la única versión y nace como su propia partida.
+        # La DIAN no conoce este hecho (todavía), o solo tiene filas ajenas: el documento
+        # es la única versión del titular y nace como su propia partida.
         nueva = Partida(
             id=f"{nit}:{clave.concepto}",
             nit_tercero=nit,
@@ -450,14 +447,20 @@ def _incorporar_clave(
             version_documento=version,
             versiones_documento={sha: version},
             estado=EstadoPartida.SOLO_DOCUMENTO,
-            nota=_NOTA_AJENAS_MULTIPLES if gemelas_ajenas > 1 else None,
+            nota=_NOTA_AJENAS if gemelas_ajenas else None,
         )
-        return [*partidas, nueva]
-
-    actualizadas = list(partidas)
-    actualizadas[objetivo] = _emparejar(
-        partidas[objetivo], sha, version, tolerancia_pesos, clave.acumulable
-    )
+        actualizadas = [*partidas, nueva]
+        emparejada = nueva
+    else:
+        actualizadas = list(partidas)
+        emparejada = _emparejar(
+            partidas[objetivo], sha, version, tolerancia_pesos, clave.acumulable
+        )
+        actualizadas[objetivo] = emparejada
+    if emparejada.version_dian is None:
+        # El hecho del documento quedó sin respaldo DIAN del titular: cada gemela ajena
+        # guarda la marca de que este documento podría corresponderle.
+        _marcar_ajenas(actualizadas, gemelas_ajenas, sha)
     return actualizadas
 
 
@@ -491,25 +494,46 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
 
 def _indice_emparejable(
     partidas: list[Partida], nit: str, concepto: Concepto
-) -> tuple[int | None, int]:
-    """Contra qué partida cruza el documento, y cuántas gemelas ajenas se vieron.
+) -> tuple[int | None, list[int]]:
+    """Contra qué partida cruza el documento, y qué gemelas ajenas hay del mismo hecho.
 
-    La del titular se encuentra por su id exacto (`nit:concepto`). Una gemela ajena del
-    mismo tercero y concepto tiene OTRO id (lleva a quién se lo reportaron), así que se
-    busca por estructura, y solo se toma si es la ÚNICA — con dos o más, elegir una sería
-    salida dependiente del orden del XLSX: no se empareja ninguna (índice None) y el
-    llamador abre la partida del documento aparte, anotada, para que una persona decida.
+    El documento solo empareja contra la partida del TITULAR (id exacto `nit:concepto`,
+    tenga lado DIAN o venga de un documento anterior). Una gemela ajena del mismo tercero
+    y concepto —otro id: lleva a quién se lo reportaron— NUNCA lo recibe, ni siquiera
+    siendo única: el certificado es evidencia sobre el titular y no puede vivir dentro de
+    una partida que dice explícitamente "esto no es del titular" y cuyas diferencias van
+    forzadas a 0 — `pendientes` de T5 la ordenaría de última y la tabla de decisiones no
+    permite USAR_DOCUMENTO sobre SOLO_DIAN: el certificado quedaba estacionado donde
+    nadie lo ve, mientras los aportes del mismo 220 sí abrían partida propia (un
+    `IngresoLaboral` con 0 de salario y los aportes completos).
+
+    INTERPRETACIÓN AUTORIZADA (ronda 4), que desvía del test del brief que exigía UNA
+    sola partida cuando el certificado llega contra exactamente una fila ajena: el
+    certificado SIEMPRE abre su propia partida SOLO_DOCUMENTO y las ajenas conservan en
+    `documentos_por_cruzar` la marca estructural de que llegó. Un agente futuro no debe
+    volver al emparejamiento con la ajena "única" — es el mismo trato que
+    `Valor.retencion: int | None`.
     """
     id_titular = f"{nit}:{concepto}"
-    ajenas: list[int] = []
-    for i, partida in enumerate(partidas):
-        if partida.id == id_titular:
-            return i, 0
-        if _es_ajena(partida) and partida.nit_tercero == nit and partida.concepto is concepto:
-            ajenas.append(i)
-    if len(ajenas) == 1:
-        return ajenas[0], 1
-    return None, len(ajenas)
+    indice = next((i for i, p in enumerate(partidas) if p.id == id_titular), None)
+    ajenas = [
+        i
+        for i, p in enumerate(partidas)
+        if _es_ajena(p) and p.nit_tercero == nit and p.concepto is concepto
+    ]
+    return indice, ajenas
+
+
+def _marcar_ajenas(partidas: list[Partida], indices: list[int], sha: str) -> None:
+    """Deja en cada gemela ajena la marca de que llegó un documento que podría
+    corresponderle. Es estructural (`documentos_por_cruzar`), no una nota: el texto libre
+    lo reescribe `refrescar` de T5 por spec, y la marca desaparecería con él (I5)."""
+    for i in indices:
+        partida = partidas[i]
+        if sha not in partida.documentos_por_cruzar:
+            partidas[i] = partida.model_copy(
+                update={"documentos_por_cruzar": [*partida.documentos_por_cruzar, sha]}
+            )
 
 
 def _es_ajena(partida: Partida) -> bool:
@@ -560,15 +584,9 @@ def _emparejar(
         "version_que_rige": version_que_rige,
     }
     # El aviso de rivales anterior se quita antes de sumar el vigente: el número cambió.
+    # (Una partida ajena nunca llega acá: `_indice_emparejable` no la devuelve como
+    # objetivo — el certificado abre su propia partida y la ajena guarda la marca.)
     nota_base = _sin_nota_rivales(partida.nota)
-
-    if _es_ajena(partida):
-        # La fila de la DIAN es de otra persona y NUNCA aporta hecho, así que tampoco puede
-        # confirmar este certificado: la partida no cambia de estado. El documento queda
-        # adjunto y anotado para que el contador vea las dos cosas y decida (puede resolver
-        # con otro valor); descartarlo sería una pérdida silenciosa.
-        nota = _con_nota(nota_base, _NOTA_CERTIFICADO_SIN_RESPALDO, nota_rivales)
-        return partida.model_copy(update={**adjuntos, "nota": nota})
 
     dian = partida.version_dian
     if dian is None:

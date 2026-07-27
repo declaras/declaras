@@ -34,9 +34,10 @@ class EstadoPartida(StrEnum):
     # Las dos versiones existen y algún número (monto o retención) no cierra.
     DISCREPANCIA = "DISCREPANCIA"
     # Solo el lado DIAN sostiene el hecho: falta el documento del cliente, o la fila es de
-    # otra persona (`reportado_a`), caso en el que puede tener un certificado adjunto en
-    # `version_documento` SIN que eso concilie nada — un certificado del titular no puede
-    # confirmarse contra una fila que la DIAN le reportó a otra persona.
+    # otra persona (`reportado_a`). Un certificado del titular NUNCA se le adjunta a una
+    # ajena — es evidencia sobre el titular y no puede vivir dentro de una partida que
+    # dice "esto no es del titular" y cuyas diferencias van forzadas a 0 —: abre su propia
+    # partida SOLO_DOCUMENTO y la ajena guarda la marca en `documentos_por_cruzar`.
     SOLO_DIAN = "SOLO_DIAN"
     # Solo está el documento: la DIAN no conoce (todavía) este hecho.
     SOLO_DOCUMENTO = "SOLO_DOCUMENTO"
@@ -121,6 +122,14 @@ class Partida(_Modelo):
     # reescriben) ni en el estado. Campo adicional al contrato del plan, autorizado en la
     # ronda de fixes 1 de la T4.
     reportado_a: str | None = None
+    # Marca estructural de la partida AJENA: shas cortos de los documentos del mismo
+    # tercero y concepto que llegaron sin poder cruzarse contra ella (la fila es de otra
+    # persona y no puede confirmarlos; cada documento abrió su propia partida
+    # SOLO_DOCUMENTO). Nada se pierde: el contador ve acá que llegó un certificado que
+    # podría corresponderle y lo cruza a mano. No vive en `nota` —texto libre que
+    # `refrescar` de T5 reescribe por spec (la lección de I5)—. Campo adicional al
+    # contrato del plan, autorizado en la ronda de fixes 4 de la T4.
+    documentos_por_cruzar: list[str] = Field(default_factory=list)
 
     @property
     def diferencia_monto(self) -> int:
@@ -128,7 +137,9 @@ class Partida(_Modelo):
 
         En una partida ajena (`reportado_a`) también es 0: la fila de la DIAN es de otra
         persona y el certificado es del titular, así que restar esos dos números no mide
-        ninguna discrepancia real — y `pendientes` de T5 ordena por esta cifra.
+        ninguna discrepancia real — y `pendientes` de T5 ordena por esta cifra. El cruce
+        ya no adjunta documentos a una ajena (abren su propia partida); el guard queda
+        como defensa para quien construya la partida por fuera.
         """
         if self.version_dian is None or self.version_documento is None:
             return 0
