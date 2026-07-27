@@ -66,19 +66,24 @@ def test_los_topes_de_obligacion_del_yaml_y_de_tax_no_pueden_divergir():
     """Los topes de "obligado a declarar" siguen escritos dos veces, en UVT.
 
     `motor/cierre.py` los lee del YAML y `tax/obligation.py` los tiene en su propia tabla:
-    son DOS implementaciones de la misma regla legal (y no idénticas: cierre compara
-    patrimonio y consignaciones con `>`, obligation con `>=`). Unificarlas cambia la
-    semántica de un golden, así que no se toca acá; este test al menos impide que los
-    números se separen mientras siga habiendo dos.
+    son DOS implementaciones de la misma regla legal. Los comparadores ya están unificados
+    (`>=` solo en ingresos, `>` en los otros cuatro: arts. 592 num. 1 y 594-3 ET, con sus
+    tests de borde en `tests/unit/tax/test_obligation_bordes.py` y `tests/unit/motor/`); lo
+    que sigue duplicado son los números, y este test impide que se separen mientras haya
+    dos tablas.
+
+    Los tres criterios de flujo del art. 594-3 comparten un único tope en el YAML
+    (`tope_obligacion_consignaciones_uvt`, 1.400 UVT): el nombre miente —`cierre.py`
+    también compara compras contra él— pero es el número al que los tres están atados.
     """
     from declaras.tax.obligation import THRESHOLD_LIMITS_IN_UVT, ThresholdCode
 
     p = cargar(2025)
     assert p.tope_obligacion_ingresos_uvt == THRESHOLD_LIMITS_IN_UVT[ThresholdCode.INGRESOS]
     assert p.tope_obligacion_patrimonio_uvt == THRESHOLD_LIMITS_IN_UVT[ThresholdCode.PATRIMONIO]
-    assert p.tope_obligacion_consignaciones_uvt == THRESHOLD_LIMITS_IN_UVT[
-        ThresholdCode.MOVIMIENTOS
-    ]
+    for code in (ThresholdCode.MOVIMIENTOS, ThresholdCode.COMPRAS,
+                 ThresholdCode.CONSUMO_TARJETA):
+        assert p.tope_obligacion_consignaciones_uvt == THRESHOLD_LIMITS_IN_UVT[code], code
 
 
 def test_un_anio_fuera_de_la_tabla_no_queda_bloqueado():
