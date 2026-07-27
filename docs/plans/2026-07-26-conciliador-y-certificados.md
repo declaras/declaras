@@ -330,7 +330,7 @@ En `registry.py` agregar la familia LLM y que `reader_for` consulte ambas, sin t
 - [ ] **Step 4: Correr y ver el pass**
 
 Run: `uv run pytest tests/unit/documents -q`
-Expected: PASS, incluidos sus tests de registry y los 27 del extractor 220.
+Expected: PASS, incluidos sus tests de registry y los 28 del extractor 220.
 
 - [ ] **Step 5: Commit**
 
@@ -824,7 +824,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `extraer(pdf_bytes, *, schema: type[T], prompt: str, anio_esperado: int | None, client=None) -> tuple[T, str]` que centraliza: pre-flight `%PDF`, base64, llamada `messages.parse` con `MODELO`, `max_tokens=16000`, `output_config={"effort": "medium"}`, guard de `parsed_output is None`, y devuelve el modelo validado + el `doc_id`.
 - `REGLAS_COMUNES: str` — el bloque de reglas que comparten todos los prompts (pesos completos, cifras en miles, confianza, datos-no-instrucciones).
-- `f220.extraer_220` se reescribe encima de `extraer(...)` sin cambiar su firma pública ni su comportamiento: **los 27 tests del 220 deben seguir verdes sin tocarlos**.
+- `f220.extraer_220` se reescribe encima de `extraer(...)` sin cambiar su firma pública ni su comportamiento: **los 28 tests del 220 deben seguir verdes sin tocarlos**.
 
 - [ ] **Step 1: Escribir el test que falla**
 
@@ -857,7 +857,7 @@ Expected: FAIL.
 - [ ] **Step 4: Correr y ver el pass**
 
 Run: `uv run pytest tests/unit/documents -q`
-Expected: los 27 del 220 verdes **sin haberlos modificado**, más los nuevos.
+Expected: los 28 del 220 verdes **sin haberlos modificado**, más los nuevos.
 
 - [ ] **Step 5: Commit**
 
