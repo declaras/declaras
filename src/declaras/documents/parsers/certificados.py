@@ -22,7 +22,7 @@ from typing import Any
 
 from declaras.documents.models import DocumentReading, ExtractedField
 from declaras.domain.errors import DocumentUnreadableError
-from declaras.extraccion.f220 import extraer_220, id_documento
+from declaras.extraccion.f220 import extraer_220_con_metadatos, id_documento
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
@@ -35,7 +35,9 @@ def leer_220(
 ) -> DocumentReading:
     """Lee un certificado de ingresos y retenciones (formulario 220)."""
     try:
-        laboral = extraer_220(content, anio_esperado=anio_esperado, client=client)
+        laboral, extraccion = extraer_220_con_metadatos(
+            content, anio_esperado=anio_esperado, client=client
+        )
     except ValueError as exc:
         # `ValueError` cubre las dos formas de falla del extractor: sus propios guards y la
         # validación del esquema (la de pydantic hereda de `ValueError`). El texto queda en
@@ -49,6 +51,10 @@ def leer_220(
 
     confianza = laboral.fuente.confianza or 0.0
     campos: dict[str, Any] = {
+        # El año del certificado, no el que se esperaba: cuando nadie ató un año esperado (una
+        # lectura sin contexto de caso) el guard no corrió, y este es el único dato con el que
+        # después se puede ver que el certificado no corresponde al caso.
+        "anio_gravable": extraccion.anio_gravable,
         "empleador_nit": laboral.empleador_nit,
         "empleador_nombre": laboral.empleador_nombre,
         "salarios": laboral.salarios,

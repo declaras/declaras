@@ -39,9 +39,18 @@ async def read_document(
     _auth: ApiKeyDep,
     doc_type: str = Form(..., description="Tipo de documento, ej. EXOGENA, RUT"),
     file: UploadFile = File(...),
+    anio_esperado: int | None = Form(
+        None,
+        description=(
+            "Año gravable que se está declarando. Los certificados que lee un modelo lo usan "
+            "para rechazar el documento de otro año; sin él, ese chequeo no corre."
+        ),
+    ),
 ) -> DocumentReadingResponse:
     content = await file.read()
-    reading = container.document_reader.read(content=content, doc_type=doc_type)
+    reading = container.document_reader.read(
+        content=content, doc_type=doc_type, anio_esperado=anio_esperado
+    )
     return DocumentReadingResponse.from_reading(reading)
 
 

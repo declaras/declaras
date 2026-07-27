@@ -157,7 +157,10 @@ class CaseService:
                 extraction_job_id=extraction_job.id,
             )
             reading = await self._try_read_and_flag(
-                case_id=case_id, case_doc=case_doc, doc_type=stored.doc_type.value
+                case_id=case_id,
+                case_doc=case_doc,
+                doc_type=stored.doc_type.value,
+                anio_esperado=detail.case.tax_year,
             )
             diffs.append(
                 compare(
@@ -231,7 +234,12 @@ class CaseService:
             message=f"Se agregó {document_label(doc_type)}",
             payload={"filename": filename},
         )
-        await self._try_read_and_flag(case_id=case_id, case_doc=case_doc, doc_type=doc_type)
+        await self._try_read_and_flag(
+            case_id=case_id,
+            case_doc=case_doc,
+            doc_type=doc_type,
+            anio_esperado=detail.case.tax_year,
+        )
         log.info("case.client_upload", case_id=str(case_id), doc_type=doc_type)
         return await self._require_detail(case_id)
 
@@ -258,17 +266,23 @@ class CaseService:
     # ─────────────────────────── internos ───────────────────────────
 
     async def _try_read_and_flag(
-        self, *, case_id: UUID, case_doc: CaseDocument, doc_type: str
+        self, *, case_id: UUID, case_doc: CaseDocument, doc_type: str, anio_esperado: int
     ) -> DocumentReading | None:
         """Intenta leer un documento y convierte sus avisos en flags.
 
         Si no hay lector para el tipo (documentos aun sin parser, o del cliente que
         esperan el lector por vision), no es un error: simplemente no hay lectura
         estructurada todavia, y el documento queda disponible para revision manual.
+
+        El anio gravable del caso baja hasta el lector: para los certificados que lee un modelo
+        es el guard del documento del anio equivocado, que es el error mas comun, y sin bajarlo
+        no dispararia nunca por este camino.
         """
         try:
             content = await self._store.read(case_doc.storage_uri)
-            reading = self._reader.read(content=content, doc_type=doc_type)
+            reading = self._reader.read(
+                content=content, doc_type=doc_type, anio_esperado=anio_esperado
+            )
         except UnsupportedDocumentTypeError:
             # Todavia no hay parser para ese tipo: es una limitacion conocida del sistema,
             # no un problema del documento. Queda disponible para revision manual.

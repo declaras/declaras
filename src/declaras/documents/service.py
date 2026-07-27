@@ -22,7 +22,9 @@ class DocumentReaderService:
         self._cache: dict[str, DocumentReading] = {}
         self._cache_size = cache_size
 
-    def read(self, *, content: bytes, doc_type: str) -> DocumentReading:
+    def read(
+        self, *, content: bytes, doc_type: str, anio_esperado: int | None = None
+    ) -> DocumentReading:
         """Lee un documento de la clase indicada.
 
         El tipo se recibe por parametro y no se adivina: en el flujo del producto el
@@ -30,18 +32,26 @@ class DocumentReaderService:
         la pregunta y el tipo esperado juntos), asi que informarlo elimina una fuente de
         error. La deteccion automatica queda para cuando el cliente manda algo que nadie
         le pidio, y vive aparte en `sniff.py`.
+
+        `anio_esperado` es el anio gravable del caso, y para los lectores con modelo es un
+        guard: rechazan el certificado que trae otro anio en vez de meter al expediente las
+        cifras del anio equivocado. Quien lea sin contexto de caso puede omitirlo, y entonces
+        ese guard no corre.
         """
         if not content:
             raise ValidationError("El documento llegó vacío.")
 
         digest = hashlib.sha256(content).hexdigest()
-        key = f"{doc_type}:{digest}"
+        # El anio entra a la clave porque cambia el RESULTADO: la misma lectura que es valida
+        # para 2025 tiene que volver a fallar si se pide para 2024. Sin el, la primera lectura
+        # buena se sirve para cualquier anio y el guard queda salteado por la cache.
+        key = f"{doc_type}:{anio_esperado}:{digest}"
         cached = self._cache.get(key)
         if cached is not None:
             log.info("documents.read.cache_hit", doc_type=doc_type)
             return cached
 
-        reader = reader_for(doc_type)
+        reader = reader_for(doc_type, anio_esperado=anio_esperado)
         if reader is None:
             raise UnsupportedDocumentTypeError(
                 f"Todavía no hay lector para {doc_type}.",

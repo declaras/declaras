@@ -43,11 +43,30 @@ tampoco esta construido.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
+from typing import Protocol
 
 from declaras.documents.models import DocumentReading
 from declaras.documents.parsers import certificados, einvoice_summary, exogena, renta_210, rut
 
 Reader = Callable[[bytes], DocumentReading]
+
+
+class LlmReader(Protocol):
+    """Lector con modelo: ademas del contenido recibe el contexto del caso.
+
+    El contexto va por palabra clave y con default para que el lector se pueda usar suelto
+    (un script, una prueba), pero quien despacha lecturas nunca lo omite: se lo ata `reader_for`.
+    """
+
+    def __call__(self, content: bytes, *, anio_esperado: int | None = ...) -> DocumentReading: ...
+
+# Un lector ya atado al contexto del caso, listo para llamarse con `(content)`. Los de la
+# familia con modelo necesitan saber de que anio es el caso —el error mas comun es subir el
+# certificado del anio equivocado, y el guard que lo ataja no puede adivinarlo—, pero quien
+# despacha una lectura no tiene por que saber cual de las dos familias es. El contexto se ata
+# aqui y del otro lado sigue siendo un `Reader`.
+ContextualReader = Reader
 
 # Lectores deterministicos para los documentos que entrega el portal DIAN.
 DETERMINISTIC_READERS: dict[str, Reader] = {
@@ -64,14 +83,28 @@ DETERMINISTIC_READERS: dict[str, Reader] = {
 # deterministicos y no mezclados con ellos porque cuestan una llamada al modelo y su
 # resultado es estimado: quien despacha una lectura tiene que poder distinguirlos
 # (`is_deterministic`) sin mirar el nombre del tipo.
-LLM_READERS: dict[str, Reader] = {
+LLM_READERS: dict[str, LlmReader] = {
     "CERT_INGRESOS_220": certificados.leer_220,
 }
 
 
-def reader_for(doc_type: str) -> Reader | None:
-    """Lector de una clase de documento, de cualquiera de las dos familias, si existe."""
-    return DETERMINISTIC_READERS.get(doc_type) or LLM_READERS.get(doc_type)
+def reader_for(doc_type: str, *, anio_esperado: int | None = None) -> ContextualReader | None:
+    """Lector de una clase de documento, de cualquiera de las dos familias, si existe.
+
+    `anio_esperado` es el anio gravable del caso. Los parsers del portal lo ignoran (leen una
+    celda, y la celda no depende del caso), asi que se devuelven tal cual; a los de la familia
+    con modelo se les ata, porque para ellos es un guard: el certificado que trae otro anio
+    gravable se rechaza en vez de entrar al expediente con las cifras del anio equivocado.
+    """
+    deterministico = DETERMINISTIC_READERS.get(doc_type)
+    if deterministico is not None:
+        return deterministico
+    con_modelo = LLM_READERS.get(doc_type)
+    if con_modelo is None:
+        return None
+    # Se ata siempre, tambien cuando el anio es None: asi el lector recibe explicitamente que
+    # nadie sabia el anio, en vez de que la ausencia del argumento signifique dos cosas.
+    return partial(con_modelo, anio_esperado=anio_esperado)
 
 
 def is_deterministic(doc_type: str) -> bool:

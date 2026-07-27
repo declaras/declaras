@@ -89,6 +89,24 @@ def extraer_220(
     Falla RUIDOSO: esto alimenta un formulario tributario, así que cualquier duda sobre
     la extracción es un `ValueError`, nunca un número silenciosamente equivocado.
     """
+    return extraer_220_con_metadatos(
+        pdf_bytes, anio_esperado=anio_esperado, client=client
+    )[0]
+
+
+def extraer_220_con_metadatos(
+    pdf_bytes: bytes,
+    anio_esperado: int | None = None,
+    client=None,
+) -> tuple[IngresoLaboral, Extraccion220]:
+    """Lo mismo, y además la extracción cruda que produjo el modelo.
+
+    `IngresoLaboral` es un hecho del caso y solo lleva dinero: el año gravable y el total
+    impreso son metadatos de la extracción y no tienen dónde vivir ahí. Quien convierte el
+    certificado en una lectura de documento (`documents/parsers/certificados.py`) sí los
+    necesita —el año es con lo que después se detecta un certificado que no corresponde al
+    caso—, así que se exponen por acá en vez de meterlos en el modelo del caso.
+    """
     if not pdf_bytes.startswith(b"%PDF"):
         # Pre-flight antes de gastar una llamada: un JPG o un PDF corrupto no se
         # extrae, y el error del API sería mucho menos claro que este.
@@ -171,7 +189,7 @@ def extraer_220(
         )
 
     doc_id = id_documento(pdf_bytes)
-    return IngresoLaboral(
+    laboral = IngresoLaboral(
         empleador_nit=ext.empleador_nit,
         empleador_nombre=ext.empleador_nombre,
         salarios=ext.salarios,
@@ -183,3 +201,4 @@ def extraer_220(
         retencion=ext.retencion,
         fuente=Fuente.documento("220", doc_id, confianza=ext.confianza),
     )
+    return laboral, ext
