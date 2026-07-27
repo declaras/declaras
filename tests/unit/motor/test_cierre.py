@@ -2,8 +2,8 @@ import pytest
 
 from declaras.caso import (
     Activo, Arriendo, Beneficios, CasoTributario, Contribuyente, Creditos,
-    Dependiente, Donacion, Fuente, IngresoLaboral, IngresoPension, Patrimonio,
-    Rendimiento,
+    Dependiente, Donacion, Fuente, IngresoLaboral, IngresoPension, MontoDeclarado,
+    Movimientos, Patrimonio, Rendimiento,
 )
 from declaras.motor import Elecciones, liquidar
 from declaras.parametros import cargar
@@ -99,6 +99,88 @@ def test_no_obligado():
     liq = liquidar(caso, P, Elecciones())
     assert liq.valor("OBLIGADO_DECLARAR") == 0
     assert liq.tiene_flag("NO_OBLIGADO")
+
+
+# --- El borde exacto de los topes de obligación (art. 592 / 594-3 ET) ---
+#
+# La norma es asimétrica a propósito y `cierre.py` la sigue: ingresos con `>=` (el art. 592
+# num. 1 define al no obligado por ingresos "inferiores a 1.400 UVT", así que llegar al tope
+# ya obliga) y patrimonio, consignaciones y compras con `>` (el mismo numeral dice patrimonio
+# que "no exceda de 4.500 UVT", y el art. 594-3 usa verbo estricto en los de flujo). Sin
+# estos casos se podía voltear cualquiera de los cuatro comparadores y la suite seguía verde;
+# la misma regla vive también en `tax/obligation.py`, con su propio test de borde.
+#
+# El criterio de consumos con tarjeta de crédito NO se prueba acá porque `cierre.py` no lo
+# evalúa: `Movimientos` no tiene el campo. Es un falso negativo conocido, con ticket aparte.
+
+def _caso_con_patrimonio(valor_31dic: int) -> CasoTributario:
+    """Solo patrimonio bruto: sin ingresos ni movimientos, ningún otro criterio interfiere."""
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="10", nombre="Borde"),
+        patrimonio=Patrimonio(activos=[Activo(tipo="cuenta", descripcion="CDT",
+                                              valor_31dic=valor_31dic, fuente=FX)]),
+    )
+
+
+def _caso_con_movimientos(**montos: int) -> CasoTributario:
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="11", nombre="Borde"),
+        movimientos=Movimientos(**{
+            campo: MontoDeclarado(valor=valor, fuente=FX) for campo, valor in montos.items()
+        }),
+    )
+
+
+def test_patrimonio_exactamente_en_el_tope_no_obliga():
+    # "Patrimonio bruto que no exceda de 4.500 UVT": estar en 224.095.500 no lo excede.
+    liq = liquidar(_caso_con_patrimonio(P.uvt_pesos(4_500)), P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 0
+    assert liq.tiene_flag("NO_OBLIGADO")
+
+
+def test_patrimonio_un_peso_por_encima_del_tope_obliga():
+    liq = liquidar(_caso_con_patrimonio(P.uvt_pesos(4_500) + 1), P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 1
+    assert "patrimonio" in liq.nodos["OBLIGADO_DECLARAR"].formula
+
+
+def test_consignaciones_exactamente_en_el_tope_no_obligan():
+    liq = liquidar(_caso_con_movimientos(consignaciones_totales=P.uvt_pesos(1_400)),
+                   P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 0
+    assert liq.tiene_flag("NO_OBLIGADO")
+
+
+def test_consignaciones_un_peso_por_encima_del_tope_obligan():
+    liq = liquidar(_caso_con_movimientos(consignaciones_totales=P.uvt_pesos(1_400) + 1),
+                   P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 1
+    assert "consignaciones" in liq.nodos["OBLIGADO_DECLARAR"].formula
+
+
+def test_compras_y_consumos_exactamente_en_el_tope_no_obligan():
+    liq = liquidar(_caso_con_movimientos(compras_y_consumos=P.uvt_pesos(1_400)),
+                   P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 0
+    assert liq.tiene_flag("NO_OBLIGADO")
+
+
+def test_compras_y_consumos_un_peso_por_encima_del_tope_obligan():
+    liq = liquidar(_caso_con_movimientos(compras_y_consumos=P.uvt_pesos(1_400) + 1),
+                   P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 1
+    assert "compras y consumos" in liq.nodos["OBLIGADO_DECLARAR"].formula
+
+
+def test_ingresos_exactamente_en_el_tope_si_obligan():
+    # El otro lado de la asimetría: acá el comparador SÍ es `>=` y el borde obliga.
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="12", nombre="Borde"),
+        rendimientos=[Rendimiento(entidad="Banco", valor=P.uvt_pesos(1_400), fuente=FX)],
+    )
+    liq = liquidar(caso, P, Elecciones())
+    assert liq.valor("OBLIGADO_DECLARAR") == 1
+    assert "ingresos" in liq.nodos["OBLIGADO_DECLARAR"].formula
 
 
 # --- Guard de año: el caso y los parámetros deben ser del mismo año gravable ---
