@@ -21,16 +21,23 @@ lector ubica cada valor por su coordenada y no por la etiqueta que tiene al lado
 transcribiendo el mapa del formulario una vez, en vez de descifrar la imagen en cada lectura
 (ver ADR 0008).
 
-DONDE SI HARA FALTA MIRAR EL DOCUMENTO
+DONDE SI HAY QUE LEER CON UN MODELO
 
-En lo que manda el cliente por chat: la foto de un certificado de intereses de vivienda, de
-medicina prepagada o de un aporte a AFC. Ahi no hay celdas ni operadores de texto, solo pixeles,
-y cada banco usa su propio formato. Ese lector NO ESTA CONSTRUIDO todavia: un documento asi se
-guarda y queda disponible para revisarlo a mano, pero su valor no entra a ningun calculo.
+En lo que manda el cliente: el certificado de ingresos y retenciones (formulario 220), y mas
+adelante el de intereses de vivienda, el de medicina prepagada o el de un aporte a AFC. Ahi no
+hay celdas ni operadores en posiciones conocidas: cada emisor arma el documento como quiere, y
+el mismo dato aparece con otra etiqueta y en otro sitio. Por eso son la segunda familia de este
+registro, la de lectores con modelo, y por eso sus valores llegan con la confianza que el modelo
+declaro en vez de con `Confidence.DETERMINISTIC`.
 
-Agregar un documento nuevo es escribir un lector y registrarlo aqui. El tipo se recibe por
-parametro, porque en el flujo del producto el agente siempre sabe que pidio. Detectar el tipo
-solo (para cuando alguien manda algo que nadie le pidio) tampoco esta construido.
+De esa familia hoy solo esta construido el 220 (`parsers/certificados.py`). Un documento sin
+lector se guarda y queda disponible para revisarlo a mano, pero su valor no entra a ningun
+calculo.
+
+Agregar un documento nuevo es escribir un lector y registrarlo aqui, en la familia que le
+corresponda. El tipo se recibe por parametro, porque en el flujo del producto el agente siempre
+sabe que pidio. Detectar el tipo solo (para cuando alguien manda algo que nadie le pidio)
+tampoco esta construido.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from declaras.documents.models import DocumentReading
-from declaras.documents.parsers import einvoice_summary, exogena, renta_210, rut
+from declaras.documents.parsers import certificados, einvoice_summary, exogena, renta_210, rut
 
 Reader = Callable[[bytes], DocumentReading]
 
@@ -53,10 +60,18 @@ DETERMINISTIC_READERS: dict[str, Reader] = {
     "SUGGESTED_RETURN": renta_210.parse,
 }
 
+# Lectores con modelo para los certificados que aporta el cliente. Van aparte de los
+# deterministicos y no mezclados con ellos porque cuestan una llamada al modelo y su
+# resultado es estimado: quien despacha una lectura tiene que poder distinguirlos
+# (`is_deterministic`) sin mirar el nombre del tipo.
+LLM_READERS: dict[str, Reader] = {
+    "CERT_INGRESOS_220": certificados.leer_220,
+}
+
 
 def reader_for(doc_type: str) -> Reader | None:
-    """Lector deterministico de una clase de documento, si existe."""
-    return DETERMINISTIC_READERS.get(doc_type)
+    """Lector de una clase de documento, de cualquiera de las dos familias, si existe."""
+    return DETERMINISTIC_READERS.get(doc_type) or LLM_READERS.get(doc_type)
 
 
 def is_deterministic(doc_type: str) -> bool:
@@ -64,4 +79,4 @@ def is_deterministic(doc_type: str) -> bool:
 
 
 def supported_types() -> list[str]:
-    return sorted(DETERMINISTIC_READERS)
+    return sorted(DETERMINISTIC_READERS | LLM_READERS)

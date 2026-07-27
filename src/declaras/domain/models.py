@@ -45,6 +45,9 @@ DOCUMENT_TYPE_LABELS: dict[str, str] = {
     DocumentType.EINVOICE_SUMMARY: "el resumen de facturas electrónicas",
     DocumentType.EVIDENCE: "la evidencia de auditoría",
     DocumentType.CLIENT_DOCUMENT: "un documento del cliente",
+    # No es un tipo del conector (no lo baja del portal, lo aporta el cliente), pero si
+    # tiene lector, asi que aparece en las alertas del expediente y necesita nombre.
+    "CERT_INGRESOS_220": "el certificado de ingresos y retenciones",
 }
 
 

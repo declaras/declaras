@@ -4,29 +4,11 @@ import pytest
 
 from declaras.extraccion.f220 import PROMPT_220, Extraccion220, extraer_220
 
+# El doble vive en `dobles.py` porque tambien lo usa la prueba del lector que envuelve a
+# este extractor para el registry de documentos.
+from tests.unit.documents.dobles import ClienteFalso
+
 PDF = b"%PDF-fake"
-
-
-class _RespuestaFalsa:
-    def __init__(self, parsed, stop_reason="end_turn"):
-        self.parsed_output = parsed
-        self.stop_reason = stop_reason
-
-
-class _MessagesFalso:
-    def __init__(self, parsed, stop_reason="end_turn"):
-        self._parsed = parsed
-        self._stop_reason = stop_reason
-        self.llamadas = []
-
-    def parse(self, **kwargs):
-        self.llamadas.append(kwargs)
-        return _RespuestaFalsa(self._parsed, self._stop_reason)
-
-
-class ClienteFalso:
-    def __init__(self, parsed, stop_reason="end_turn"):
-        self.messages = _MessagesFalso(parsed, stop_reason)
 
 
 def _kwargs_validos(**cambios):

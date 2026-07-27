@@ -23,7 +23,7 @@ router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
 @router.get(
     "/types",
-    summary="Lista los tipos de documento con lector deterministico disponible",
+    summary="Lista los tipos de documento que ya tienen lector",
 )
 async def list_supported_types(_auth: ApiKeyDep) -> list[str]:
     return supported_types()
