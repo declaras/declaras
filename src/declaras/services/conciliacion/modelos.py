@@ -106,8 +106,9 @@ class Partida(_Modelo):
     versiones_documento: dict[str, Valor] = Field(default_factory=dict)
     # Cuando hubo versiones rivales de un tipo NO acumulable: el sha corto del documento
     # cuya versión se publicó en `version_documento` (la última NUEVA en llegar;
-    # reprocesar bytes ya vistos es no-op y no la cambia). None = sin rivales, o tipo
-    # acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
+    # reprocesar bytes ya vistos es no-op y no la cambia). None = sin rivales —una sola
+    # versión, o varias con las MISMAS cifras: la rivalidad es de cifras, no de bytes—,
+    # o tipo acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
     # de `reportado_a`: la nota es texto libre que `refrescar` de T5 sobrescribe, y la
     # huella de auditoría —"llegaron varios certificados y rigió este"— tiene que quedar
     # en la partida, que es donde se busca la respuesta cuando el contador o la DIAN

@@ -563,21 +563,32 @@ def _emparejar(
     # que se publica depende del tipo de documento.
     versiones = dict(partida.versiones_documento)
     versiones[sha] = version
-    if acumulable or len(versiones) == 1:
+    # La rivalidad es de CIFRAS, no de bytes: el mismo PDF re-exportado (cifras iguales,
+    # sha distinto) no le da nada que decidir al contador y no ensucia su cola. La
+    # excepción es el camino sin NIT: ahí hasta cifras iguales podrían ser dos terceros
+    # distintos, así que cualquier segunda versión se anota.
+    rivales = len(versiones) > 1 and (sin_nit or _cifras_difieren(versiones))
+    if acumulable:
         # Documentos distintos que sí se suman (un certificado por CDT): el agregado, que
         # es lo que la exógena también reporta.
         publicada = _agregado(versiones)
         nota_rivales = None
         version_que_rige = None
-    else:
-        # Tipo NO acumulable con más de una versión: el sha distingue bytes, no documentos,
-        # así que esto es casi siempre el mismo certificado re-escaneado. Sumar duplicaría
-        # la plata en silencio; rige la última versión en llegar y una persona decide.
-        # Cuál rigió queda ESTRUCTURAL en la partida (la nota es texto libre que otras
-        # capas reescriben): esa es la huella de auditoría de la cifra publicada.
+    elif rivales:
+        # Tipo NO acumulable con versiones en disputa: el sha distingue bytes, no
+        # documentos, así que esto es casi siempre el mismo certificado re-escaneado.
+        # Sumar duplicaría la plata en silencio; rige la última versión NUEVA en llegar y
+        # una persona decide. Cuál rigió queda ESTRUCTURAL en la partida (la nota es texto
+        # libre que otras capas reescriben): la huella de auditoría de la cifra publicada.
         publicada = version
         nota_rivales = _nota_rivales(len(versiones), sin_nit=sin_nit)
         version_que_rige = sha
+    else:
+        # Una sola versión, o varias con las MISMAS cifras: la publicada es la más
+        # reciente y no hay rivalidad que anotar.
+        publicada = version
+        nota_rivales = None
+        version_que_rige = None
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
         "version_documento": publicada,
@@ -621,6 +632,13 @@ def _con_nota(nota: str | None, *nuevas: str | None) -> str | None:
         if nueva and nueva not in (nota or ""):
             nota = f"{nota}; {nueva}" if nota else nueva
     return nota
+
+
+def _cifras_difieren(versiones: dict[str, Valor]) -> bool:
+    """¿Hay más de una cifra en juego entre las versiones? Se comparan los DOS números
+    que la partida declara (monto y retención; None cuenta distinto de 0: 'no la reportó'
+    no es 'reportó cero'). La procedencia (celda, confianza) no hace rivalidad."""
+    return len({(v.monto, v.retencion) for v in versiones.values()}) > 1
 
 
 def _nota_rivales(n: int, *, sin_nit: bool) -> str:

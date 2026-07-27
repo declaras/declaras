@@ -530,16 +530,34 @@ def test_el_mismo_220_con_otro_hash_no_duplica_los_aportes():
     re-exportado llega con otro hash (el repo lo documenta para las descargas del portal).
     Sumar las dos versiones duplicaba los aportes en silencio —deducción inflada, ~2M de
     impuesto de menos— sin nota y con la procedencia colapsada como si fuera un solo
-    documento. El 220 no es acumulable: rige la última versión y el contador decide."""
+    documento. El 220 no es acumulable: la cifra publicada nunca es la suma. Y como acá
+    las cifras son IGUALES, tampoco hay aviso de rivales: no hay nada que decidir
+    (ronda 4)."""
     partidas = incorporar(abrir(_exogena()), _cert_220_completo("a"))
     partidas = incorporar(partidas, _cert_220_completo("b"))
     por_concepto = {p.concepto: p for p in partidas}
     salud = por_concepto[Concepto.APORTES_SALUD]
     assert salud.version_documento.monto == 3_400_000
     assert len(salud.versiones_documento) == 2  # nada desaparece
-    assert "cuál rige" in (salud.nota or "")
     assert por_concepto[Concepto.SALARIOS].version_documento.monto == 85_000_000
-    assert "cuál rige" in (por_concepto[Concepto.SALARIOS].nota or "")
+
+
+def test_versiones_con_las_mismas_cifras_no_son_rivales():
+    """El caso real más común: el mismo PDF re-exportado — cifras iguales, bytes
+    distintos. No hay nada que decidir, así que no se ensucia la cola del contador con
+    'hay que decidir cuál rige': sin aviso, sin version_que_rige, y las dos versiones
+    conservadas. (Solo aplica con NIT: sin NIT hasta cifras iguales podrían ser dos
+    empleadores, y ahí sí se anota — ver el test de los dos escaneos sin NIT.)"""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(
+        partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
+    [p] = partidas
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.nota is None
+    assert p.version_que_rige is None
+    assert set(p.versiones_documento) == {"a" * 12, "b" * 12}
 
 
 def test_entre_versiones_rivales_rige_la_ultima():
@@ -581,10 +599,11 @@ def test_sin_rivales_no_hay_version_que_rige():
 
 def test_la_nota_de_rivales_dice_el_numero_real_de_versiones():
     """Con tres versiones en juego la nota no puede seguir diciendo 'dos': el aviso viejo
-    se reemplaza por el vigente, no se acumulan."""
-    partidas = incorporar(abrir(_exogena()), _cert_220_completo("a"))
-    partidas = incorporar(partidas, _cert_220_completo("b"))
-    partidas = incorporar(partidas, _cert_220_completo("c"))
+    se reemplaza por el vigente, no se acumulan. (Las cifras difieren entre las tres:
+    versiones con las mismas cifras no son rivales y no avisan.)"""
+    partidas = incorporar(abrir(_exogena()), _cert_220_completo("a", salarios=85_000_000))
+    partidas = incorporar(partidas, _cert_220_completo("b", salarios=86_000_000))
+    partidas = incorporar(partidas, _cert_220_completo("c", salarios=87_000_000))
     [salarios] = [p for p in partidas if p.concepto is Concepto.SALARIOS]
     assert "llegaron 3 certificados" in (salarios.nota or "")
     assert "llegaron 2" not in (salarios.nota or "")
