@@ -137,6 +137,40 @@ def test_documento_de_tipo_que_no_se_sabe_cruzar_revienta():
         incorporar([], doc)
 
 
+def test_fila_de_retencion_no_nace_como_ingreso():
+    """El reporte real usa códigos de ingreso (5004) también para retenciones; lo que
+    desambigua es el renglón que la propia DIAN asigna (R132). Clasificar por código
+    creaba un ingreso fantasma por servicios y el crédito de la retención se perdía."""
+    fila = _fila("900333444", "5004", 150_000, nombre="BANCO DEMO")
+    fila["concept"] = "Retencion en la fuente (Concepto: 5004)"
+    fila["suggested_use"] = "R132 Retenciones año gravable a declarar"
+    fila["form_lines"] = [132]
+    del fila["retencion"]  # el lector real no emite esa clave
+    [p] = abrir(_exogena(fila))
+    assert p.concepto is Concepto.RETENCION
+    assert p.estado == EstadoPartida.SOLO_DIAN
+    assert p.version_dian.monto == 150_000
+
+
+def test_el_renglon_se_lee_del_uso_sugerido_si_la_fila_no_trae_form_lines():
+    """Una lectura vieja o construida a mano puede no traer `form_lines`: el renglón
+    también se saca del texto de "Uso declaración Sugerida"."""
+    fila = _fila("900333444", "5004", 150_000, nombre="BANCO DEMO")
+    fila["suggested_use"] = "R132 Retenciones año gravable a declarar"
+    [p] = abrir(_exogena(fila))
+    assert p.concepto is Concepto.RETENCION
+
+
+def test_fila_que_apunta_a_retencion_y_a_ingreso_queda_pendiente():
+    """Ambigua de verdad: no se clasifica a la ligera, queda para una persona."""
+    fila = _fila("900333444", "5001", 150_000)
+    fila["suggested_use"] = "Tope 1: Ingresos brutos | R32 Ingresos brutos | R132 Retenciones"
+    [p] = abrir(_exogena(fila))
+    assert p.estado == EstadoPartida.CONCEPTO_DESCONOCIDO
+    assert p.concepto is None
+    assert "a mano" in (p.nota or "")
+
+
 def test_titular_y_ajena_del_mismo_tercero_tienen_ids_distintos():
     """Dos partidas con el mismo id son indistinguibles para cualquier indexado
     (resoluciones, refrescar, Fuente.conciliacion): una de las dos desaparece según

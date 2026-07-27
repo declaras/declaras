@@ -14,6 +14,7 @@ persiste partidas decide cuándo reemplazar su copia.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from declaras.documents.models import DocumentReading
@@ -34,6 +35,14 @@ _NOTA_SIN_NIT = "el documento no trae el NIT del tercero, así que no se pudo cr
 _NOTA_CERTIFICADO_SIN_RESPALDO = (
     "llegó un certificado del tercero, pero no concilia contra un valor reportado a otra persona"
 )
+_NOTA_RETENCION_AMBIGUA = (
+    "la DIAN asigna esta fila a retenciones y a otro renglón a la vez; hay que clasificarla a mano"
+)
+
+# R132 del formulario 210: "Retenciones año gravable a declarar". Es el renglón con que la
+# columna "Uso declaración Sugerida" marca las filas que son retención practicada, no ingreso.
+_RENGLON_RETENCIONES = 132
+_RENGLON_RE = re.compile(r"\bR(\d{1,3})\b")
 
 
 @dataclass(frozen=True)
@@ -116,12 +125,13 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         nombre = str(valores.get("reporter_name") or "").strip()
         ref = _ref_tercero(nit, nombre, fila.source, posicion)
         codigo = str(valores.get("concept_code") or "").strip()
-        concepto = concepto_de_codigo(codigo)
+        concepto, nota_clasificacion = _concepto_de_fila(valores, codigo)
 
         # Una fila que el tercero no le reportó al titular es un hecho DISTINTO, no una
         # discrepancia de montos: se agrupa aparte para no contaminar la suma de lo que sí
         # es del titular, y nunca aportará hecho.
-        reportado_a, nota = _reportado_a(titular, valores)
+        reportado_a, nota_reporte = _reportado_a(titular, valores)
+        nota = "; ".join(n for n in (nota_reporte, nota_clasificacion) if n) or None
 
         # Para un código sin mapear, la identidad del grupo es el código crudo, y a falta
         # de código el texto del concepto: fusionar dos conceptos desconocidos distintos
@@ -148,6 +158,40 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         if fila.source:
             grupo.celdas.append(fila.source)
     return [_partida_dian(grupo) for grupo in grupos.values()]
+
+
+def _concepto_de_fila(
+    valores: dict[str, object], codigo: str
+) -> tuple[Concepto | None, str | None]:
+    """El concepto de una fila: primero lo que la DIAN ya resolvió en ella, después el código.
+
+    La columna "Uso declaración Sugerida" dice a qué renglón del 210 va cada valor, y ese
+    veredicto manda sobre la tabla de códigos: los reportes reales usan códigos de ingreso
+    (5004) también para retenciones, así que una fila que la DIAN manda al renglón de
+    retenciones no puede nacer como concepto de ingreso tenga el código que tenga — sería
+    un ingreso fantasma, y el crédito de la retención se perdería. Una fila que apunte a
+    retenciones Y a otro renglón a la vez es genuinamente ambigua: no se clasifica a la
+    ligera, queda pendiente con nota.
+    """
+    renglones = _renglones(valores)
+    if _RENGLON_RETENCIONES in renglones:
+        if renglones == {_RENGLON_RETENCIONES}:
+            return Concepto.RETENCION, None
+        return None, _NOTA_RETENCION_AMBIGUA
+    return concepto_de_codigo(codigo), None
+
+
+def _renglones(valores: dict[str, object]) -> set[int]:
+    """Renglones del 210 que la DIAN asignó a la fila.
+
+    Los deja resueltos el lector de exógena (`form_lines`); si la fila viene de una lectura
+    que no los trae (vieja o construida a mano), se sacan del texto de la columna "Uso
+    declaración Sugerida" con la misma regla que usa el lector.
+    """
+    en_fila = valores.get("form_lines")
+    if isinstance(en_fila, list) and en_fila:
+        return {int(n) for n in en_fila}
+    return {int(n) for n in _RENGLON_RE.findall(str(valores.get("suggested_use") or ""))}
 
 
 def _ref_tercero(nit: str, nombre: str, fuente: str | None, posicion: int) -> str:
