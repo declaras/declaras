@@ -162,15 +162,33 @@ _NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/
 
 # El nucleo de calculo (motor, optimizador, parametros, render, caso) y los extractores levantan
 # `ValueError` pelado para violar un invariante propio: parametros de otro anio gravable, tabla del
-# art. 241 con tramos no contiguos, PDF con dos certificados. Ninguno llega a una pantalla: el
-# manejador de `Exception` en `api/errors.py` los registra y responde con el `DeclarasError`
-# generico, sin repetir el texto. Son contratos con quien programa, y los fijan los 189 casos del
-# motor y los 6 goldens; pedirles ademas prosa de usuario seria pedirles algo que nadie lee.
+# art. 241 con tramos no contiguos, PDF con dos certificados. Son contratos con quien programa, y
+# los fijan los 139 casos que trajo el motor (6 de ellos goldens de punta a punta); pedirles
+# ademas prosa de usuario seria pedirles algo que casi nadie lee. Se los saca de este recorrido.
 #
-# DEUDA ANOTADA, un solo mensaje: `caso/modelos.py` lanza el suyo dentro de un validador de
-# pydantic ("mesadas debe tener exactamente 12 valores no negativos"), y esos SI viajan al cliente
-# por `_domain_validation_error`. Queda asi porque en esta fusion el motor entra intacto; se
-# reescribe cuando el conciliador lo exponga por la API (ver plan, tareas 5 y 6).
+# "Casi": hay TRES caminos por los que un texto crudo llega al usuario, y solo el primero esta
+# cerrado. Quien vaya a angostar esta exclusion tiene que mirar los otros dos, no confiar en que
+# el nucleo es invisible.
+#
+#   1. HTTP generico (`api/errors.py`, manejador de `Exception`). CERRADO: responde con
+#      `DeclarasError()` pelado y no repite el texto de la excepcion. Verificado.
+#   2. El worker de extracciones (`services/extraction.py`, rama `except Exception`). ABIERTO:
+#      hace `DeclarasError(str(exc)[:200])`, o sea envuelve el texto crudo de CUALQUIER
+#      excepcion, `mark_failed` lo persiste y `ExtractionResponse.error` lo devuelve por
+#      `GET /v1/extractions/{id}`. Este es el camino que justifica la regex ancha de Juan. Hoy
+#      el nucleo no corre dentro de un job (el worker no llama a los lectores), pero la T3
+#      registra `leer_220` en el registry y ahi entra.
+#   3. `_domain_validation_error` (`api/errors.py`). ABIERTO: hace eco de los mensajes de los
+#      validadores de pydantic en un 422. En el nucleo excluido hay SIETE: `caso/modelos.py:44`,
+#      alcanzable con datos del cliente, y `parametros/modelos.py:70,72,78,86,92,97`, que solo
+#      se disparan con un `ag<anio>.yaml` malo (error de configuracion, no de quien declara).
+#
+# DEUDA ANOTADA, 13 mensajes: los 7 de validadores de arriba, y los 6 de `extraccion/f220.py`,
+# que son de cara al usuario de verdad (el guard del archivo que sube una persona; uno de ellos
+# filtra `stop_reason=`). Quedan asi por alcance, no porque esten bien: en esta fusion el motor
+# entra intacto. A los 6 de `f220` les falta un punto final y a uno la mayuscula, y arreglarlos
+# no rompe los `match=` de sus pruebas; se cierran en la T3 y la T8, que reescriben `f220`. El de
+# `caso/modelos.py` espera a la T5/T6, cuando el conciliador exponga el Caso por la API.
 _NUCLEO_DE_CALCULO = ("motor/", "optimizador/", "parametros/", "render/", "caso/", "extraccion/")
 
 
@@ -182,7 +200,9 @@ def _mensajes_escritos_a_mano():
     raiz = Path(declaras.__file__).parent
     for archivo in sorted(raiz.rglob("*.py")):
         relativo = str(archivo.relative_to(raiz))
-        if any(parte in relativo for parte in _NO_SE_EJECUTA + _NUCLEO_DE_CALCULO):
+        # `startswith` y no `in`: las dos listas son prefijos de ruta. Con `in`, un futuro
+        # `api/render/` quedaria excluido en silencio por el patron "render/".
+        if relativo.startswith(_NO_SE_EJECUTA + _NUCLEO_DE_CALCULO):
             continue
         for bloque in _MENSAJE_AL_LANZAR.findall(archivo.read_text()):
             mensaje = "".join(_PEDAZO.findall(bloque))
