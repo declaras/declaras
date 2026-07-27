@@ -38,6 +38,7 @@ from declaras.services.conciliacion.resolucion import (
     refrescar,
     resolver,
 )
+from declaras.services.conciliacion.respuestas import Respuesta
 
 __all__ = [
     "DECISIONES_CON_HECHO",
@@ -55,6 +56,7 @@ __all__ = [
     "Origen",
     "Partida",
     "Resolucion",
+    "Respuesta",
     "Valor",
     "a_caso",
     "abrir",
