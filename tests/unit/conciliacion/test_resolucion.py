@@ -560,3 +560,26 @@ def test_refrescar_devuelve_las_partidas_cuyo_id_desaparecio():
     assert sorted(p.id for p in huerfanas) == [
         "900111222:APORTES_PENSION", "900111222:APORTES_SALUD"]
     assert all(p.resolucion is not None for p in huerfanas)  # con su decisión intacta
+
+
+def test_el_motivo_tiene_que_corresponder_a_la_decision():
+    """M1 de la ronda 2: la pareja decisión+motivo es la huella que lee un auditor —
+    'USAR_DIAN (NO_ES_MIO)' en la Fuente de un hecho declarado es un contrasentido que
+    nadie puede interpretar después."""
+    with pytest.raises(ValueError, match="NO_ES_MIO"):
+        resolver(partida_discrepancia(), Decision.USAR_DIAN,
+                 motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
+    with pytest.raises(ValueError, match="COINCIDEN"):
+        resolver(partida_solo_dian(), Decision.MARCAR_AJENO,
+                 motivo=Motivo.COINCIDEN, quien="contador@x.co")
+    with pytest.raises(ValueError, match="FUERA_DEL_MOTOR"):
+        resolver(partida_discrepancia(), Decision.USAR_DIAN,
+                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+
+
+def test_llevar_a_mano_exige_su_motivo():
+    """El ruling de la ronda 1 pidió que el nombre Y el motivo digan qué pasó: la única
+    pareja válida es LLEVAR_A_MANO + FUERA_DEL_MOTOR."""
+    with pytest.raises(ValueError, match="FUERA_DEL_MOTOR"):
+        resolver(partida_honorarios(), Decision.LLEVAR_A_MANO,
+                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")

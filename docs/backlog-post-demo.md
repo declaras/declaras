@@ -37,7 +37,7 @@ Extras a validar: base del 30% AFC = bruto general (no solo laboral); pensiones 
 - **Gap analysis de completitud** (spec §3): recorrido de huecos del Caso por escenario — no implementado.
 - **Prorrateo de dependientes**: `Dependiente.meses` se captura pero el motor otorga 72 UVT/387 anualizados (flag `DEPENDIENTE_PARCIAL` lo advierte).
 - **Proveniencia despareja**: `Creditos` y `patrimonio_liquido_anterior` son ints sin `Fuente` — decidir granularidad una sola vez.
-- **Optimizador**: ignora flags `bloqueante` (nada los emite aún); desempate por "elecciones activas" es proxy de "(1) menos documentos (2) menos liquidez" — diverge cuando entren elecciones tipo AFC; término `activas` inerte con 2 flags.
+- **Optimizador**: ignora flags `bloqueante` — y el conciliador YA los emite (`INGRESO_LLEVADO_A_MANO`, T5 ronda 1: un ingreso fuera del alcance del motor que el contador suma a mano); que `bloqueante` bloquee de verdad y la fusión de `conciliacion.avisos()` en `Liquidacion.flags` son requisitos de T6. Desempate por "elecciones activas" es proxy de "(1) menos documentos (2) menos liquidez" — diverge cuando entren elecciones tipo AFC; término `activas` inerte con 2 flags.
 - **Mapeo a casillas oficiales DIAN** + formateo por tipo de casilla (pendiente #2 del spec; el borrador se declara "por conceptos").
 - **Parámetros**: `componente_inflacionario` AG 2025 pendiente de decreto (flag automático mientras tanto); al crear `ag2026.yaml` verificar coherencia constante↔tarifas de la tabla.
 - Anclas de test faltantes (declaradas): `porcentaje()` en general.py sin caso de empate `,50`; `encoding=` sin ancla; fixture orden certificados-vs-año del extractor.

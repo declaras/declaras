@@ -72,6 +72,27 @@ _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
     ),
 }
 
+# Qué motivo puede acompañar a qué decisión (M1 de la ronda 2): la pareja es la huella
+# que lee un auditor — "USAR_DIAN (NO_ES_MIO)" en la Fuente de un hecho declarado es un
+# contrasentido que nadie puede interpretar después. DECISION_DEL_CONTADOR es el motivo
+# genérico de toda decisión humana; LLEVAR_A_MANO exige el suyo (el ruling de la ronda 1
+# pidió que el nombre Y el motivo digan "el soporte existe, falta el motor").
+_MOTIVOS_POR_DECISION: dict[Decision, frozenset[Motivo]] = {
+    Decision.USAR_DIAN: frozenset(
+        {Motivo.ERROR_DEL_CERTIFICADO, Motivo.FALTA_DOCUMENTO, Motivo.COINCIDEN,
+         Motivo.DECISION_DEL_CONTADOR}
+    ),
+    Decision.USAR_DOCUMENTO: frozenset(
+        {Motivo.ERROR_DEL_TERCERO, Motivo.COINCIDEN, Motivo.DECISION_DEL_CONTADOR}
+    ),
+    Decision.USAR_OTRO: frozenset({Motivo.DECISION_DEL_CONTADOR}),
+    Decision.MARCAR_AJENO: frozenset({Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}),
+    Decision.CERRAR_SIN_SOPORTE: frozenset(
+        {Motivo.FALTA_DOCUMENTO, Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}
+    ),
+    Decision.LLEVAR_A_MANO: frozenset({Motivo.FUERA_DEL_MOTOR}),
+}
+
 
 def resolver(
     partida: Partida,
@@ -233,6 +254,12 @@ def _con_resolucion(
     valor: int | None = None,
     nota: str | None = None,
 ) -> Partida:
+    if motivo not in _MOTIVOS_POR_DECISION[decision]:
+        posibles = ", ".join(sorted(_MOTIVOS_POR_DECISION[decision]))
+        raise ValueError(
+            f"El motivo {motivo} no corresponde a la decisión {decision}; "
+            f"los posibles son: {posibles}."
+        )
     resolucion = Resolucion(
         decision=decision,
         valor=_derivar_valor(partida, decision, valor),
