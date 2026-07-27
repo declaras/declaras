@@ -17,7 +17,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from declaras.documents.models import DocumentReading
+from declaras.dinero import pesos
+from declaras.documents.models import DocumentReading, ExtractedField
 from declaras.services.conciliacion.conceptos import Concepto, concepto_de_codigo
 from declaras.services.conciliacion.modelos import EstadoPartida, Lado, Partida, Valor
 
@@ -182,12 +183,12 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
                 nota=nota,
             ),
         )
-        grupo.monto += int(valores.get("amount") or 0)
+        grupo.monto += _entero(valores.get("amount"))
         if "retencion" in valores:
             # Solo cuenta como reportada si la fila trae la clave: el XLSX real no tiene
             # columna de retención, y "no reportada" no puede convertirse en un 0 que
             # después discrepe contra el certificado.
-            grupo.retencion = (grupo.retencion or 0) + int(valores.get("retencion") or 0)
+            grupo.retencion = (grupo.retencion or 0) + _entero(valores.get("retencion"))
         if codigo and codigo not in grupo.codigos:
             grupo.codigos.append(codigo)
         if fila.source:
@@ -227,6 +228,17 @@ def _renglones(valores: dict[str, object]) -> set[int]:
     if isinstance(en_fila, list) and en_fila:
         return {int(n) for n in en_fila}
     return {int(n) for n in _RENGLON_RE.findall(str(valores.get("suggested_use") or ""))}
+
+
+def _entero(valor: object) -> int:
+    """Los montos de una lectura ya vienen como int y pasan tal cual; cualquier otra cosa
+    (un float o un texto que se coló) cierra por `dinero.pesos`, el ÚNICO punto de redondeo
+    del sistema — un `int()` acá truncaría en vez de redondear."""
+    if valor is None or valor == "":
+        return 0
+    if isinstance(valor, int):
+        return valor
+    return pesos(valor)
 
 
 def _nit(valor: object) -> str:
@@ -406,7 +418,12 @@ def _incorporar_clave(
 
 def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Valor | None:
     """Lo que el documento afirma para esta clave, o None si no trae sus campos."""
-    campos = {f.name: f for f in documento.fields}
+    campos: dict[str, ExtractedField] = {}
+    for campo in documento.fields:
+        # Primero gana, igual que `DocumentReading.field()`: con un nombre repetido, un
+        # dict comprehension se queda con el ÚLTIMO y el monto saldría de un campo
+        # distinto del que cualquier otro consumidor de la lectura ve.
+        campos.setdefault(campo.name, campo)
     presentes = [campos[n] for n in clave.campos_monto if n in campos]
     if not presentes:
         return None
@@ -415,9 +432,9 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
     celdas = [c.source for c in usados if c.source]
     confianzas = [c.confidence for c in usados]
     return Valor(
-        monto=sum(int(c.value or 0) for c in presentes),
+        monto=sum(_entero(c.value) for c in presentes),
         # None cuando la lectura no trae el campo: este lado no afirma ninguna retención.
-        retencion=int(retencion.value or 0) if retencion is not None else None,
+        retencion=_entero(retencion.value) if retencion is not None else None,
         lado=Lado.DOCUMENTO,
         # La procedencia viene de la lectura (`ExtractedField.source`/`.confidence`). La
         # confianza del agregado es la mínima de los campos usados: la suma no es más

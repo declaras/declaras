@@ -355,6 +355,19 @@ def test_dos_documentos_del_mismo_tercero_se_suman_sin_importar_el_orden():
     assert p.estado == EstadoPartida.COINCIDE
 
 
+def test_con_campos_repetidos_gana_el_primero_como_en_field():
+    """`DocumentReading.field()` devuelve el PRIMER campo con ese nombre; el conciliador
+    tiene que leer el mismo, o el NIT saldría de un campo y el monto de otro."""
+    campos = [("empleador_nit", "900111222"), ("empleador_nombre", "ACME SAS"),
+              ("salarios", 85_000_000), ("salarios", 1_000_000), ("retencion", 0)]
+    doc = DocumentReading(
+        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="9" * 64,
+        fields=[ExtractedField(name=k, value=v) for k, v in campos],
+    )
+    [p] = incorporar([], doc)
+    assert p.version_documento.monto == 85_000_000
+
+
 def test_sin_retencion_reportada_por_la_dian_no_hay_discrepancia_falsa():
     """El XLSX real no tiene columna de retención, así que el lado DIAN no la reporta.
     "No reportada" no es "cero": comparar 0 contra la retención real del 220 mandaba a
