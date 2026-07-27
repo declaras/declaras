@@ -192,13 +192,19 @@ _NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/
 # DEUDA ANOTADA, 7 mensajes: los validadores de pydantic del punto 3. El de `caso/modelos.py`
 # espera a la T5/T6, cuando el conciliador exponga el Caso por la API.
 #
-# Los 6 de `extraccion/f220.py` ya no son de cara al usuario: con la frontera del punto 2 puesta,
-# su unica audiencia son el log y quien programa (es el contrato que fijan sus 28 pruebas). Se
-# les corrigio igual el punto final y la mayuscula que les faltaban, porque terminan en un log
-# que lee una persona, pero se quedan fuera de esta comprobacion a proposito: uno dice
-# `stop_reason=refusal`, que es exactamente lo que hay que ver al depurar y exactamente lo que
-# esta comprobacion prohibe. Angostar la exclusion hasta ahi seria pedirle prosa de usuario a un
-# mensaje que ningun usuario ve.
+# Los mensajes de `extraccion/` (el 220 en `f220.py`, y la mecanica compartida —el pre-flight, la
+# respuesta sin salida estructurada, el ano gravable— en `_base.py`) ya no son de cara al usuario:
+# con la frontera del punto 2 puesta, su unica audiencia son el log y quien programa (es el
+# contrato que fijan las 28 pruebas del 220). Se les corrigio igual el punto final y la mayuscula
+# que les faltaban, porque terminan en un log que lee una persona, pero se quedan fuera de esta
+# comprobacion a proposito, y hoy por DOS razones: uno dice `stop_reason=refusal` y otro nombra el
+# campo `anio_gravable` que le falta al esquema, que es exactamente lo que hay que ver al depurar
+# y exactamente lo que esta comprobacion prohibe. Angostar la exclusion hasta ahi seria pedirle
+# prosa de usuario a un mensaje que ningun usuario ve.
+#
+# Ademas rendiria poco: la regex de abajo solo ve el mensaje cuando es el PRIMER argumento del
+# `raise`, y en `extraccion/` va detras del motivo (`Extraccion220InvalidaError(Motivo220.X, "…")`),
+# asi que quitar el prefijo dejaria expuesto un mensaje de los tres, no los tres.
 _NUCLEO_DE_CALCULO = ("motor/", "optimizador/", "parametros/", "render/", "caso/", "extraccion/")
 
 
