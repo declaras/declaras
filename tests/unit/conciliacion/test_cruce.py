@@ -241,6 +241,23 @@ def test_la_marca_de_ajena_no_vive_en_la_nota():
     assert p.estado == EstadoPartida.SOLO_DIAN
 
 
+def test_con_dos_gemelas_ajenas_el_certificado_no_elige_por_orden():
+    """La gemela ajena solo se toma si es la ÚNICA: con dos, pegarse a la primera del
+    XLSX es salida dependiente del orden. El certificado nace aparte, anotado, y las
+    ajenas quedan intactas."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999"),
+                              _fila("901999888", "5001", 7_000_000, reportado_a="88888")))
+    resultado = incorporar(partidas, _cert_220("901999888", 9_000_000))
+    invertido = incorporar(list(reversed(partidas)), _cert_220("901999888", 9_000_000))
+    assert len(resultado) == 3
+    [nueva] = [p for p in resultado if p.estado == EstadoPartida.SOLO_DOCUMENTO]
+    assert nueva.version_documento.monto == 9_000_000
+    assert "a mano" in (nueva.nota or "")
+    assert all(p.version_documento is None for p in resultado if p.reportado_a is not None)
+    [nueva_inv] = [p for p in invertido if p.estado == EstadoPartida.SOLO_DOCUMENTO]
+    assert nueva_inv == nueva  # el desenlace no depende del orden del XLSX
+
+
 def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
     """La fila de la DIAN es de un tercero ajeno y el certificado es del titular: restar
     esos dos números no mide ninguna discrepancia real."""

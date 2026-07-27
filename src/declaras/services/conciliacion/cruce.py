@@ -42,6 +42,10 @@ _NOTA_RETENCION_AMBIGUA = (
 _NOTA_VERSIONES_RIVALES = (
     "llegaron dos certificados distintos del mismo empleador; hay que decidir cuál rige"
 )
+_NOTA_AJENAS_MULTIPLES = (
+    "el tercero tiene varias filas reportadas a otras personas; "
+    "el certificado queda aparte para cruzarlo a mano"
+)
 
 # R132 del formulario 210: "Retenciones año gravable a declarar". Es el renglón con que la
 # columna "Uso declaración Sugerida" marca las filas que son retención practicada, no ingreso.
@@ -409,9 +413,10 @@ def _incorporar_clave(
         )
         return [*partidas, suelta]
 
-    objetivo = _indice_emparejable(partidas, nit, clave.concepto)
+    objetivo, gemelas_ajenas = _indice_emparejable(partidas, nit, clave.concepto)
     if objetivo is None:
-        # La DIAN no conoce este hecho (todavía): el documento es la única versión.
+        # La DIAN no conoce este hecho (todavía), o solo tiene filas ajenas ambiguas:
+        # el documento es la única versión y nace como su propia partida.
         nueva = Partida(
             id=f"{nit}:{clave.concepto}",
             nit_tercero=nit,
@@ -420,6 +425,7 @@ def _incorporar_clave(
             version_documento=version,
             versiones_documento={sha: version},
             estado=EstadoPartida.SOLO_DOCUMENTO,
+            nota=_NOTA_AJENAS_MULTIPLES if gemelas_ajenas > 1 else None,
         )
         return [*partidas, nueva]
 
@@ -458,27 +464,27 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
     )
 
 
-def _indice_emparejable(partidas: list[Partida], nit: str, concepto: Concepto) -> int | None:
-    """Contra qué partida cruza el documento, prefiriendo la reportada al titular.
+def _indice_emparejable(
+    partidas: list[Partida], nit: str, concepto: Concepto
+) -> tuple[int | None, int]:
+    """Contra qué partida cruza el documento, y cuántas gemelas ajenas se vieron.
 
     La del titular se encuentra por su id exacto (`nit:concepto`). Una gemela ajena del
     mismo tercero y concepto tiene OTRO id (lleva a quién se lo reportaron), así que se
-    busca por estructura, y solo se toma si es la única: el certificado queda a la vista
-    en vez de perderse en silencio.
+    busca por estructura, y solo se toma si es la ÚNICA — con dos o más, elegir una sería
+    salida dependiente del orden del XLSX: no se empareja ninguna (índice None) y el
+    llamador abre la partida del documento aparte, anotada, para que una persona decida.
     """
     id_titular = f"{nit}:{concepto}"
-    ajena: int | None = None
+    ajenas: list[int] = []
     for i, partida in enumerate(partidas):
         if partida.id == id_titular:
-            return i
-        if (
-            ajena is None
-            and _es_ajena(partida)
-            and partida.nit_tercero == nit
-            and partida.concepto is concepto
-        ):
-            ajena = i
-    return ajena
+            return i, 0
+        if _es_ajena(partida) and partida.nit_tercero == nit and partida.concepto is concepto:
+            ajenas.append(i)
+    if len(ajenas) == 1:
+        return ajenas[0], 1
+    return None, len(ajenas)
 
 
 def _es_ajena(partida: Partida) -> bool:
