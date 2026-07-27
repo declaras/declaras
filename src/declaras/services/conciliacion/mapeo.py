@@ -52,6 +52,7 @@ DIVIDENDOS_SIN_DESAGREGAR = "DIVIDENDOS_SIN_DESAGREGAR"
 RETENCION_SIN_INGRESO = "RETENCION_SIN_INGRESO"
 INGRESO_LLEVADO_A_MANO = "INGRESO_LLEVADO_A_MANO"
 RETENCION_DESPLAZADA = "RETENCION_DESPLAZADA"
+POSIBLE_DOBLE_CONTEO = "POSIBLE_DOBLE_CONTEO"
 
 # Orden de ensamble por tercero. También es la prioridad con que la retención explícita
 # (las filas R132 del tercero) se asigna a UN ingreso: el laboral primero.
@@ -157,9 +158,46 @@ def _ensamblar(partidas: list[Partida]) -> _Ensamble:
                 "hecho: no se sabe a qué renglón del 210 iría su valor."
             )
         grupos.setdefault(_tercero(p), []).append(p)
+    _avisar_posible_doble_conteo(ensamble, grupos)
     for del_tercero in grupos.values():
         _ensamblar_tercero(ensamble, del_tercero)
     return ensamble
+
+
+def _avisar_posible_doble_conteo(
+    ensamble: _Ensamble, grupos: dict[str, list[Partida]]
+) -> None:
+    """I6 de la ronda 2: la suelta sin NIT y la conciliada del mismo empleador pueden ser
+    la misma plata (forma aceptada en T4), y si una persona resuelve LAS DOS con hecho
+    entran como dos hechos — ingresos Y retención dobles. El ensamble no puede saberlo
+    con certeza (ids distintos, nada las liga), pero es el único punto donde se ven todas
+    las resueltas juntas: mismo concepto + misma cifra + mismo nombre, una con NIT y otra
+    sin, es la heurística barata que lo delata. La salida documentada es
+    CERRAR_SIN_SOPORTE sobre la suelta, que apaga este aviso.
+    """
+    hechos = [p for grupo in grupos.values() for p in grupo]
+    sueltas = [p for p in hechos if not p.nit_tercero]
+    identificadas = [p for p in hechos if p.nit_tercero]
+    for suelta in sueltas:
+        for identificada in identificadas:
+            mismo_nombre = (
+                suelta.nombre_tercero and identificada.nombre_tercero
+                and suelta.nombre_tercero.casefold()
+                == identificada.nombre_tercero.casefold()
+            )
+            if (suelta.concepto is identificada.concepto and mismo_nombre
+                    and _resuelta(suelta).valor == _resuelta(identificada).valor):
+                ensamble.avisos.append(Flag(
+                    codigo=POSIBLE_DOBLE_CONTEO,
+                    mensaje=(
+                        f"Las partidas {suelta.id} y {identificada.id} entraron las "
+                        f"dos al caso con el mismo concepto, el mismo nombre "
+                        f"({identificada.nombre_tercero}) y la misma cifra "
+                        f"({_resuelta(identificada).valor:,} pesos): pueden ser el "
+                        "mismo hecho contado dos veces. Si lo son, cerrar la suelta "
+                        "sin NIT con CERRAR_SIN_SOPORTE."
+                    ),
+                ))
 
 
 def _tercero(p: Partida) -> str:

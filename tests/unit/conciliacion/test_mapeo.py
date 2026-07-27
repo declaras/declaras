@@ -474,3 +474,63 @@ def test_la_retencion_explicita_igual_a_la_certificada_no_avisa():
     16M/8M de la herencia, donde las dos fuentes dicen 8M)."""
     partidas = _partidas_laborales_completas()
     assert not any(f.codigo == "RETENCION_DESPLAZADA" for f in avisos(partidas))
+
+
+def test_la_suelta_sin_nit_resuelta_junto_a_la_conciliada_avisa_doble_conteo():
+    """I6 de la ronda 2 (el dato que faltaba en el concern 4): si una persona resuelve
+    con hecho la suelta sin NIT Y la conciliada del mismo empleador, entran 170M donde
+    hay 85M — y también SE DOBLA LA RETENCIÓN (los mismos 16M blindados por el otro
+    camino, entrando por este). El ensamble es el único punto donde se ven todas las
+    resueltas juntas: mismo concepto + misma cifra + mismo nombre, una con NIT y otra
+    sin, deja aviso."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "c", nit="", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "d", aportes_salud=0, aportes_pension=0))
+    partidas = autorresolver(partidas)
+    partidas = [
+        p if p.resolucion is not None
+        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
+                      quien="contador@x.co")  # el error humano que el aviso ataja
+        for p in partidas
+    ]
+    [aviso] = [f for f in avisos(partidas) if f.codigo == "POSIBLE_DOBLE_CONTEO"]
+    assert "sin-nit:CERT_INGRESOS_220:SALARIOS" in aviso.mensaje
+    assert "900111222:SALARIOS" in aviso.mensaje
+    assert "85,000,000" in aviso.mensaje
+
+
+def test_cifras_distintas_no_disparan_el_aviso_de_doble_conteo():
+    """La heurística es barata a propósito: con cifras distintas no afirma nada."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "c", nit="", salarios=60_000_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "d", aportes_salud=0, aportes_pension=0))
+    partidas = autorresolver(partidas)
+    partidas = [
+        p if p.resolucion is not None
+        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
+                      quien="contador@x.co")
+        for p in partidas
+    ]
+    assert not any(f.codigo == "POSIBLE_DOBLE_CONTEO" for f in avisos(partidas))
+
+
+def test_la_suelta_cerrada_sin_soporte_no_dispara_el_aviso():
+    """La salida documentada (CERRAR_SIN_SOPORTE sobre la suelta) apaga la heurística:
+    la suelta ya no aporta hecho y no hay doble conteo que avisar."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "c", nit="", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "d", aportes_salud=0, aportes_pension=0))
+    partidas = autorresolver(partidas)
+    partidas = [
+        p if p.resolucion is not None
+        else resolver(p, Decision.CERRAR_SIN_SOPORTE,
+                      motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+        for p in partidas
+    ]
+    assert not any(f.codigo == "POSIBLE_DOBLE_CONTEO" for f in avisos(partidas))
