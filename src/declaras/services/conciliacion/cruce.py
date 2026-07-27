@@ -147,15 +147,17 @@ class _Grupo:
         contrato no contempla extienden el id en vez de colisionar con él.
 
         ESTABILIDAD, para quien persista resoluciones (T5): el id extendido es estable al
-        re-parsear el MISMO archivo, pero hay dos condiciones —medidas, no teóricas— en
+        re-parsear el MISMO archivo, pero hay tres condiciones —medidas, no teóricas— en
         que cambia entre consultas: (1) un tercero sin NIT ni nombre cae a la fila de
         origen (`fila:...`), y si la DIAN republica el reporte con una fila insertada más
-        arriba, el id se corre; (2) una ajena por nombre lleva el nombre en el sufijo
-        (`:reportado-a:...`), y si el tercero lo escribe distinto en la siguiente
-        republicación, el id cambia. En ambos casos una `Resolucion` anclada a
-        `partida.id` vía `Fuente.conciliacion` queda huérfana EN SILENCIO. Es una decisión
-        de diseño asumida: el `refrescar` de T5 debe tratar la resolución cuyo id ya no
-        existe como pendiente de nuevo, no como resuelta.
+        arriba, el id se corre; (2) un tercero sin NIT cae a su nombre (`nombre:...`,
+        `_ref_tercero`), que es texto libre del XLSX: `nombre:ACME S.A.S.` y
+        `nombre:ACME SAS` son dos ids para el mismo tercero si lo escriben distinto en la
+        siguiente republicación; (3) una ajena por nombre lleva el nombre en el sufijo
+        (`:reportado-a:...`), con la misma fragilidad. En todos los casos una `Resolucion`
+        anclada a `partida.id` vía `Fuente.conciliacion` queda huérfana EN SILENCIO. Es
+        una decisión de diseño asumida: el `refrescar` de T5 debe tratar la resolución
+        cuyo id ya no existe como pendiente de nuevo, no como resuelta.
         """
         base = f"{self.ref}:{self.clave}"
         if self.reportado_a is not None:
