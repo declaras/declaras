@@ -80,6 +80,15 @@ class Partida(_Modelo):
     `extra="forbid"` — acepta claves que no existen en el modelo y las descarta del
     `model_dump()` sin error. Un `update={"resolucion": r}` escrito ANTES de que el campo
     exista no revienta: pierde la resolución en silencio. Agregar el campo primero.
+
+    SIN VALIDADORES DE COHERENCIA entre campos, medido en el cierre de T4: pydantic
+    acepta estados que `abrir`/`incorporar` nunca producen — un COINCIDE sin versiones,
+    una ajena con las dos versiones adjuntas, un `version_que_rige` que no está en
+    `versiones_documento`. Son inalcanzables por el cruce pero SÍ construibles a mano, y
+    las fábricas de la tarea siguiente construyen partidas a mano: el único guard que
+    existe es `reportado_a` → diferencias 0 (una property, no un validador). Quien
+    escriba esas fábricas decide si endurecer esto con `model_validator`; hasta entonces,
+    la coherencia la garantiza construir SOLO vía `abrir`/`incorporar`.
     """
 
     # Estable: f"{nit}:{concepto}" para conceptos conocidos. Es la referencia con que una
