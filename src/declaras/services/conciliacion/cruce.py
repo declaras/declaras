@@ -150,7 +150,19 @@ class _Grupo:
     @property
     def id(self) -> str:
         """`nit:concepto` en el caso normal (contrato del plan); las variantes que el
-        contrato no contempla extienden el id en vez de colisionar con él."""
+        contrato no contempla extienden el id en vez de colisionar con él.
+
+        ESTABILIDAD, para quien persista resoluciones (T5): el id extendido es estable al
+        re-parsear el MISMO archivo, pero hay dos condiciones —medidas, no teóricas— en
+        que cambia entre consultas: (1) un tercero sin NIT ni nombre cae a la fila de
+        origen (`fila:...`), y si la DIAN republica el reporte con una fila insertada más
+        arriba, el id se corre; (2) una ajena por nombre lleva el nombre en el sufijo
+        (`:reportado-a:...`), y si el tercero lo escribe distinto en la siguiente
+        republicación, el id cambia. En ambos casos una `Resolucion` anclada a
+        `partida.id` vía `Fuente.conciliacion` queda huérfana EN SILENCIO. Es una decisión
+        de diseño asumida: el `refrescar` de T5 debe tratar la resolución cuyo id ya no
+        existe como pendiente de nuevo, no como resuelta.
+        """
         base = f"{self.ref}:{self.clave}"
         if self.reportado_a is not None:
             return f"{base}:reportado-a:{self.reportado_a}"

@@ -437,6 +437,16 @@ def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monk
     assert p.nota is None
 
 
+def test_los_montos_no_enteros_cierran_por_pesos_no_por_truncamiento():
+    """Única mutación que sobrevivió a la ronda 1: int(float(...)) pasaba toda la suite.
+    El único punto de redondeo del sistema es dinero.pesos (half-up): 1500.5 sube a 1501,
+    un int() lo truncaría a 1500. Se fija en los dos lados."""
+    [dian] = abrir(_exogena(_fila("900111222", "5001", 1_500.5)))
+    assert dian.version_dian.monto == 1_501
+    [doc] = incorporar([], _cert_220("900111222", 1_500.5))
+    assert doc.version_documento.monto == 1_501
+
+
 def test_con_campos_repetidos_gana_el_primero_como_en_field():
     """`DocumentReading.field()` devuelve el PRIMER campo con ese nombre; el conciliador
     tiene que leer el mismo, o el NIT saldría de un campo y el monto de otro."""
