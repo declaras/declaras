@@ -125,9 +125,23 @@ def autorresolver(partidas: list[Partida]) -> list[Partida]:
     NotImplementedError Y escondía la partida de la cola (resuelta = no pendiente) — el
     contador no tenía dónde verla ni cómo sacarla. Queda pendiente, visible, y la salida
     es suya: LLEVAR_A_MANO (o USAR_OTRO/USAR_DIAN si insiste, que revientan honesto).
+
+    Una provisional RANCIA se descarta antes de decidir (C1 de la ronda de fixes 2):
+    por el camino incremental (`incorporar` de a un documento) la partida cambia de
+    cifras y de estado con la resolución ARRASTRADA en el `model_copy` — la provisional
+    USAR_DIAN de 87.4M seguía pegada a una DISCREPANCIA contra un 220 de 85M, `a_caso`
+    declaraba la cifra vieja y la discrepancia jamás llegaba a la cola (cero pendientes,
+    cero avisos). La detección es la que ya existe para el contador: la huella. La
+    vigente (huella intacta) no se toca — descartarla y recrearla cambiaría `cuando`
+    sin que nada haya cambiado. Una decisión de CONTADOR nunca se descarta acá: eso es
+    de `refrescar`, que la invalida CON la nota de valores cambiados.
     """
     resueltas: list[Partida] = []
     for p in partidas:
+        if (p.resolucion is not None
+                and p.resolucion.origen is Origen.SISTEMA
+                and p.resolucion.huella != _huella(p)):
+            p = p.model_copy(update={"resolucion": None})
         if (p.resolucion is not None or p.reportado_a is not None
                 or p.concepto in CONCEPTOS_FUERA_DEL_MOTOR):
             resueltas.append(p)
@@ -186,9 +200,15 @@ def refrescar(nuevas: list[Partida], guardadas: list[Partida]) -> list[Partida]:
         elif anterior.huella == _huella(nueva):
             resultado.append(nueva.model_copy(update={"resolucion": anterior}))
         else:
-            resultado.append(nueva.model_copy(
-                update={"nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON)}
-            ))
+            # `resolucion: None` explícito (C1 de la ronda de fixes 2): `nuevas` no
+            # siempre llega fresca — la lista incremental trae la decisión del contador
+            # ARRASTRADA por `incorporar` sobre cifras nuevas, y sin esto la rama ponía
+            # la nota pero dejaba la resolución rancia pegada (resuelta con el valor
+            # viejo y fuera de la cola).
+            resultado.append(nueva.model_copy(update={
+                "resolucion": None,
+                "nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON),
+            }))
     return autorresolver(resultado)
 
 

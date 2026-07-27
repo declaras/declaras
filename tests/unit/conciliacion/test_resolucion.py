@@ -459,3 +459,62 @@ def test_autorresolver_tampoco_cierra_un_coincide_fuera_del_motor():
         update={"concepto": Concepto.HONORARIOS})
     [p] = autorresolver([disfrazada])
     assert p.resolucion is None
+
+
+# ─────────── ronda de fixes 2: C1 — la provisional rancia del camino incremental ───────────
+
+
+def test_incorporar_despues_de_la_provisional_no_esconde_la_discrepancia():
+    """C1: el camino incremental (el documentado como normal: los documentos llegan de a
+    uno) dejaba la provisional USAR_DIAN pegada a una partida que ya era DISCREPANCIA —
+    `incorporar` arrastra `resolucion` en el model_copy y `autorresolver` la salteaba.
+    Declaraba 87.4M que ningún certificado respalda, perdía 8M de retención y la
+    discrepancia — la razón de existir del producto — jamás llegaba al contador."""
+    partidas = autorresolver(abrir(_exogena(_fila("900111222", "5001", 87_400_000))))
+    assert partidas[0].resolucion is not None  # la provisional del preliminar
+    partidas = incorporar(partidas, _cert_220("900111222", 85_000_000,
+                                              retencion=8_000_000))
+    assert partidas[0].estado is EstadoPartida.DISCREPANCIA
+    resueltas = autorresolver(partidas)
+    assert resueltas[0].resolucion is None  # la provisional rancia se descarta
+    assert pendientes(resueltas) == resueltas  # y la discrepancia SÍ llega a la cola
+
+
+def test_la_provisional_rancia_se_reemplaza_si_el_documento_confirma():
+    """El mismo camino cuando el 220 llega confirmando: la provisional USAR_DIAN se
+    descarta por rancia y el automatismo cierra con el documento, como en el camino
+    por lotes."""
+    partidas = autorresolver(abrir(_exogena(_fila("900111222", "5001", 85_000_000))))
+    partidas = incorporar(partidas, _cert_220("900111222", 85_000_000))
+    [p] = autorresolver(partidas)
+    assert p.resolucion is not None
+    assert p.resolucion.decision is Decision.USAR_DOCUMENTO
+    assert p.resolucion.motivo is Motivo.COINCIDEN
+
+
+def test_autorresolver_no_descarta_la_provisional_vigente():
+    """La provisional cuya huella sigue coincidiendo NO se toca: descartarla y
+    recrearla en cada corrida cambiaría `cuando` sin que nada haya cambiado."""
+    [p] = autorresolver(abrir(_exogena(_fila("900111222", "5001", 87_400_000))))
+    [otra_vez] = autorresolver([p])
+    assert otra_vez.resolucion == p.resolucion
+
+
+def test_refrescar_le_quita_la_resolucion_pegada_a_una_nueva_invalidada():
+    """C1, la otra mitad: `refrescar` asumía `nuevas` frescas (sin resolución). Si le
+    llega la lista incremental — con la decisión del CONTADOR arrastrada por
+    `incorporar` sobre cifras nuevas — la rama de invalidación ponía la nota pero
+    dejaba la resolución rancia pegada: resuelta con el valor viejo y fuera de la cola."""
+    from declaras.services.conciliacion import NOTA_VALORES_CAMBIARON
+
+    base = incorporar(abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
+                      _cert_220_bis("a"), tolerancia_pesos=0)
+    guardadas = [resolver(base[0], Decision.USAR_DOCUMENTO,
+                          motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
+    # llega un rival con OTRAS cifras por el camino incremental: la resolución viaja pegada
+    incrementales = incorporar(guardadas, _cert_220_bis("b", salarios=86_000_000),
+                               tolerancia_pesos=0)
+    assert incrementales[0].resolucion is not None  # el arrastre que C1 documenta
+    [p] = refrescar(incrementales, guardadas)
+    assert p.resolucion is None  # pendiente de verdad, no "resuelta con nota"
+    assert NOTA_VALORES_CAMBIARON in (p.nota or "")
