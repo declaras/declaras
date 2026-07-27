@@ -350,6 +350,7 @@ def _partida_dian(grupo: _Grupo) -> Partida:
             monto=grupo.monto,
             retencion=grupo.retencion,
             lado=Lado.DIAN,
+            tercero=grupo.nombre or None,
             celda=", ".join(dict.fromkeys(grupo.celdas)) or None,
             # El lector de exógena es determinístico: leyó celdas, no estimó.
             confianza=1.0,
@@ -488,6 +489,9 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
         # None cuando la lectura no trae el campo: este lado no afirma ninguna retención.
         retencion=_entero(retencion.value) if retencion is not None else None,
         lado=Lado.DOCUMENTO,
+        # El nombre del tercero según ESTE documento: sin NIT es el único dato con que el
+        # contador distingue "mismo certificado repetido" de "dos terceros distintos".
+        tercero=str(documento.field(clave.campo_nombre) or "").strip() or None,
         # La procedencia viene de la lectura (`ExtractedField.source`/`.confidence`). La
         # confianza del agregado es la mínima de los campos usados: la suma no es más
         # confiable que su peor sumando.
@@ -601,6 +605,12 @@ def _emparejar(
         "version_documento": publicada,
         "version_que_rige": version_que_rige,
     }
+    if sin_nit and publicada.tercero:
+        # La partida sin NIT se presenta con el nombre de la versión publicada: mostrar el
+        # nombre del primer documento junto a la cifra del último ("ACME — 30M" cuando el
+        # certificado de ACME dice 50M) le quitaba al contador el único dato con que
+        # decide si los rivales son el mismo certificado o dos terceros distintos.
+        adjuntos["nombre_tercero"] = publicada.tercero
     # El aviso de rivales anterior se quita antes de sumar el vigente: el número cambió.
     # (Una partida ajena nunca llega acá: `_indice_emparejable` no la devuelve como
     # objetivo — el certificado abre su propia partida y la ajena guarda la marca.)
@@ -698,10 +708,13 @@ def _agregado(versiones: dict[str, Valor]) -> Valor:
     retenciones = [v.retencion for v in valores if v.retencion is not None]
     confianzas = [v.confianza for v in valores if v.confianza is not None]
     celdas = sorted({v.celda for v in valores if v.celda})
+    terceros = {v.tercero for v in valores if v.tercero}
     return Valor(
         monto=sum(v.monto for v in valores),
         retencion=sum(retenciones) if retenciones else None,
         lado=Lado.DOCUMENTO,
+        # El nombre solo se afirma si TODOS los sumandos lo afirman igual.
+        tercero=next(iter(terceros)) if len(terceros) == 1 else None,
         celda=", ".join(celdas) or None,
         confianza=min(confianzas) if confianzas else None,
     )

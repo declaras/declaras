@@ -512,9 +512,10 @@ def test_mezcla_sin_nit_y_luego_con_nit_no_confirma_la_suelta_en_silencio():
     assert "no se pudo cruzar" in (suelta.nota or "")
 
 
-def _cert_220_completo(sha: str, *, nit="900111222", salarios=85_000_000, retencion=0,
-                       aportes_salud=3_400_000, aportes_pension=3_600_000) -> DocumentReading:
-    campos = {"empleador_nit": nit, "empleador_nombre": "ACME SAS",
+def _cert_220_completo(sha: str, *, nit="900111222", nombre="ACME SAS", salarios=85_000_000,
+                       retencion=0, aportes_salud=3_400_000,
+                       aportes_pension=3_600_000) -> DocumentReading:
+    campos = {"empleador_nit": nit, "empleador_nombre": nombre,
               "salarios": salarios, "retencion": retencion,
               "aportes_salud": aportes_salud, "aportes_pension": aportes_pension}
     if not nit:
@@ -690,6 +691,24 @@ def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monk
     assert p.version_documento.monto == 70_000_000
     assert p.estado == EstadoPartida.COINCIDE
     assert p.nota is None
+
+
+def test_sin_nit_cada_version_lleva_su_nombre_y_la_partida_muestra_el_publicado():
+    """El ruling de F1 le pide al contador decidir 'mismo certificado repetido o dos
+    terceros distintos' — y el nombre del tercero es el único dato con que puede
+    decidirlo. La partida mostraba el nombre del PRIMER documento con la cifra del
+    último ('ACME S.A.S. — 30.000.000' cuando el certificado de ACME dice 50M, y BETA
+    LTDA no aparecía en ninguna parte). El nombre viaja POR VERSIÓN (`Valor.tercero`) y
+    la partida se presenta con el de la versión publicada."""
+    a = _cert_220_completo("a", nit="", nombre="ACME S.A.S.", salarios=50_000_000,
+                           aportes_salud=0, aportes_pension=0)
+    b = _cert_220_completo("b", nit="", nombre="BETA LTDA", salarios=30_000_000,
+                           aportes_salud=0, aportes_pension=0)
+    [p] = incorporar(incorporar([], a), b)
+    assert p.versiones_documento["a" * 12].tercero == "ACME S.A.S."
+    assert p.versiones_documento["b" * 12].tercero == "BETA LTDA"
+    assert p.version_documento.monto == 30_000_000
+    assert p.nombre_tercero == "BETA LTDA"  # el nombre acompaña a la cifra publicada
 
 
 def test_un_tipo_acumulable_sin_nit_no_suma_documentos(monkeypatch):

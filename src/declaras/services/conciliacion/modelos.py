@@ -57,6 +57,12 @@ class Valor(_Modelo):
     # lector. Un agente futuro no debe "corregirla" de vuelta a `int`.
     retencion: int | None
     lado: Lado
+    # El nombre del tercero tal como ESTE lado lo afirma (None si no lo trae). En el
+    # camino sin NIT es el único dato con que el contador puede decidir si dos versiones
+    # rivales son el mismo certificado repetido o dos terceros distintos (ruling de F1):
+    # por eso viaja POR VERSIÓN y no solo en `Partida.nombre_tercero`, que muestra el de
+    # la versión publicada. En un agregado: el nombre común, o None si difieren.
+    tercero: str | None = None
     # Celda del XLSX o fragmento del documento que respalda el valor (el `source` de la
     # lectura). Es lo que después se traduce a `Fuente.celda` cuando el hecho entra al caso.
     celda: str | None = None
