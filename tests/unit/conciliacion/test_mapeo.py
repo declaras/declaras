@@ -298,7 +298,9 @@ def test_usar_otro_entra_con_el_valor_del_contador_y_sin_procedencia_prestada():
     assert lab.salarios == 86_000_000
     assert lab.fuente.celda is None  # el número no salió de ninguna celda
     assert lab.fuente.confianza is None
-    assert lab.retencion == 0  # ninguna versión fue escogida; la vía es la partida RETENCION
+    # Las dos versiones afirman retención 0: la recuperación de C2 (caer a la afirmación
+    # que exista cuando la escogida no afirma) devuelve ese 0 afirmado, no un default.
+    assert lab.retencion == 0
 
 
 def test_las_sueltas_sin_nit_del_mismo_documento_se_ensamblan_juntas():
@@ -354,3 +356,50 @@ def test_el_aviso_de_llevada_a_mano_dice_las_dos_cifras_si_difieren():
     [aviso] = avisos([p])
     assert "10,000,000" in aviso.mensaje
     assert "9,000,000" in aviso.mensaje
+
+
+# ─────────── ronda de fixes 2: C2 — la retención certificada no se tira ───────────
+
+
+def _partida_usar_dian_con_retencion_solo_en_el_220():
+    """El escenario C2: exógena real (sin columna de retención → el lado DIAN no la
+    afirma), 220 con retención certificada, empleador SIN fila R132."""
+    fila = _fila("900111222", "5001", 87_400_000)
+    del fila["retencion"]
+    partidas = incorporar(abrir(_exogena(fila)),
+                          _cert_220("900111222", 85_000_000, retencion=8_000_000),
+                          tolerancia_pesos=0)
+    return partidas[0]
+
+
+def test_usar_dian_no_tira_la_retencion_que_solo_el_220_certifica():
+    """C2: la decisión del contador es sobre el MONTO; la retención ni siquiera está en
+    disputa (un lado no la reporta → diferencia 0 por diseño de T4). Elegir USAR_DIAN
+    con ERROR_DEL_CERTIFICADO — el uso natural del motivo — declaraba retención 0: None
+    NO es 0 (la invariante de T4 con nombre y apellido), y la única afirmación que
+    existe es la del 220. Sigue rigiendo UNA fuente, no una suma."""
+    p = resolver(_partida_usar_dian_con_retencion_solo_en_el_220(), Decision.USAR_DIAN,
+                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    caso = _a_caso([p])
+    assert caso.laborales[0].salarios == 87_400_000  # la decisión del contador, intacta
+    assert caso.laborales[0].retencion == 8_000_000  # la única afirmación que existe
+
+
+def test_usar_otro_tampoco_tira_la_retencion_afirmada():
+    p = resolver(_partida_usar_dian_con_retencion_solo_en_el_220(), Decision.USAR_OTRO,
+                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co",
+                 valor=86_000_000)
+    caso = _a_caso([p])
+    assert caso.laborales[0].retencion == 8_000_000
+
+
+def test_la_retencion_afirmada_en_cero_por_la_version_escogida_sigue_siendo_cero():
+    """El otro lado de la invariante: un 0 AFIRMADO por la versión escogida es una
+    afirmación, no una ausencia — no se va a buscar la de la otra versión."""
+    fila = _fila("900111222", "5001", 87_400_000, retencion=0)  # la DIAN afirma 0
+    partidas = incorporar(abrir(_exogena(fila)),
+                          _cert_220("900111222", 85_000_000, retencion=8_000_000),
+                          tolerancia_pesos=0)
+    p = resolver(partidas[0], Decision.USAR_DIAN,
+                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    assert _a_caso([p]).laborales[0].retencion == 0

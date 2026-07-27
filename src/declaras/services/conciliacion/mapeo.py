@@ -355,12 +355,26 @@ def _version_escogida(p: Partida) -> Valor | None:
 
 
 def _retencion_afirmada(p: Partida) -> int:
-    """La retención que afirma la versión escogida; 0 si no la afirma o no hay versión
-    (con USAR_OTRO la vía para una retención real es resolver la partida RETENCION)."""
-    version = _version_escogida(p)
-    if version is None or version.retencion is None:
-        return 0
-    return version.retencion
+    """La retención que afirma la versión escogida — y si ESA no la afirma, la única
+    afirmación que exista en la partida.
+
+    C2 de la ronda de fixes 2: la decisión del contador es sobre el MONTO. Con la
+    exógena real (sin columna de retención → el lado DIAN no la afirma; None NO es 0,
+    invariante de T4) y un 220 con retención certificada, USAR_DIAN declaraba 0 y el
+    crédito se perdía sin aviso ni partida RETENCION donde recuperarlo. Caer a la
+    afirmación de la otra versión sigue rigiendo UNA fuente (nunca una suma): un 0
+    AFIRMADO por la escogida se respeta tal cual — solo la ausencia (None) cae. El
+    orden del respaldo pone primero el documento: es el certificado que soporta el
+    crédito ante la DIAN, y es también la única opción determinística con USAR_OTRO,
+    donde ninguna versión fue escogida.
+    """
+    escogida = _version_escogida(p)
+    if escogida is not None and escogida.retencion is not None:
+        return escogida.retencion
+    for version in (p.version_documento, p.version_dian):
+        if version is not None and version.retencion is not None:
+            return version.retencion
+    return 0
 
 
 def _mesadas(total: int) -> list[int]:
