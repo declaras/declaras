@@ -250,6 +250,30 @@ def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
     assert p.diferencia_retencion == 0
 
 
+def test_nit_con_puntos_y_dv_cruza_con_el_nit_limpio():
+    """El NIT de la exógena es texto libre del XLSX ("900.111.222-9"); el del 220 llega
+    limpio ("900111222"). Sin normalizar eran dos empleadores y la plata se contaba doble."""
+    partidas = abrir(_exogena(_fila("900.111.222-9", "5001", 87_400_000)))
+    [p] = incorporar(partidas, _cert_220("900111222", 87_400_000))
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.nit_tercero == "900111222"
+    assert p.id == "900111222:SALARIOS"
+
+
+def test_nit_entregado_como_numero_por_openpyxl_se_normaliza():
+    partidas = abrir(_exogena(_fila(900111222.0, "5001", 87_400_000)))
+    [p] = incorporar(partidas, _cert_220("900111222", 87_400_000))
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.id == "900111222:SALARIOS"
+
+
+def test_la_identificacion_reportada_se_compara_normalizada():
+    """"1.234.567" y "1234567" son la misma cédula: no es una fila ajena."""
+    [p] = abrir(_exogena(_fila("900111222", "5001", 5_000_000, reportado_a="1.234.567")))
+    assert p.reportado_a is None
+    assert p.estado == EstadoPartida.SOLO_DIAN
+
+
 def test_el_220_aporta_tambien_los_aportes_obligatorios():
     """`IngresoLaboral` exige `aportes_salud` y `aportes_pension`: si el conciliador los
     deja dentro del documento, T5 solo puede armar el caso con 0 y la deducción se pierde

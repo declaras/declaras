@@ -148,11 +148,11 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
     Varias filas de la misma llave se suman (un tercero reporta el mismo concepto en varias
     filas), y cada grupo nace SOLO_DIAN — o CONCEPTO_DESCONOCIDO si su código no mapea.
     """
-    titular = str(exogena.field("id_number") or "").strip()
+    titular = _nit(exogena.field("id_number"))
     grupos: dict[tuple[str, str, str | None], _Grupo] = {}
     for posicion, fila in enumerate(exogena.rows):
         valores = fila.values
-        nit = str(valores.get("reporter_nit") or "").strip()
+        nit = _nit(valores.get("reporter_nit"))
         nombre = str(valores.get("reporter_name") or "").strip()
         ref = _ref_tercero(nit, nombre, fila.source, posicion)
         codigo = str(valores.get("concept_code") or "").strip()
@@ -229,6 +229,27 @@ def _renglones(valores: dict[str, object]) -> set[int]:
     return {int(n) for n in _RENGLON_RE.findall(str(valores.get("suggested_use") or ""))}
 
 
+def _nit(valor: object) -> str:
+    """Normaliza un NIT o cédula a sus dígitos, sin puntuación ni dígito de verificación.
+
+    La exógena lo trae como texto libre del XLSX ("900.111.222-9", o "900111222.0" cuando
+    openpyxl entrega la celda como número), mientras el del 220 llega validado y limpio:
+    sin normalizar los dos lados, el mismo empleador eran dos partidas y la plata se
+    contaba doble. El DV (un solo dígito tras el guion) no es parte del NIT y se descarta
+    ANTES de la limpieza genérica, que lo habría pegado al final — peor que dejarlo.
+    """
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    texto = str(valor or "").strip()
+    if re.fullmatch(r"\d+\.0+", texto):
+        texto = texto.split(".", 1)[0]
+    if "-" in texto:
+        principal, dv = texto.rsplit("-", 1)
+        if principal.strip() and len(dv.strip()) == 1 and dv.strip().isdigit():
+            texto = principal
+    return re.sub(r"[^0-9A-Za-z]", "", texto)
+
+
 def _ref_tercero(nit: str, nombre: str, fuente: str | None, posicion: int) -> str:
     """Identidad del tercero para la llave y el id, con el NIT como caso normal.
 
@@ -253,7 +274,7 @@ def _reportado_a(titular: str, valores: dict[str, object]) -> tuple[str | None, 
     hechas antes de que existiera o construidas a mano). Sin titular legible no se puede
     afirmar que una fila sea ajena, así que no se marca ninguna.
     """
-    reportado_id = str(valores.get("reported_id_number") or "").strip()
+    reportado_id = _nit(valores.get("reported_id_number"))
     otra_identificacion = bool(titular and reportado_id and reportado_id != titular)
     if "reported_to_titular" in valores:
         if valores["reported_to_titular"]:
@@ -335,7 +356,7 @@ def _incorporar_clave(
     tolerancia_pesos: int,
 ) -> list[Partida]:
     """Cruza UN hecho del documento contra las partidas."""
-    nit = str(documento.field(clave.campo_nit) or "").strip()
+    nit = _nit(documento.field(clave.campo_nit))
     nombre = str(documento.field(clave.campo_nombre) or "").strip()
     # El identificador corto del documento, el mismo con que el expediente lo refiere. Es
     # la llave del aporte en `versiones_documento`: reincorporar el MISMO documento
