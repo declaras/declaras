@@ -262,6 +262,77 @@ class FlagNotFoundError(DeclarasError):
     default_message = "El pendiente solicitado no existe."
 
 
+# ─────────────────────────── Errores de la conciliacion ───────────────────────────
+
+
+class SinReporteDeTercerosError(DeclarasError):
+    """No hay reporte de terceros leido: no hay de donde abrir las partidas.
+
+    Es 409 y no 404: la declaracion existe, lo que falta es el insumo. La accion es
+    consultar la DIAN o subir el archivo, no buscar otra declaracion.
+    """
+
+    code = "SIN_REPORTE_DE_TERCEROS"
+    http_status = 409
+    default_message = (
+        "Todavía no hay un reporte de terceros leído para esta declaración. "
+        "Hay que consultar la DIAN o subir el archivo antes de conciliar."
+    )
+
+
+class PartidaNoEncontradaError(DeclarasError):
+    code = "PARTIDA_NO_ENCONTRADA"
+    http_status = 404
+    default_message = "El renglón que se quiere resolver no existe en esta declaración."
+
+
+class DecisionNoAplicaError(DeclarasError):
+    """La decision no es posible para el estado (o el concepto) de ese renglon.
+
+    Es 409 y no 422: el cuerpo esta bien formado, lo que no encaja es con el estado en que
+    esta el renglon ahora mismo.
+    """
+
+    code = "DECISION_NO_APLICA"
+    http_status = 409
+    default_message = "Esa decisión no se puede tomar sobre este renglón."
+
+
+class PeticionNoEncontradaError(DeclarasError):
+    code = "PETICION_NO_ENCONTRADA"
+    http_status = 404
+    default_message = "El documento que se quiere cerrar no está en la lista de pendientes."
+
+
+class LiquidacionNoDisponibleError(DeclarasError):
+    """Todavia no se puede liquidar: quedan renglones sin decidir, o falta conciliar.
+
+    Nunca se liquida por encima de un renglon sin resolver: esconderia plata, o la
+    inventaria. El mensaje dice QUE falta.
+    """
+
+    code = "LIQUIDACION_NO_DISPONIBLE"
+    http_status = 409
+    default_message = (
+        "Todavía no se puede calcular la declaración: quedan renglones sin decidir."
+    )
+
+
+class LiquidacionBloqueadaError(DeclarasError):
+    """Hay una alerta bloqueante viva: la declaracion se puede ver, pero no darse por buena.
+
+    El caso real: un ingreso que el motor no liquida y que el contador tiene que sumar a
+    mano. Cerrar el borrador con esa alerta viva seria dar por completo un formulario al
+    que le falta un ingreso.
+    """
+
+    code = "LIQUIDACION_BLOQUEADA"
+    http_status = 409
+    default_message = (
+        "Esta declaración tiene alertas que hay que atender antes de darla por lista."
+    )
+
+
 class TaxpayerMismatchError(DeclarasError):
     """Los datos que se intentan vincular pertenecen a otro contribuyente.
 

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from declaras.adapters.dian.factory import build_dian_connector
 from declaras.adapters.persistence.case_repository import SqlCaseRepository, SqlClientRepository
+from declaras.adapters.persistence.conciliacion_repository import SqlConciliacionRepository
 from declaras.adapters.persistence.engine import (
     create_engine,
     create_schema,
@@ -26,6 +27,7 @@ from declaras.domain.case_ports import CaseRepository, ClientRepository
 from declaras.domain.ports import DianConnector, DocumentStore, JobRepository, LoginAttemptGuard
 from declaras.observability import get_logger
 from declaras.services.case_service import CaseService
+from declaras.services.conciliacion_service import ConciliacionRepository, ConciliacionService
 from declaras.services.credential_vault import InMemoryCredentialVault
 from declaras.services.extraction import ExtractionService
 from declaras.services.job_runner import JobRunner
@@ -51,6 +53,8 @@ class Container:
     clients: ClientRepository
     cases: CaseRepository
     case_service: CaseService
+    conciliacion: ConciliacionRepository
+    conciliacion_service: ConciliacionService
 
     @classmethod
     def build(cls, settings: Settings) -> Container:
@@ -80,6 +84,8 @@ class Container:
         case_service = CaseService(
             clients=clients, cases=cases, store=store, reader=document_reader
         )
+        conciliacion = SqlConciliacionRepository(sessions)
+        conciliacion_service = ConciliacionService(cases=cases, conciliacion=conciliacion)
         runner = JobRunner(
             jobs=jobs,
             extraction=extraction,
@@ -102,6 +108,8 @@ class Container:
             clients=clients,
             cases=cases,
             case_service=case_service,
+            conciliacion=conciliacion,
+            conciliacion_service=conciliacion_service,
         )
 
     async def startup(self) -> None:

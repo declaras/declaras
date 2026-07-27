@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -113,6 +122,89 @@ class CaseEventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CasePartidaRow(Base):
+    """Una partida del conciliador, con su resolucion, dentro de un expediente.
+
+    `partida_json` guarda la partida COMPLETA (`Partida.model_dump()`), no un resumen: las
+    cuatro marcas estructurales del cruce (`reportado_a`, `versiones_documento`,
+    `version_que_rige`, `documentos_por_cruzar`) son lo que distingue "esta plata es de
+    otra persona" de una nota de texto que la siguiente capa reescribe. Guardar menos
+    dejaria esa marca fuera y el ingreso de un tercero entraria al caso del contribuyente.
+
+    OJO CON EL ORDEN DE LAS CLAVES: JSONB de Postgres no lo preserva (reordena por longitud
+    y luego bytes, medido contra Postgres 17.10). La semantica del conciliador no se apoya
+    en el orden justamente por eso, y nadie debe leer "la ultima clave de
+    `versiones_documento` es la mas nueva": cual rige lo dice `version_que_rige`.
+
+    `sin_partida` marca las HUERFANAS: resoluciones cuya partida ya no existe en la
+    re-derivacion del cruce (la DIAN republico el reporte sin esa fila). Se conservan
+    porque botarlas esconde una decision de una persona y la deduccion que la sostenia; se
+    vuelven a pasar a `refrescar` en cada reconstruccion, asi que si el id reaparece con
+    las mismas cifras la decision se recupera sola.
+    """
+
+    __tablename__ = "case_partidas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("cases.id"), index=True)
+    # El id del conciliador (`nit:CONCEPTO` y sus variantes). No es la llave primaria: es
+    # texto libre derivado del reporte y puede pasar de 36 caracteres.
+    partida_id: Mapped[str] = mapped_column(String(300))
+    estado: Mapped[str] = mapped_column(String(24), index=True)
+    sin_partida: Mapped[bool] = mapped_column(Boolean, default=False)
+    partida_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("case_id", "partida_id", name="uq_partida_caso"),
+    )
+
+
+class CaseRespuestaRow(Base):
+    """Lo que el cliente contesto a una pregunta, o la peticion que el contador cerro.
+
+    Una sola tabla para las dos cosas a proposito: apagar una peticion es lo mismo en los
+    dos caminos (`tiene=False` sobre la clave de la peticion), y dos mecanismos separados
+    acabarian discrepando sobre cual peticion sigue viva.
+    """
+
+    __tablename__ = "case_respuestas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("cases.id"), index=True)
+    pregunta: Mapped[str] = mapped_column(String(300))
+    tiene: Mapped[bool] = mapped_column(Boolean)
+    respuesta_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("case_id", "pregunta", name="uq_respuesta_caso_pregunta"),
+    )
+
+
+class CaseLiquidacionRow(Base):
+    """Una version de la liquidacion, con el momento en que se calculo.
+
+    Se guarda la liquidacion COMPLETA y no se recalcula al leerla: el preliminar es la foto
+    de lo que se sabia antes de que llegara un solo documento del cliente, y recalcularlo
+    con los datos de hoy borraria la ganancia que el producto existe para mostrar.
+    """
+
+    __tablename__ = "case_liquidaciones"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("cases.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    momento: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    impuesto: Mapped[int] = mapped_column(Integer)
+    saldo: Mapped[int] = mapped_column(Integer)
+    liquidacion_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("case_id", "version", name="uq_liquidacion_caso_version"),
     )
 
 
