@@ -47,27 +47,57 @@ _RENGLON_RE = re.compile(r"\bR(\d{1,3})\b")
 
 @dataclass(frozen=True)
 class _ClaveDocumento:
-    """Cómo se deriva de un tipo de documento la llave (NIT, concepto) y sus dos números."""
+    """Cómo se deriva de un documento UNA llave (NIT, concepto) con sus dos números.
+
+    Un mismo documento puede afirmar varios hechos: el 220 trae los pagos laborales Y los
+    aportes obligatorios, y cada uno es su propia partida.
+    """
 
     concepto: Concepto
     campo_nit: str
     campo_nombre: str
     campos_monto: tuple[str, ...]
-    campo_retencion: str
+    campo_retencion: str | None = None
+    # Un hecho secundario del documento solo abre partida si trae plata: presente en 0 no
+    # hay nada que perder ni pregunta que hacerle al contador.
+    omitir_en_cero: bool = False
 
 
-# doc_type → cómo cruzarlo. Tabla incremental, igual que la de códigos: un tipo que no esté
-# acá no se cruza a ciegas, revienta en `incorporar` para que se decida su mapeo a conciencia.
-TIPO_A_CLAVE: dict[str, _ClaveDocumento] = {
-    "CERT_INGRESOS_220": _ClaveDocumento(
-        concepto=Concepto.SALARIOS,
-        campo_nit="empleador_nit",
-        campo_nombre="empleador_nombre",
-        # El concepto 5001 de la exógena agrega TODOS los pagos laborales del empleador, así
-        # que el lado documento suma las casillas de pago del 220. Comparar solo `salarios`
-        # marcaría discrepancia falsa a cualquiera que recibió prima o cesantías.
-        campos_monto=("salarios", "cesantias_e_intereses", "prima", "bonificaciones"),
-        campo_retencion="retencion",
+# doc_type → los hechos que ese documento afirma. Tabla incremental, igual que la de
+# códigos: un tipo que no esté acá no se cruza a ciegas, revienta en `incorporar` para que
+# su mapeo se decida a conciencia.
+TIPO_A_CLAVE: dict[str, tuple[_ClaveDocumento, ...]] = {
+    "CERT_INGRESOS_220": (
+        _ClaveDocumento(
+            concepto=Concepto.SALARIOS,
+            campo_nit="empleador_nit",
+            campo_nombre="empleador_nombre",
+            # El concepto 5001 de la exógena agrega TODOS los pagos laborales del
+            # empleador, así que el lado documento suma las casillas de pago del 220.
+            # Comparar solo `salarios` marcaría discrepancia falsa a cualquiera que
+            # recibió prima o cesantías.
+            campos_monto=("salarios", "cesantias_e_intereses", "prima", "bonificaciones"),
+            campo_retencion="retencion",
+        ),
+        # Los aportes obligatorios son hechos propios: `IngresoLaboral` los exige y sin
+        # estas partidas la deducción se perdería (T5 solo podría armar el caso con 0).
+        # El 220 del empleador es su fuente autoritativa; en la exógena la EPS/AFP los
+        # reporta con su PROPIO NIT, así que esas filas no cruzan por el NIT del empleador
+        # y corroboran bajo sus propias partidas.
+        _ClaveDocumento(
+            concepto=Concepto.APORTES_SALUD,
+            campo_nit="empleador_nit",
+            campo_nombre="empleador_nombre",
+            campos_monto=("aportes_salud",),
+            omitir_en_cero=True,
+        ),
+        _ClaveDocumento(
+            concepto=Concepto.APORTES_PENSION,
+            campo_nit="empleador_nit",
+            campo_nombre="empleador_nombre",
+            campos_monto=("aportes_pension",),
+            omitir_en_cero=True,
+        ),
     ),
 }
 
@@ -277,15 +307,34 @@ def incorporar(
     La partida que empareja por id cambia de estado (COINCIDE o DISCREPANCIA según la
     tolerancia, sobre monto Y retención); si ninguna empareja, nace una SOLO_DOCUMENTO.
     """
-    clave = TIPO_A_CLAVE.get(documento.doc_type)
-    if clave is None:
+    claves = TIPO_A_CLAVE.get(documento.doc_type)
+    if claves is None:
         # Error de programación del llamador, no un mensaje para el cliente: los tipos que
         # el conciliador sabe cruzar están en TIPO_A_CLAVE y se agregan a conciencia.
         raise ValueError(
             f"El conciliador no sabe cruzar documentos de tipo {documento.doc_type!r}."
         )
 
-    version = _version_documento(documento, clave)
+    resultado = list(partidas)
+    for clave in claves:
+        version = _version_documento(documento, clave)
+        if version is None:
+            # El documento no trae ninguno de los campos de este hecho: no lo afirma.
+            continue
+        if clave.omitir_en_cero and version.monto == 0:
+            continue
+        resultado = _incorporar_clave(resultado, documento, clave, version, tolerancia_pesos)
+    return resultado
+
+
+def _incorporar_clave(
+    partidas: list[Partida],
+    documento: DocumentReading,
+    clave: _ClaveDocumento,
+    version: Valor,
+    tolerancia_pesos: int,
+) -> list[Partida]:
+    """Cruza UN hecho del documento contra las partidas."""
     nit = str(documento.field(clave.campo_nit) or "").strip()
     nombre = str(documento.field(clave.campo_nombre) or "").strip()
     # El identificador corto del documento, el mismo con que el expediente lo refiere. Es
@@ -334,14 +383,18 @@ def incorporar(
     return actualizadas
 
 
-def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Valor:
+def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Valor | None:
+    """Lo que el documento afirma para esta clave, o None si no trae sus campos."""
     campos = {f.name: f for f in documento.fields}
-    usados = [campos[n] for n in (*clave.campos_monto, clave.campo_retencion) if n in campos]
-    retencion = campos.get(clave.campo_retencion)
+    presentes = [campos[n] for n in clave.campos_monto if n in campos]
+    if not presentes:
+        return None
+    retencion = campos.get(clave.campo_retencion) if clave.campo_retencion else None
+    usados = presentes + ([retencion] if retencion is not None else [])
     celdas = [c.source for c in usados if c.source]
     confianzas = [c.confidence for c in usados]
     return Valor(
-        monto=sum(int(campos[n].value or 0) for n in clave.campos_monto if n in campos),
+        monto=sum(int(c.value or 0) for c in presentes),
         # None cuando la lectura no trae el campo: este lado no afirma ninguna retención.
         retencion=int(retencion.value or 0) if retencion is not None else None,
         lado=Lado.DOCUMENTO,

@@ -250,6 +250,42 @@ def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
     assert p.diferencia_retencion == 0
 
 
+def test_el_220_aporta_tambien_los_aportes_obligatorios():
+    """`IngresoLaboral` exige `aportes_salud` y `aportes_pension`: si el conciliador los
+    deja dentro del documento, T5 solo puede armar el caso con 0 y la deducción se pierde
+    (~2M de impuesto de más). El 220 del empleador es la fuente autoritativa; en la
+    exógena la EPS/AFP reporta con su PROPIO NIT, así que esas filas no cruzan por el NIT
+    del empleador y corroboran bajo sus propias partidas."""
+    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
+              "salarios": 85_000_000, "retencion": 8_000_000,
+              "aportes_salud": 3_400_000, "aportes_pension": 3_600_000}
+    doc = DocumentReading(
+        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="f" * 64,
+        fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
+    )
+    partidas = incorporar(abrir(_exogena()), doc)
+    por_concepto = {p.concepto: p for p in partidas}
+    assert set(por_concepto) == {Concepto.SALARIOS, Concepto.APORTES_SALUD,
+                                 Concepto.APORTES_PENSION}
+    assert por_concepto[Concepto.APORTES_SALUD].version_documento.monto == 3_400_000
+    assert por_concepto[Concepto.APORTES_PENSION].version_documento.monto == 3_600_000
+    assert por_concepto[Concepto.APORTES_SALUD].estado == EstadoPartida.SOLO_DOCUMENTO
+    assert por_concepto[Concepto.APORTES_SALUD].id == "900111222:APORTES_SALUD"
+
+
+def test_aportes_presentes_pero_en_cero_no_abren_partida():
+    """En 0 no hay hecho que perder ni pregunta que hacerle al contador."""
+    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
+              "salarios": 85_000_000, "retencion": 0,
+              "aportes_salud": 0, "aportes_pension": 0}
+    doc = DocumentReading(
+        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="f" * 64,
+        fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
+    )
+    partidas = incorporar(abrir(_exogena()), doc)
+    assert [p.concepto for p in partidas] == [Concepto.SALARIOS]
+
+
 def test_incorporar_dos_veces_el_mismo_documento_es_idempotente():
     """Un reenvío del mismo certificado (mismo sha) reemplaza su aporte, no lo duplica."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_500)))
