@@ -137,6 +137,37 @@ def test_documento_de_tipo_que_no_se_sabe_cruzar_revienta():
         incorporar([], doc)
 
 
+def test_misma_cedula_otro_nombre_queda_marcada_para_confirmar():
+    """El parser ya decidió (`reported_to_titular=False`): la cédula es la del titular pero
+    el nombre es de otra persona. No puede llegar limpia al contador como si fuera suya."""
+    fila = _fila("901999888", "5001", 50_000_000)
+    fila["reported_to_titular"] = False
+    fila["reported_name"] = "OTRA PERSONA DISTINTA"
+    [p] = abrir(_exogena(fila))
+    assert p.estado == EstadoPartida.SOLO_DIAN
+    assert p.reportado_a == "OTRA PERSONA DISTINTA"
+    assert "confirmar" in (p.nota or "")
+
+
+def test_la_marca_de_ajena_no_vive_en_la_nota():
+    """`refrescar` de T5 reescribe `nota` por spec; la marca tiene que sobrevivir eso."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    reescrita = partidas[0].model_copy(
+        update={"nota": "los valores cambiaron desde la resolución anterior"}
+    )
+    [p] = incorporar([reescrita], _cert_220("901999888", 9_000_000))
+    assert p.estado == EstadoPartida.SOLO_DIAN
+
+
+def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
+    """La fila de la DIAN es de un tercero ajeno y el certificado es del titular: restar
+    esos dos números no mide ninguna discrepancia real."""
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    [p] = incorporar(partidas, _cert_220("901999888", 85_000_000))
+    assert p.diferencia_monto == 0
+    assert p.diferencia_retencion == 0
+
+
 def test_incorporar_no_muta_la_lista_de_entrada():
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
     incorporar(partidas, _cert_220("900111222", 85_000_000))

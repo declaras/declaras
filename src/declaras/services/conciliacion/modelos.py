@@ -33,7 +33,10 @@ class EstadoPartida(StrEnum):
     COINCIDE = "COINCIDE"
     # Las dos versiones existen y algún número (monto o retención) no cierra.
     DISCREPANCIA = "DISCREPANCIA"
-    # Solo está el lado DIAN: falta el documento del cliente, o la fila es de otra persona.
+    # Solo el lado DIAN sostiene el hecho: falta el documento del cliente, o la fila es de
+    # otra persona (`reportado_a`), caso en el que puede tener un certificado adjunto en
+    # `version_documento` SIN que eso concilie nada — un certificado del titular no puede
+    # confirmarse contra una fila que la DIAN le reportó a otra persona.
     SOLO_DIAN = "SOLO_DIAN"
     # Solo está el documento: la DIAN no conoce (todavía) este hecho.
     SOLO_DOCUMENTO = "SOLO_DOCUMENTO"
@@ -59,6 +62,11 @@ class Partida(_Modelo):
     `resolucion: Resolucion | None` llega con las resoluciones del contador (la siguiente
     tarea del plan define `Resolucion` en este mismo módulo); declararla hoy obligaría a
     inventar un modelo que esa tarea ya especifica completo.
+
+    TRAMPA VERIFICADA para quien escriba esa tarea: `model_copy(update={...})` NO respeta
+    `extra="forbid"` — acepta claves que no existen en el modelo y las descarta del
+    `model_dump()` sin error. Un `update={"resolucion": r}` escrito ANTES de que el campo
+    exista no revienta: pierde la resolución en silencio. Agregar el campo primero.
     """
 
     # Estable: f"{nit}:{concepto}" para conceptos conocidos. Es la referencia con que una
@@ -75,11 +83,24 @@ class Partida(_Modelo):
     version_documento: Valor | None = None
     estado: EstadoPartida
     nota: str | None = None
+    # A quién le reportó el tercero cuando NO fue al titular: la otra identificación, o el
+    # otro nombre cuando la cédula sí es la del titular. Es la marca ESTRUCTURAL de que la
+    # fila de la DIAN no aporta hecho — no vive en `nota` (texto libre que otras capas
+    # reescriben) ni en el estado. Campo adicional al contrato del plan, autorizado en la
+    # ronda de fixes 1 de la T4.
+    reportado_a: str | None = None
 
     @property
     def diferencia_monto(self) -> int:
-        """Cuánta plata separa las dos versiones; 0 si falta un lado (nada que comparar)."""
+        """Cuánta plata separa las dos versiones; 0 si falta un lado (nada que comparar).
+
+        En una partida ajena (`reportado_a`) también es 0: la fila de la DIAN es de otra
+        persona y el certificado es del titular, así que restar esos dos números no mide
+        ninguna discrepancia real — y `pendientes` de T5 ordena por esta cifra.
+        """
         if self.version_dian is None or self.version_documento is None:
+            return 0
+        if self.reportado_a is not None:
             return 0
         return abs(self.version_dian.monto - self.version_documento.monto)
 
@@ -88,5 +109,7 @@ class Partida(_Modelo):
         """La retención se expone aparte del monto: declarar más retención de la que el
         tercero reportó casi garantiza un requerimiento de la DIAN."""
         if self.version_dian is None or self.version_documento is None:
+            return 0
+        if self.reportado_a is not None:
             return 0
         return abs(self.version_dian.retencion - self.version_documento.retencion)

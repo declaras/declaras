@@ -20,15 +20,19 @@ from declaras.documents.models import DocumentReading
 from declaras.services.conciliacion.conceptos import Concepto, concepto_de_codigo
 from declaras.services.conciliacion.modelos import EstadoPartida, Lado, Partida, Valor
 
-# Nota de una partida cuya fila de exógena el tercero le reportó a otra identificación. Es
-# texto que lee el contador y, a la vez, la marca con que `incorporar` reconoce que la
-# partida nunca aporta hecho: el contrato del plan fija los campos de `Partida` (sin un flag
-# aparte), así que escritor y lector comparten esta constante.
+# Notas de una partida cuya fila de exógena no fue reportada al titular. Son texto que lee
+# el contador; la MARCA con la que decide el código es `Partida.reportado_a`, que es
+# estructural: una nota es texto libre que otras capas reescriben (el `refrescar` de T5 lo
+# hace por spec), y una marca que viva ahí desaparece con la primera reescritura.
 NOTA_OTRA_IDENTIFICACION = "reportado a otra identificación"
+NOTA_OTRO_NOMBRE = (
+    "reportado al número del titular pero a nombre de otra persona; "
+    "hay que confirmar si es suyo"
+)
 
 _NOTA_SIN_NIT = "el documento no trae el NIT del tercero, así que no se pudo cruzar con la exógena"
 _NOTA_CERTIFICADO_SIN_RESPALDO = (
-    "; llegó un certificado del tercero, pero no concilia contra un valor reportado a otra persona"
+    "llegó un certificado del tercero, pero no concilia contra un valor reportado a otra persona"
 )
 
 
@@ -70,7 +74,9 @@ class _Grupo:
     nombre: str
     clave: str
     concepto: Concepto | None
-    ajena: bool
+    # A quién le reportó el tercero cuando no fue al titular (None = sí fue al titular).
+    reportado_a: str | None
+    nota: str | None
     codigos: list[str] = field(default_factory=list)
     celdas: list[str] = field(default_factory=list)
     monto: int = 0
@@ -91,26 +97,23 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         codigo = str(valores.get("concept_code") or "").strip()
         concepto = concepto_de_codigo(codigo)
 
-        # Una fila reportada a OTRA identificación es un hecho distinto, no una discrepancia
-        # de montos: se agrupa aparte para no contaminar la suma de lo que sí es del titular,
-        # y nunca aportará hecho. (El caso "mismo número, otro nombre" NO se separa: la
-        # cédula sí es la del titular y el lector de exógena ya deja su propia alerta; acá
-        # decide el número de identificación.) Sin titular legible no se puede afirmar que
-        # una fila sea ajena, así que no se marca ninguna.
-        reportado_a = str(valores.get("reported_id_number") or "").strip()
-        ajena = bool(titular and reportado_a and reportado_a != titular)
+        # Una fila que el tercero no le reportó al titular es un hecho DISTINTO, no una
+        # discrepancia de montos: se agrupa aparte para no contaminar la suma de lo que sí
+        # es del titular, y nunca aportará hecho.
+        reportado_a, nota = _reportado_a(titular, valores)
 
         # Para un código sin mapear, la identidad del grupo es el código crudo: fusionar dos
         # códigos desconocidos distintos sería asumir que son el mismo hecho.
         clave = str(concepto) if concepto is not None else (codigo or "desconocido")
         grupo = grupos.setdefault(
-            (nit, clave, ajena),
+            (nit, clave, reportado_a is not None),
             _Grupo(
                 nit=nit,
                 nombre=str(valores.get("reporter_name") or ""),
                 clave=clave,
                 concepto=concepto,
-                ajena=ajena,
+                reportado_a=reportado_a,
+                nota=nota,
             ),
         )
         grupo.monto += int(valores.get("amount") or 0)
@@ -120,6 +123,30 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         if fila.source:
             grupo.celdas.append(fila.source)
     return [_partida_dian(grupo) for grupo in grupos.values()]
+
+
+def _reportado_a(titular: str, valores: dict[str, object]) -> tuple[str | None, str | None]:
+    """A quién le reportó el tercero la fila si no fue al titular, y la nota que lo explica.
+
+    El lector de exógena ya decidió esto fila por fila (`reported_to_titular`, que además
+    cubre el caso "misma cédula, otro nombre" comparando los nombres normalizados) y su
+    docstring pide explícitamente no volver a decidirlo. Se le hace caso; la comparación de
+    números queda solo como respaldo para filas que no traigan la conclusión (lecturas
+    hechas antes de que existiera o construidas a mano). Sin titular legible no se puede
+    afirmar que una fila sea ajena, así que no se marca ninguna.
+    """
+    reportado_id = str(valores.get("reported_id_number") or "").strip()
+    otra_identificacion = bool(titular and reportado_id and reportado_id != titular)
+    if "reported_to_titular" in valores:
+        if valores["reported_to_titular"]:
+            return None, None
+        if otra_identificacion:
+            return reportado_id, NOTA_OTRA_IDENTIFICACION
+        otro_nombre = str(valores.get("reported_name") or "").strip() or "otra persona"
+        return otro_nombre, NOTA_OTRO_NOMBRE
+    if otra_identificacion:
+        return reportado_id, NOTA_OTRA_IDENTIFICACION
+    return None, None
 
 
 def _partida_dian(grupo: _Grupo) -> Partida:
@@ -146,7 +173,8 @@ def _partida_dian(grupo: _Grupo) -> Partida:
             confianza=1.0,
         ),
         estado=estado,
-        nota=NOTA_OTRA_IDENTIFICACION if grupo.ajena else None,
+        nota=grupo.nota,
+        reportado_a=grupo.reportado_a,
     )
 
 
@@ -246,7 +274,9 @@ def _indice_emparejable(partidas: list[Partida], id_partida: str) -> int | None:
 
 
 def _es_ajena(partida: Partida) -> bool:
-    return (partida.nota or "").startswith(NOTA_OTRA_IDENTIFICACION)
+    """La marca es el campo estructural, nunca el texto de la nota: `refrescar` de T5
+    reescribe `nota` por spec, y una marca que viviera ahí desaparecería con él."""
+    return partida.reportado_a is not None
 
 
 def _emparejar(partida: Partida, version: Valor, tolerancia_pesos: int) -> Partida:
@@ -255,9 +285,10 @@ def _emparejar(partida: Partida, version: Valor, tolerancia_pesos: int) -> Parti
         # confirmar este certificado: la partida no cambia de estado. El documento queda
         # adjunto y anotado para que el contador vea las dos cosas y decida (puede resolver
         # con otro valor); descartarlo sería una pérdida silenciosa.
-        nota = partida.nota or NOTA_OTRA_IDENTIFICACION
+        nota = partida.nota or ""
         if _NOTA_CERTIFICADO_SIN_RESPALDO not in nota:
-            nota += _NOTA_CERTIFICADO_SIN_RESPALDO
+            prefijo = f"{nota}; " if nota else ""
+            nota = prefijo + _NOTA_CERTIFICADO_SIN_RESPALDO
         return partida.model_copy(update={"version_documento": version, "nota": nota})
 
     dian = partida.version_dian
