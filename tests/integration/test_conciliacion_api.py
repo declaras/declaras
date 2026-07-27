@@ -354,6 +354,48 @@ async def test_un_archivo_que_no_se_puede_recibir_no_tumba_los_demas(client, mon
     assert acme["estado"] == "DISCREPANCIA"
 
 
+async def test_si_el_cruce_no_alcanza_a_correr_el_archivo_no_se_reenvia(client, monkeypatch):
+    """El 409 del chequeo optimista llegaba SOBRE un documento que sí había entrado, con un
+    mensaje que pedía "volver a cargarla y repetir": el cliente reintentaba y duplicaba el
+    archivo. Se responde 200 con la verdad por archivo — entró, no se cruzó, hay que
+    conciliar — y explícitamente que no hay que volverlo a mandar."""
+    from declaras.domain.errors import ConflictoDeConcurrenciaError
+    from declaras.services import conciliacion_service as modulo
+
+    case_id = await _conciliado(client)
+
+    async def choca(self, case_id, subidos):
+        raise ConflictoDeConcurrenciaError()
+
+    monkeypatch.setattr(modulo.ConciliacionService, "incorporar_documentos", choca)
+    respuesta = await client.post(
+        f"/v1/cases/{case_id}/documents",
+        data={"doc_type": DOC_220},
+        files=[("file", ("220.pdf", _bytes_220(), "application/pdf"))],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    [resultado] = respuesta.json()["resultados"]
+    assert resultado["estado"] == "a_bandeja"
+    assert "no se vuelve a mandar" in resultado["motivo"]
+    # Y el documento SÍ quedó guardado, así que reenviarlo lo duplicaría.
+    assert len(respuesta.json()["documents"]) == 2
+
+
+async def test_dos_versiones_con_el_mismo_numero_son_un_conflicto_no_un_500(client, container):
+    """`_recalcular` cuenta las versiones y luego inserta: en Postgres dos lecturas
+    concurrentes del mismo conteo chocan contra la clave única. Es un conflicto de
+    concurrencia (409), no una falla del servidor."""
+    from uuid import UUID
+
+    from declaras.domain.errors import ConflictoDeConcurrenciaError
+
+    case_id = await _conciliado(client)
+    [primera] = await container.conciliacion.versiones(UUID(case_id))
+    with pytest.raises(ConflictoDeConcurrenciaError) as fallo:
+        await container.conciliacion.agregar_version(UUID(case_id), primera)
+    assert fallo.value.http_status == 409
+
+
 async def test_un_doc_type_por_archivo_o_ninguno(client):
     """Dos archivos y tres tipos es una petición mal armada, no un tipo que se adivina."""
     case_id = await _conciliado(client)
@@ -494,6 +536,25 @@ async def test_dos_resoluciones_simultaneas_no_se_pierden_en_silencio(client):
     else:
         assert codigos == [200, 409]
         assert len({pendientes[0], pendientes[1]} & resueltas) == 1
+
+
+async def test_la_interfaz_no_ofrece_un_motivo_que_seria_mentira(client):
+    """`decisiones_posibles` se deriva de `resolver`, así que la validación nueva de
+    estado×motivo la recorta sola: la consola ya no puede pintar "la DIAN no reporta nada"
+    sobre un renglón donde la DIAN reporta."""
+    case_id = await _conciliado(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    por_id = {p["id"]: p for p in await _partidas(client, case_id)}
+
+    discrepancia = por_id["900111222:SALARIOS"]["decisiones_posibles"]
+    assert "SIN_CONTRAPARTE_DIAN" not in discrepancia["USAR_DOCUMENTO"]
+    assert "COINCIDEN" not in discrepancia["USAR_DOCUMENTO"]
+    rechazado = await client.post(
+        f"/v1/cases/{case_id}/conciliacion/900111222:SALARIOS/resolver",
+        json={"decision": "USAR_DOCUMENTO", "motivo": "SIN_CONTRAPARTE_DIAN", "quien": "c"},
+    )
+    assert rechazado.status_code == 409
+    assert rechazado.json()["code"] == "DECISION_NO_APLICA"
 
 
 async def test_resolver_una_partida_que_no_existe_da_404(client):
@@ -800,6 +861,186 @@ async def test_la_liquidacion_dice_cuando_la_version_guardada_ya_no_es_la_de_hoy
     rancia = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
     assert rancia["actual_vigente"] is False
     assert "sin resolver" in rancia["falta_para_liquidar"]
+
+
+async def test_no_se_cierra_sin_haber_conciliado_nunca(client):
+    """Puerta B del Critical de la ronda 2, y es la más barata: `a_caso([])` es válido, así
+    que con CERO renglones el guard fallaba ABIERTO y se cerraba un 210 con impuesto 0
+    teniendo dentro una exógena de 95 millones y un 220. Un caso vacío solo es un caso
+    válido si el expediente está vacío de verdad."""
+    case_id = await _abrir_caso(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    assert await _partidas(client, case_id) == []
+
+    for ruta in ("borrador", "memoria"):
+        negado = await client.get(f"/v1/cases/{case_id}/{ruta}")
+        assert negado.status_code == 409, ruta
+        assert negado.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
+    cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert cerrar.status_code == 409
+    assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
+
+
+async def test_un_expediente_vacio_tampoco_produce_un_210_en_cero(client):
+    """La otra mitad de puerta B: sin NINGÚN documento, `a_caso([])` sigue siendo válido. Un
+    210 en cero no es el resultado de una declaración que nadie ha empezado."""
+    creado = await client.post("/v1/cases", json={"id_number": ID_TITULAR, "tax_year": 2025})
+    case_id = creado.json()["id"]
+    for ruta in ("borrador", "memoria", "liquidacion"):
+        negado = await client.get(f"/v1/cases/{case_id}/{ruta}")
+        assert negado.status_code == 409, ruta
+    assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 409
+
+
+async def test_un_documento_que_entro_por_otra_puerta_invalida_los_renglones(client, container):
+    """Puerta A del Critical: `POST /link-extraction` (y cualquier otro camino que meta
+    documentos sin pasar por el cruce) dejaba los renglones viejos y todo el mundo los
+    trataba como los de hoy. `actual_vigente: true` y `falta_para_liquidar: null` mentían, y
+    se daba por bueno un 210 que omite 10.000.000 que la DIAN ya reporta — el escenario B de
+    F1 entrando por la puerta de al lado.
+
+    La vigencia se medía contra los RENGLONES PERSISTIDOS, que es la misma suposición que F1
+    arregló un nivel más arriba."""
+    from uuid import UUID
+
+    case_id = await _conciliado(client)
+    vigente = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert vigente["actual_vigente"] is True
+
+    # La DIAN republica el reporte CON honorarios, por un camino que no corre el cruce.
+    await container.case_service.add_client_upload(
+        case_id=UUID(case_id),
+        doc_type="EXOGENA",
+        content=_exogena(FILA_SALARIO, FILA_HONORARIOS),
+        filename="exogena-republicada.xlsx",
+    )
+
+    rancia = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert rancia["actual_vigente"] is False
+    assert rancia["falta_para_liquidar"]
+    for ruta in ("borrador", "memoria"):
+        assert (await client.get(f"/v1/cases/{case_id}/{ruta}")).status_code == 409, ruta
+    cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert cerrar.status_code == 409
+    assert cerrar.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
+    assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
+
+    # Y conciliar vuelve a poner los cuatro caminos de acuerdo con el expediente.
+    resumen = (await client.post(f"/v1/cases/{case_id}/conciliacion")).json()
+    assert resumen["pendientes"] == 1
+
+
+async def test_un_certificado_que_entro_por_otra_puerta_tambien_invalida(client, container):
+    """La otra mitad de puerta A: no basta con vigilar la exógena. Un 220 que entra por un
+    camino que no corre el cruce cambia lo que el cruce produciría —abre la discrepancia de
+    salarios y los aportes— y dejaba los renglones viejos pasando por vigentes."""
+    from uuid import UUID
+
+    case_id = await _conciliado(client)
+    assert (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual_vigente"]
+
+    await container.case_service.add_client_upload(
+        case_id=UUID(case_id),
+        doc_type=DOC_220,
+        content=_bytes_220(),
+        filename="220-por-otra-puerta.pdf",
+    )
+
+    cuerpo = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert cuerpo["actual_vigente"] is False
+    assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
+    assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 409
+
+
+async def test_no_se_cierra_si_alguien_resolvio_entre_la_revision_y_el_cierre(
+    client, container, monkeypatch
+):
+    """La carrera `cerrar || resolver` dejaba `DRAFT_READY` con una versión POSTERIOR al
+    cierre: el evento fechaba una cifra que ya no era la de la declaración. Se prueba el
+    GUARD, no el planificador: la revisión se mueve entre que `cerrar` lee el estado y va a
+    cerrar, que es exactamente lo que pasa cuando otra request resuelve un renglón."""
+    case_id = await _conciliado(client)
+    original = type(container.conciliacion).revision
+    llamadas = {"n": 0}
+
+    async def se_mueve(self, cid):
+        llamadas["n"] += 1
+        actual = await original(self, cid)
+        # La primera lectura es la del estado que `cerrar` va a aprobar; la segunda es la
+        # del guard, y para entonces alguien más ya escribió.
+        return actual if llamadas["n"] == 1 else actual + 1
+
+    monkeypatch.setattr(type(container.conciliacion), "revision", se_mueve)
+    respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert respuesta.status_code == 409
+    assert respuesta.json()["code"] == "CONFLICTO_DE_CONCURRENCIA"
+    assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
+
+
+async def test_cerrar_y_resolver_a_la_vez_no_fechan_un_cierre_con_una_cifra_vieja(client):
+    """La misma carrera, de verdad y sin suponer quién gana: si queda un borrador dado por
+    listo, la versión que el cierre fechó tiene que ser la última — un cierre que apunta a
+    una versión anterior a la que hay es un "listo" sobre una cifra que ya nadie declara."""
+    case_id = await _conciliado(client)
+
+    async def cerrar():
+        return await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+
+    async def corregir():
+        return await client.post(
+            f"/v1/cases/{case_id}/conciliacion/890903938:RENDIMIENTOS/resolver",
+            json={
+                "decision": "USAR_OTRO",
+                "motivo": "DECISION_DEL_CONTADOR",
+                "valor": 1_000_000,
+                "quien": "contador@declaras.co",
+            },
+        )
+
+    await asyncio.gather(cerrar(), corregir(), return_exceptions=True)
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    if detalle["status"] != "DRAFT_READY":
+        return  # el cierre se negó o se invalidó: nada que afirmar
+    cerrado = [e for e in detalle["events"] if e["kind"] == "DRAFT_READY"][-1]
+    actual = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual"]
+    assert cerrado["payload"]["version"] == actual["version"], (
+        "el cierre quedó fechado con una versión que ya no es la de la declaración"
+    )
+    assert cerrado["payload"]["impuesto"] == actual["impuesto"]
+
+
+async def test_resolver_un_renglon_no_borra_la_marca_de_que_hay_que_conciliar(client, container):
+    """Resolver no re-deriva el cruce, así que tampoco puede volver a sellar los renglones
+    con los documentos de hoy: eso borraría la marca de que hay algo sin cruzar y devolvería
+    el agujero por la puerta de atrás."""
+    from uuid import UUID
+
+    case_id = await _conciliado(client)
+    await container.case_service.add_client_upload(
+        case_id=UUID(case_id), doc_type=DOC_220, content=_bytes_220(), filename="fuera.pdf"
+    )
+    assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
+
+    await client.post(
+        f"/v1/cases/{case_id}/conciliacion/890903938:RENDIMIENTOS/resolver",
+        json={"decision": "USAR_DIAN", "motivo": "FALTA_DOCUMENTO", "quien": "contador"},
+    )
+    assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
+    assert (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual_vigente"] is False
+
+
+async def test_cerrar_deja_de_valer_cuando_los_renglones_cambian(client):
+    """`DRAFT_READY` era terminal de hecho: nada lo invalidaba. Un borrador "listo" que ya
+    no corresponde al expediente es la misma mentira, persistida en el estado."""
+    case_id = await _conciliado(client)
+    assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
+    assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] == "DRAFT_READY"
+
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    assert detalle["status"] == "READY_FOR_REVIEW"
+    assert [e for e in detalle["events"] if e["kind"] == "DRAFT_READY_INVALIDADO"]
 
 
 async def test_el_borrador_sin_bloqueantes_si_se_cierra(client):

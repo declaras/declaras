@@ -16,6 +16,8 @@ una persona y la deducción que la sostenía.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -25,11 +27,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from declaras.caso import CasoTributario, Contribuyente
 from declaras.documents.models import DocumentReading
-from declaras.domain.case import Case, CaseDetail, CaseStatus, FlagSeverity
+from declaras.domain.case import Case, CaseDetail, CaseDocument, CaseStatus, FlagSeverity
 from declaras.domain.case_ports import CaseRepository
 from declaras.domain.errors import (
     AnioSinParametrosError,
     CaseNotFoundError,
+    ConflictoDeConcurrenciaError,
     DecisionNoAplicaError,
     LiquidacionBloqueadaError,
     LiquidacionNoDisponibleError,
@@ -97,6 +100,20 @@ _MOTIVO_SIN_EMPAREJAR = (
     "La DIAN no reporta este hecho: el documento abrió su propio renglón y hay que "
     "decidir qué se hace con él."
 )
+# Lo que falta cuando los renglones no salieron de los documentos que hay en el expediente:
+# nunca se concilió, o entró un documento por un camino que no corre el cruce.
+_FALTA_CONCILIAR = (
+    "Los renglones no corresponden a los documentos que hay en esta declaración: entró "
+    "algo nuevo (o todavía no se ha cruzado nada). Hay que conciliar antes de calcular."
+)
+
+# El archivo entró pero el cruce no alcanzó a correr (otra request estaba cambiando los
+# renglones). NO se le pide al cliente que lo reenvíe: ya está guardado.
+MOTIVO_CRUCE_NO_CORRIO = (
+    "El archivo quedó guardado, pero el cruce no alcanzó a correr porque alguien más estaba "
+    "cambiando la declaración. Hay que conciliar; el archivo no se vuelve a mandar."
+)
+
 _MOTIVO_SIN_CONCILIAR = (
     "Esta declaración todavía no se ha cruzado con el reporte de terceros: el archivo "
     "queda guardado y entra al cruce en cuanto se concilie."
@@ -115,6 +132,8 @@ class ConciliacionRepository(Protocol):
 
     async def revision(self, case_id: UUID) -> int: ...
 
+    async def huella(self, case_id: UUID) -> str | None: ...
+
     async def reemplazar_partidas(
         self,
         case_id: UUID,
@@ -122,6 +141,7 @@ class ConciliacionRepository(Protocol):
         partidas: list[Partida],
         huerfanas: list[Partida],
         revision_esperada: int,
+        huella_documentos: str | None = None,
     ) -> int: ...
 
     async def respuestas(self, case_id: UUID) -> list[Respuesta]: ...
@@ -148,6 +168,12 @@ class Estado:
     # La revisión del bloque de partidas que se leyó. Es la precondición con que se escribe:
     # si alguien más lo cambió en el intervalo, el reemplazo se niega en vez de pisarlo.
     revision: int = 0
+    # ¿Los renglones persistidos salieron de los documentos que HAY en el expediente? Es
+    # False cuando alguien metió (o reemplazó) un documento por un camino que no corre el
+    # cruce, y cuando nunca se ha conciliado. Con esto en False el caso NO se arma: los
+    # cuatro caminos que dependen de `caso` —borrador, memoria, cerrar y la vigencia de la
+    # liquidación— se niegan del mismo guard, en vez de cada uno por su cuenta.
+    corresponde_al_expediente: bool = True
 
     @property
     def pendientes(self) -> list[Partida]:
@@ -247,6 +273,24 @@ class ConciliacionService:
         revision = await self._repo.revision(case_id)
         partidas = await self._repo.vivas(case_id)
         huerfanas = await self._repo.huerfanas(case_id)
+        # `huella is None` = no hay bloque de renglones, o sea que NUNCA se concilió. Se
+        # niega igual que si los documentos hubieran cambiado: un caso de cero renglones es
+        # liquidable para `a_caso` (cero hechos es un caso válido), así que sin esta mitad el
+        # guard falla ABIERTO y se cierra un 210 en cero teniendo documentos en la mano.
+        guardada = await self._repo.huella(case_id)
+        if guardada is None or guardada != self._huella_documentos(detail):
+            # Los renglones no salieron de los documentos que hay: no se arma caso. Es el
+            # ÚNICO sitio donde se decide, para que los cuatro caminos que lo consultan se
+            # nieguen juntos — arreglar `cerrar` y dejar `/borrador` (o al revés) es el
+            # patrón que ya costó varias rondas en este plan.
+            return Estado(
+                partidas=partidas,
+                huerfanas=huerfanas,
+                caso=None,
+                falta=_FALTA_CONCILIAR,
+                revision=revision,
+                corresponde_al_expediente=False,
+            )
         caso, falta = self._intentar_caso(partidas, detail)
         return Estado(
             partidas=partidas,
@@ -291,6 +335,12 @@ class ConciliacionService:
             partidas=nuevas,
             huerfanas=estado.huerfanas,
             revision_esperada=estado.revision,
+            # Se CONSERVA la huella guardada, no se recalcula. Resolver no re-deriva el
+            # cruce, así que volver a sellar los renglones con los documentos de hoy
+            # afirmaría que salieron de ellos: si entró algo por otra puerta, resolver un
+            # renglón cualquiera borraba la marca de "hay que conciliar" y devolvía el
+            # agujero por la puerta de atrás. Medido.
+            huella_documentos=await self._repo.huella(case_id),
         )
         detail = await self._detalle(case_id)
         caso, falta = self._intentar_caso(nuevas, detail)
@@ -423,6 +473,13 @@ class ConciliacionService:
             raise LiquidacionBloqueadaError(
                 detalles=[{"codigo": f.codigo, "mensaje": f.mensaje} for f in vivos]
             )
+        if await self._repo.revision(case_id) != estado.revision:
+            # Alguien resolvió un renglón mientras se revisaba: la liquidación que se acabó
+            # de aprobar ya no es la del expediente. Persistirla sería fechar una versión con
+            # cifras viejas, y cerrar sobre ella sería dar por buena una declaración que
+            # nadie miró. (La otra mitad de esta carrera la cubre la invalidación del cierre:
+            # si el otro gana, el `DRAFT_READY` se cae solo.)
+            raise ConflictoDeConcurrenciaError(revision_leida=estado.revision)
         # Se guarda antes de cerrar para que el evento feche la cifra que se dio por buena.
         await self._recalcular(case_id, estado)
         versiones = await self._repo.versiones(case_id)
@@ -527,6 +584,7 @@ class ConciliacionService:
         # otra request puede colarse. "El contador decide mientras entra un documento"
         # perdía una de las dos cosas por acá, no solo por `resolver_partida`.
         revision_leida = await self._repo.revision(case_id)
+        vivas_antes = await self._repo.vivas(case_id)
         guardadas = await self._repo.guardadas(case_id)
         partidas, huerfanas = refrescar(nuevas, guardadas)
         descartadas = self._resoluciones_descartadas(guardadas, partidas)
@@ -535,8 +593,13 @@ class ConciliacionService:
             partidas=partidas,
             huerfanas=huerfanas,
             revision_esperada=revision_leida,
+            # Los renglones quedan sellados con los documentos de los que salieron: es lo
+            # que después permite saber si siguen correspondiendo al expediente.
+            huella_documentos=self._huella_documentos(detail),
         )
         await self._registrar_descartadas(case_id, descartadas)
+        if partidas != vivas_antes:
+            await self._invalidar_cierre(case_id, detail)
         caso, falta = self._intentar_caso(partidas, detail)
         return Estado(
             partidas=partidas,
@@ -545,6 +608,51 @@ class ConciliacionService:
             falta=falta,
             revision=revision,
         )
+
+    async def _invalidar_cierre(self, case_id: UUID, detail: CaseDetail) -> None:
+        """El borrador deja de estar listo cuando la declaración cambia bajo sus pies.
+
+        `DRAFT_READY` era terminal de hecho: nada lo invalidaba, así que quedaba un
+        expediente marcado "listo para revisión final" con renglones que ya no
+        correspondían — la misma mentira del guard que falla abierto, pero persistida en el
+        estado del expediente. Se vuelve a `READY_FOR_REVIEW` y queda el evento: el cierre
+        hay que volver a ganárselo, y quien audite ve que se perdió y por qué.
+        """
+        if detail.case.status is not CaseStatus.DRAFT_READY:
+            return
+        await self._cases.transition(case_id, status=CaseStatus.READY_FOR_REVIEW)
+        await self._cases.add_event(
+            case_id=case_id,
+            kind="DRAFT_READY_INVALIDADO",
+            message=(
+                "El borrador dejó de estar listo: la declaración cambió después de que se "
+                "dio por buena y hay que revisarla otra vez."
+            ),
+        )
+        log.info("conciliacion.cierre_invalidado", case_id=str(case_id))
+
+    def _huella_documentos(self, detail: CaseDetail) -> str | None:
+        """La identidad del conjunto de insumos del que salen los renglones.
+
+        Es lo que permite saber, sin re-derivar nada, si los renglones persistidos siguen
+        correspondiendo al expediente. Cubre la exógena vigente y TODOS los documentos que
+        el conciliador sabe cruzar, EN ORDEN: el orden es parte de la entrada del cruce (con
+        dos certificados rivales del mismo empleador rige el último nuevo), así que un
+        reordenamiento también invalida los renglones.
+
+        None cuando no hay ningún insumo. Se distingue de una huella vacía a propósito: "no
+        hay nada que cruzar" y "hay documentos que no se han cruzado" llevan a acciones
+        distintas.
+        """
+        exogena = self._exogena_vigente(detail)
+        cruzables = [d.content_sha256 for d in self._documentos_cruzables(detail)]
+        if exogena is None and not cruzables:
+            return None
+        semilla = json.dumps(
+            {"exogena": exogena.content_sha256 if exogena else None, "cruzables": cruzables},
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(semilla.encode()).hexdigest()
 
     def _exogena_vigente(self, detail: CaseDetail) -> DocumentReading | None:
         """La lectura del reporte de terceros que rige hoy.
@@ -562,18 +670,25 @@ class ConciliacionService:
             return None
         return max(candidatas, key=lambda d: (d.added_at, str(d.id))).reading
 
-    def _cruzables(self, detail: CaseDetail) -> list[DocumentReading]:
-        """Las lecturas que el conciliador sabe cruzar, en orden de llegada.
+    def _documentos_cruzables(self, detail: CaseDetail) -> list[CaseDocument]:
+        """Los documentos que el conciliador sabe cruzar, en orden de llegada.
 
         El orden importa y es el de llegada: con dos certificados rivales del mismo
         empleador rige el último NUEVO, así que reconstruir en otro orden cambiaría la
-        cifra publicada.
+        cifra publicada. Una sola definición del conjunto y su orden, porque la usan las dos
+        cosas que tienen que coincidir: la reconstrucción del cruce y la huella con que se
+        comprueba si los renglones siguen correspondiendo al expediente.
         """
         return [
-            d.reading
+            d
             for d in sorted(detail.documents, key=lambda x: (x.added_at, str(x.id)))
             if d.reading is not None and d.doc_type in TIPO_A_CLAVE
         ]
+
+    def _cruzables(self, detail: CaseDetail) -> list[DocumentReading]:
+        """Las lecturas de esos documentos, en el mismo orden."""
+        lecturas = [d.reading for d in self._documentos_cruzables(detail)]
+        return [r for r in lecturas if r is not None]
 
     def _desenlace(
         self,
@@ -619,6 +734,10 @@ class ConciliacionService:
         if versiones and versiones[-1].liquidacion == candidata.liquidacion:
             return
         await self._repo.agregar_version(case_id, candidata)
+        # Una liquidación nueva es un cambio en la declaración: si estaba dada por lista,
+        # deja de estarlo. Cubre el camino que `_reconstruir` no ve — resolver un renglón no
+        # cambia el conjunto de documentos, pero sí cambia el 210.
+        await self._invalidar_cierre(case_id, await self._detalle(case_id))
 
     def _resoluciones_descartadas(
         self, guardadas: Sequence[Partida], partidas: Sequence[Partida]

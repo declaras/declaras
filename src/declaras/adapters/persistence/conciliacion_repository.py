@@ -83,6 +83,21 @@ class SqlConciliacionRepository:
             ).scalar()
             return int(actual or 0)
 
+    async def huella(self, case_id: UUID) -> str | None:
+        """La huella de los documentos con que se derivaron los renglones guardados.
+
+        None si no hay bloque: nunca se concilio. Es lo que distingue "no hay nada que
+        cruzar" de "hay documentos que todavia no se cruzaron".
+        """
+        async with self._sessions() as session:
+            return (
+                await session.execute(
+                    select(CasePartidaRow.huella_documentos)
+                    .where(CasePartidaRow.case_id == str(case_id))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
     async def reemplazar_partidas(
         self,
         case_id: UUID,
@@ -90,6 +105,7 @@ class SqlConciliacionRepository:
         partidas: list[Partida],
         huerfanas: list[Partida],
         revision_esperada: int,
+        huella_documentos: str | None = None,
     ) -> int:
         """Deja EXACTAMENTE estas partidas y estas huerfanas, si nadie mas escribio antes.
 
@@ -151,6 +167,7 @@ class SqlConciliacionRepository:
                                 estado=partida.estado.value,
                                 sin_partida=sin_partida,
                                 revision=nueva,
+                                huella_documentos=huella_documentos,
                                 partida_json=partida.model_dump(mode="json"),
                                 updated_at=ahora,
                             )
@@ -240,17 +257,23 @@ class SqlConciliacionRepository:
     async def agregar_version(
         self, case_id: UUID, version: LiquidacionVersionada
     ) -> LiquidacionVersionada:
-        async with self._sessions() as session, session.begin():
-            session.add(
-                CaseLiquidacionRow(
-                    id=str(uuid4()),
-                    case_id=str(case_id),
-                    version=version.version,
-                    momento=version.momento,
-                    impuesto=version.impuesto,
-                    saldo=version.saldo,
-                    base_sin_documentos=version.base_sin_documentos,
-                    liquidacion_json=version.liquidacion.model_dump(mode="json"),
+        """Agrega una version. Dos inserciones concurrentes del mismo numero chocan contra
+        `uq_liquidacion_caso_version`, y eso es un conflicto de concurrencia (409), no una
+        falla del servidor: quien llama conto las versiones antes de insertar."""
+        try:
+            async with self._sessions() as session, session.begin():
+                session.add(
+                    CaseLiquidacionRow(
+                        id=str(uuid4()),
+                        case_id=str(case_id),
+                        version=version.version,
+                        momento=version.momento,
+                        impuesto=version.impuesto,
+                        saldo=version.saldo,
+                        base_sin_documentos=version.base_sin_documentos,
+                        liquidacion_json=version.liquidacion.model_dump(mode="json"),
+                    )
                 )
-            )
+        except IntegrityError as exc:
+            raise ConflictoDeConcurrenciaError(version=version.version) from exc
         return version

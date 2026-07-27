@@ -26,10 +26,23 @@ from declaras.api.conciliacion_schemas import (
     UploadDocumentsResponse,
 )
 from declaras.api.deps import ApiKeyDep, ContainerDep
-from declaras.domain.errors import DeclarasError, JobNotFoundError, ValidationError
+from declaras.domain.errors import (
+    ConflictoDeConcurrenciaError,
+    DeclarasError,
+    JobNotFoundError,
+    ValidationError,
+)
 from declaras.observability import get_logger
 from declaras.services.case_summary import CaseSummary, build_summary
-from declaras.services.conciliacion_service import Subido
+from declaras.services.conciliacion_service import (
+    ESTADO_A_BANDEJA,
+    ESTADO_NO_RECIBIDO,
+    ArchivoIncorporado,
+    Subido,
+)
+from declaras.services.conciliacion_service import (
+    MOTIVO_CRUCE_NO_CORRIO as _MOTIVO_CRUCE_NO_CORRIO,
+)
 
 log = get_logger(__name__)
 
@@ -222,7 +235,26 @@ async def upload_client_document(
     # El cruce se rehace UNA vez con todos los archivos ya dentro, no uno por archivo:
     # incorporar de a uno y recalcular en medio dejaría estados intermedios persistidos y
     # una versión de la liquidación por archivo.
-    resultados = await container.conciliacion_service.incorporar_documentos(case_id, subidos)
+    try:
+        resultados = await container.conciliacion_service.incorporar_documentos(case_id, subidos)
+    except ConflictoDeConcurrenciaError:
+        # Los archivos YA quedaron guardados; lo que no alcanzó a correr es el cruce. Un 409
+        # acá diría "vuelve a cargarla y repite" y el cliente reenviaría los archivos,
+        # duplicándolos. Se responde 200 con la verdad por archivo: entró, no se cruzó, y la
+        # acción es conciliar. (Que los renglones queden viejos ya no es peligroso: la huella
+        # del expediente hace que borrador, memoria, cerrar y la vigencia se nieguen hasta
+        # que alguien concilie.)
+        log.info("case.upload_sin_cruce", case_id=str(case_id), archivos=len(subidos))
+        resultados = [
+            ArchivoIncorporado(
+                archivo=s.archivo,
+                doc_type=s.doc_type,
+                estado=ESTADO_NO_RECIBIDO if s.sha is None else ESTADO_A_BANDEJA,
+                peticion_cerrada=None if s.peticion_id is None else False,
+                motivo=s.motivo or _MOTIVO_CRUCE_NO_CORRIO,
+            )
+            for s in subidos
+        ]
     return UploadDocumentsResponse(
         **CaseDetailResponse.from_domain(
             detail, download_url_builder=_download_url

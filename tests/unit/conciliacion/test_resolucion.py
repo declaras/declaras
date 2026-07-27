@@ -245,6 +245,28 @@ def test_autorresolver_acepta_los_aportes_obligatorios_del_220():
     assert resolucion.origen is Origen.SISTEMA
 
 
+def test_un_motivo_que_afirma_algo_del_otro_lado_se_valida_contra_el_estado():
+    """La validación de motivos era decisión×motivo, así que se aceptaba (y la interfaz
+    OFRECÍA) "usé el documento porque la DIAN no reporta nada" sobre una DISCREPANCIA donde
+    la DIAN reporta 87.400.000. En la `Fuente` que lee un auditor eso es un contrasentido."""
+    discrepancia = partida_discrepancia()
+    assert discrepancia.version_dian is not None
+    with pytest.raises(ValueError, match="SIN_CONTRAPARTE_DIAN"):
+        resolver(discrepancia, Decision.USAR_DOCUMENTO,
+                 motivo=Motivo.SIN_CONTRAPARTE_DIAN, quien="contador@x.co")
+    with pytest.raises(ValueError, match="COINCIDEN"):
+        resolver(discrepancia, Decision.USAR_DOCUMENTO,
+                 motivo=Motivo.COINCIDEN, quien="contador@x.co")
+
+
+def test_los_motivos_de_error_siguen_libres_sobre_una_partida_de_un_solo_lado():
+    """"El tercero reportó mal" es justamente lo que explica que la DIAN no tenga el hecho:
+    acotarlos rompería el uso idiomático con que se aceptan los aportes de un 220."""
+    p = resolver(partida_solo_documento(), Decision.USAR_DOCUMENTO,
+                 motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")
+    assert p.resolucion is not None
+
+
 def test_el_tercer_automatismo_no_es_aceptar_todo_lo_del_220():
     """La discrepancia de salarios sigue siendo del contador: ahí SÍ hay dos versiones que
     comparar, y esa es exactamente la decisión que necesita criterio humano."""

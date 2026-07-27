@@ -61,6 +61,18 @@ NOTA_VALORES_CAMBIARON = "los valores cambiaron desde la resolución anterior"
 # criterio. Un agente futuro que quiera ampliar esto a otros conceptos tiene que mostrar la
 # misma imposibilidad estructural de cruce; hoy, medido contra `TIPO_A_CLAVE`, el único
 # documento que abre partidas de estos dos conceptos es el 220 del empleador.
+#
+# POR QUÉ LA GUARDA ES CONCEPTO + ESTADO Y NO `doc_type`: la afirmación "no hay contraparte
+# en la DIAN" se AUTOVERIFICA con `SOLO_DOCUMENTO`. Si algún día la exógena reportara los
+# aportes bajo el NIT del empleador, la partida nacería COINCIDE o DISCREPANCIA y el
+# automatismo NO dispararía — el motivo no puede volverse mentira por este camino (y
+# `_ESTADOS_POR_MOTIVO` lo exige además al resolver a mano).
+#
+# CONSECUENCIA PARA LAS TAREAS QUE SIGUEN, ADVERTIDA: cualquier tipo de documento nuevo que
+# se registre en `TIPO_A_CLAVE` abriendo APORTES_SALUD o APORTES_PENSION queda cubierto por
+# este automatismo EN SILENCIO, sin pasar por acá. Quien agregue ese tipo tiene que verificar
+# que su documento también sea la fuente autoritativa del aporte; si no lo es, hay que
+# discriminar por `doc_type` (y eso exige que la partida lo lleve, que hoy no lo lleva).
 CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO = frozenset(
     {Concepto.APORTES_SALUD, Concepto.APORTES_PENSION}
 )
@@ -118,6 +130,25 @@ _MOTIVOS_POR_DECISION: dict[Decision, frozenset[Motivo]] = {
         {Motivo.FALTA_DOCUMENTO, Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}
     ),
     Decision.LLEVAR_A_MANO: frozenset({Motivo.FUERA_DEL_MOTOR}),
+}
+
+
+# Motivos que AFIRMAN algo sobre el otro lado de la partida, y por tanto solo son ciertos
+# en ciertos estados. La validación de `_MOTIVOS_POR_DECISION` es decisión×motivo, así que
+# sin esto se aceptaba (y `decisiones_posibles` OFRECÍA) "usé el documento porque la DIAN no
+# reporta nada" sobre un renglón donde la DIAN reporta 87.400.000 — un contrasentido en la
+# `Fuente` que lee un auditor, la misma clase que cerró el M1 de la ronda 2 de T5.
+#
+# Solo se acotan los DOS motivos que hacen una afirmación verificable. `ERROR_DEL_TERCERO` y
+# `ERROR_DEL_CERTIFICADO` quedan libres a propósito: "el tercero reportó mal" es lo que
+# explica que la DIAN no tenga el hecho, así que son legítimos sobre una partida de un solo
+# lado, y acotarlos rompería el uso idiomático (los aportes de un 220 se aceptan así).
+_ESTADOS_POR_MOTIVO: dict[Motivo, frozenset[EstadoPartida]] = {
+    # "Coinciden" solo es cierto si los dos lados existen y cerraron.
+    Motivo.COINCIDEN: frozenset({EstadoPartida.COINCIDE}),
+    # "No hay contraparte en la DIAN" se autoverifica con el estado: si la hubiera, la
+    # partida sería COINCIDE o DISCREPANCIA.
+    Motivo.SIN_CONTRAPARTE_DIAN: frozenset({EstadoPartida.SOLO_DOCUMENTO}),
 }
 
 
@@ -298,6 +329,12 @@ def _con_resolucion(
         raise ValueError(
             f"El motivo {motivo} no corresponde a la decisión {decision}; "
             f"los posibles son: {posibles}."
+        )
+    estados = _ESTADOS_POR_MOTIVO.get(motivo)
+    if estados is not None and partida.estado not in estados:
+        raise ValueError(
+            f"El motivo {motivo} afirma algo que no es cierto de una partida en estado "
+            f"{partida.estado}; solo aplica a: {', '.join(sorted(estados))}."
         )
     resolucion = Resolucion(
         decision=decision,

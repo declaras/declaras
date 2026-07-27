@@ -159,6 +159,12 @@ class CasePartidaRow(Base):
     # leyo la revision N solo puede escribir si sigue siendo N. Sin ella, dos decisiones
     # simultaneas de dos contadores respondian 200 las dos y en la base quedaba una sola.
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    # Identidad del conjunto de documentos del que SALIERON estos renglones (la exogena
+    # vigente mas los cruzables, en orden). Todas las filas de un caso la comparten. Sirve
+    # para saber sin re-derivar nada si los renglones siguen correspondiendo al expediente:
+    # un documento que entra por un camino que no corre el cruce los deja viejos, y sin esto
+    # todo el mundo los trataba como los de hoy.
+    huella_documentos: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sin_partida: Mapped[bool] = mapped_column(Boolean, default=False)
     partida_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
