@@ -206,6 +206,20 @@ def test_el_ahorro_del_beneficio_se_marca_como_techo_y_el_del_220_no():
     assert prepagada.ahorro_estimado > 0 and prepagada.ahorro_es_techo is True
 
 
+def test_con_un_bloqueante_vivo_el_ahorro_no_se_promete_pero_la_lista_sale():
+    """F9: `ahorro_marginal` optimizaba sin mirar los avisos del cruce, así que con un
+    ingreso por fuera de la liquidación prometía un costo calculado sobre una base
+    incompleta. Ahora el optimizador se niega y el ahorro sale como no estimable — pero la
+    lista NO se cae, porque es justo lo que el contador necesita para salir del bloqueo."""
+    llevada = resolver(
+        partida_honorarios(), Decision.LLEVAR_A_MANO,
+        motivo=Motivo.FUERA_DEL_MOTOR, quien="contador",
+    )
+    ps = derivar_peticiones([*PARTIDAS_VARIAS, llevada], [], _caso_con_el_laboral())
+    assert ps, "la lista sigue saliendo"
+    assert all(p.ahorro_estimado == 0 for p in ps)
+
+
 def test_lo_no_estimable_no_se_marca_como_techo():
     """0 es "no se puede estimar", no "el techo es cero": marcarlo como techo diría que
     el beneficio no vale nada, que es exactamente lo contrario de lo que pasa."""

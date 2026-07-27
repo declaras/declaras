@@ -35,9 +35,11 @@ from declaras.caso import (
     MontoDeclarado,
 )
 from declaras.dinero import porcentaje
+from declaras.motor import Flag
 from declaras.optimizador import ahorro_marginal
 from declaras.parametros import ParametrosAnio, cargar
 from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
+from declaras.services.conciliacion.mapeo import avisos
 from declaras.services.conciliacion.modelos import EstadoPartida, Partida, _Modelo
 from declaras.services.conciliacion.respuestas import Respuesta
 
@@ -395,10 +397,23 @@ def derivar_peticiones(
     parametros = p if p is not None else cargar(caso.anio_gravable)
     apagadas = {r.pregunta for r in respuestas if not r.tiene}
     contestadas = {r.pregunta for r in respuestas if r.tiene}
+    # Los avisos del cruce viajan a cada estimación: con un bloqueante vivo el optimizador
+    # se niega y el ahorro sale como no estimable, en vez de prometer una cifra calculada
+    # sobre una base a la que le falta un ingreso (F9, la puerta paralela del bloqueo).
+    #
+    # `avisos` comparte el ensamble con `a_caso` (una sola fuente de verdad) pero NO su
+    # guarda de pendientes, así que sobre un estado intermedio puede negarse con razón: los
+    # aportes de un 220 ya resueltos y el salario que los recibe todavía en la cola. Eso no
+    # puede tumbar la lista de peticiones — que es justamente lo que hace falta para salir de
+    # ese estado —, y no hay liquidación de la que prometer nada mientras el caso no se arme.
+    try:
+        del_cruce: Sequence[Flag] = avisos(list(partidas))
+    except (ValueError, NotImplementedError):
+        del_cruce = []
 
     candidatas = [
-        *_de_partidas(partidas, caso, parametros, apagadas),
-        *_de_beneficios(caso, parametros, apagadas, contestadas),
+        *_de_partidas(partidas, caso, parametros, apagadas, del_cruce),
+        *_de_beneficios(caso, parametros, apagadas, contestadas, del_cruce),
     ]
     # Por plata descendente, con el id como desempate: dos peticiones no estimables (0)
     # tienen que salir siempre en el mismo orden o la lista baila entre consultas.
@@ -425,6 +440,7 @@ def _de_partidas(
     caso: CasoTributario,
     p: ParametrosAnio,
     apagadas: set[str],
+    del_cruce: Sequence[Flag],
 ) -> list[_Candidata]:
     """Origen 1: cada partida que SOLO sostiene la DIAN y cuyo certificado aporta algo.
 
@@ -452,7 +468,9 @@ def _de_partidas(
                 tipo_documento=certificado.tipo_documento,
                 tercero={"nit": partida.nit_tercero, "nombre": partida.nombre_tercero},
                 razon=certificado.razon,
-                ahorro_estimado=_ahorro(caso, _hipotesis_de_partida(caso, partida), p),
+                ahorro_estimado=_ahorro(
+                    caso, _hipotesis_de_partida(caso, partida), p, del_cruce
+                ),
                 # Medido, no techo: los aportes obligatorios son un porcentaje de LEY
                 # sobre el pago que la exógena ya reportó.
                 ahorro_es_techo=False,
@@ -526,6 +544,7 @@ def _de_beneficios(
     p: ParametrosAnio,
     apagadas: set[str],
     contestadas: set[str],
+    del_cruce: Sequence[Flag],
 ) -> list[_Candidata]:
     """Orígenes 2 y 3: los beneficios que la DIAN no puede ver.
 
@@ -544,7 +563,7 @@ def _de_beneficios(
                 tipo_documento=beneficio.tipo_documento,
                 tercero=None,
                 razon=beneficio.razon,
-                ahorro_estimado=_ahorro(caso, hipotesis, p),
+                ahorro_estimado=_ahorro(caso, hipotesis, p, del_cruce),
                 # Todo beneficio invisible se estima en su tope legal: cuánto pagó de
                 # prepagada o de intereses lo sabe el cliente, no nosotros.
                 ahorro_es_techo=hipotesis is not None,
@@ -558,17 +577,27 @@ def _de_beneficios(
 
 
 def _ahorro(
-    caso: CasoTributario, hipotesis: CasoTributario | None, p: ParametrosAnio
+    caso: CasoTributario,
+    hipotesis: CasoTributario | None,
+    p: ParametrosAnio,
+    del_cruce: Sequence[Flag] = (),
 ) -> int:
     """Cuánto impuesto ahorraría el documento, o 0 si no se puede estimar.
 
     Un ahorro negativo significaría que la hipótesis SUBE el impuesto, o sea que la
     hipótesis está mal construida: no se muestra como si fuera un costo, se reporta como
     no estimable (0) para no ordenar la lista con un número sin sentido.
+
+    Con un aviso BLOQUEANTE vivo el optimizador se niega (por diseño: no se optimiza sobre
+    una base incompleta), y eso NO puede tumbar la lista de peticiones — que es justo lo
+    que el contador necesita para salir del bloqueo. Se reporta como no estimable.
     """
     if hipotesis is None:
         return 0
-    return max(0, ahorro_marginal(caso, hipotesis, p))
+    try:
+        return max(0, ahorro_marginal(caso, hipotesis, p, flags_previos=del_cruce))
+    except ValueError:
+        return 0
 
 
 def costo_de_cerrar(peticion: Peticion) -> int:

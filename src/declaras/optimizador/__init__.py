@@ -69,15 +69,23 @@ def _exigir_sin_bloqueantes(flags: Sequence[Flag]) -> None:
 
 
 def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
-                    p: ParametrosAnio) -> int:
+                    p: ParametrosAnio, *,
+                    flags_previos: Sequence[Flag] = ()) -> int:
     """Cuánto impuesto ahorra un hecho: base del 'cada pregunta lleva su ahorro'.
 
     Los ahorros marginales NO son aditivos: para mostrar ahorro por pregunta
     acumulado, calcular cada uno sobre el caso ya acumulado, no todos contra el
     mismo base.
+
+    `flags_previos` viaja a las DOS optimizaciones. Era la puerta paralela del
+    bloqueo: con un aviso bloqueante vivo esto seguía optimizando dos veces y
+    devolvía un ahorro calculado sobre una base incompleta, que es exactamente
+    la promesa que el bloqueo existe para no hacer.
     """
     if (caso_base.contribuyente.num_doc != caso_con_hecho.contribuyente.num_doc
             or caso_base.anio_gravable != caso_con_hecho.anio_gravable):
         raise ValueError("ahorro_marginal compara dos versiones del MISMO caso")
-    return (optimizar(caso_base, p).liquidacion.valor("IMPUESTO_NETO")
-            - optimizar(caso_con_hecho, p).liquidacion.valor("IMPUESTO_NETO"))
+    return (optimizar(caso_base, p,
+                      flags_previos=flags_previos).liquidacion.valor("IMPUESTO_NETO")
+            - optimizar(caso_con_hecho, p,
+                        flags_previos=flags_previos).liquidacion.valor("IMPUESTO_NETO"))
