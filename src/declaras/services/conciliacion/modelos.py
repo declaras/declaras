@@ -91,17 +91,22 @@ class Partida(_Modelo):
     # de sus CDT en una fila).
     version_documento: Valor | None = None
     # El aporte de cada documento, llaveado por su identificador corto (sha[:12], el mismo
-    # del expediente): los mismos bytes otra vez reemplazan su aporte, y un sha nuevo se
-    # GUARDA siempre — nada desaparece en silencio. Lo que se publica arriba depende del
-    # tipo de documento (`acumulable` en TIPO_A_CLAVE): la suma cuando el tipo emite varios
-    # por tercero de verdad (un certificado por CDT), o la última versión con nota cuando
-    # no (el sha es identidad de bytes, no de documento: el mismo 220 re-escaneado llega
-    # con otro hash y sumarlo duplicaría la plata). Campo adicional al contrato del plan,
-    # autorizado en la ronda de fixes 1 de la T4.
+    # del expediente): los mismos bytes otra vez son NO-OP (un retry de ingesta o un
+    # reenvío del cliente no puede mover la cifra declarada), y un sha nuevo se GUARDA
+    # siempre — nada desaparece en silencio. Por ese no-op, el ORDEN de las claves es el
+    # orden de llegada real y la última clave es la versión más nueva: quien persista la
+    # partida debe conservar ese orden, porque es como `refrescar` de T5 distingue
+    # 'versión nueva' (sha que no estaba) de 'reenvío viejo' (sha ya visto). Lo que se
+    # publica arriba depende del tipo de documento (`acumulable` en TIPO_A_CLAVE): la suma
+    # cuando el tipo emite varios por tercero de verdad (un certificado por CDT), o la
+    # última versión nueva con nota cuando no (el sha es identidad de bytes, no de
+    # documento: el mismo 220 re-escaneado llega con otro hash y sumarlo duplicaría la
+    # plata). Campo adicional al contrato del plan, autorizado en la ronda de fixes 1.
     versiones_documento: dict[str, Valor] = Field(default_factory=dict)
     # Cuando hubo versiones rivales de un tipo NO acumulable: el sha corto del documento
-    # cuya versión se publicó en `version_documento` (la última en llegar). None = sin
-    # rivales, o tipo acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
+    # cuya versión se publicó en `version_documento` (la última NUEVA en llegar;
+    # reprocesar bytes ya vistos es no-op y no la cambia). None = sin rivales, o tipo
+    # acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
     # de `reportado_a`: la nota es texto libre que `refrescar` de T5 sobrescribe, y la
     # huella de auditoría —"llegaron varios certificados y rigió este"— tiene que quedar
     # en la partida, que es donde se busca la respuesta cuando el contador o la DIAN

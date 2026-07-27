@@ -404,8 +404,9 @@ def _incorporar_clave(
     nit = _nit(documento.field(clave.campo_nit))
     nombre = str(documento.field(clave.campo_nombre) or "").strip()
     # El identificador corto del documento, el mismo con que el expediente lo refiere. Es
-    # la llave del aporte en `versiones_documento`: reincorporar el MISMO documento
-    # reemplaza su aporte (idempotente) y un documento NUEVO del mismo pagador suma.
+    # la llave del aporte en `versiones_documento`: reincorporar el MISMO documento es
+    # no-op (los bytes ya vistos no pueden mover la cifra declarada) y solo un documento
+    # NUEVO aporta versión.
     sha = documento.content_sha256[:12]
 
     if not nit:
@@ -526,9 +527,16 @@ def _emparejar(
     *,
     sin_nit: bool = False,
 ) -> Partida:
-    # Mismo sha = los mismos bytes otra vez: su aporte se reemplaza. Sha nuevo: se guarda
-    # SIEMPRE en `versiones_documento` — nada desaparece —, pero lo que se publica depende
-    # del tipo de documento.
+    if sha in partida.versiones_documento:
+        # Los mismos bytes otra vez (retry del job de ingesta, el cliente re-sube el
+        # primer archivo): NO-OP. Tomar 'el último PROCESADO' como versión que rige
+        # cambiaba la cifra declarada sin documento nuevo (COINCIDE→DISCREPANCIA y al
+        # revés). De paso el orden de claves de `versiones_documento` queda como orden
+        # de llegada real —la última clave es la versión más nueva—, que es lo que le
+        # permite a `refrescar` de T5 distinguir 'versión nueva' de 'reenvío viejo'.
+        return partida
+    # Sha nuevo: se guarda SIEMPRE en `versiones_documento` — nada desaparece —, pero lo
+    # que se publica depende del tipo de documento.
     versiones = dict(partida.versiones_documento)
     versiones[sha] = version
     if acumulable or len(versiones) == 1:

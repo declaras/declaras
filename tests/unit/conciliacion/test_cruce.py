@@ -489,6 +489,57 @@ def test_la_nota_de_rivales_dice_el_numero_real_de_versiones():
     assert salarios.version_que_rige == "c" * 12
 
 
+def test_reincorporar_bytes_ya_vistos_no_cambia_la_cifra_declarada():
+    """Retry del job de ingesta, o el cliente vuelve a subir el primer archivo: reprocesar
+    bytes YA vistos es no-op. Antes `version_que_rige` era 'el último PROCESADO', no 'el
+    último nuevo': re-incorporar el certificado viejo volteaba COINCIDE→DISCREPANCIA y
+    declaraba 85M donde la DIAN y el certificado vigente dicen 87.4M — la cifra declarada
+    cambiaba sin que llegara ningún documento nuevo (y al revés, re-auto-cerraba)."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    viejo = _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
+    nuevo = _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
+    tras_nuevo = incorporar(incorporar(partidas, viejo), nuevo)
+    reenvio = incorporar(tras_nuevo, viejo)
+    assert reenvio == tras_nuevo  # no-op de verdad, sobre todas las partidas
+    [p] = reenvio
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.version_documento.monto == 87_400_000
+    assert p.version_que_rige == "b" * 12
+
+
+def test_el_orden_de_llegada_queda_en_las_claves_de_versiones_documento():
+    """`refrescar` de T5 tiene que poder distinguir 'versión nueva' (sha que no estaba en
+    `versiones_documento`) de 'reenvío viejo' (sha ya visto: no-op). Como el reenvío no
+    toca el dict, el orden de las claves es el orden de llegada real y la última clave es
+    la versión más nueva — Python no reordena al sobrescribir, así que sin el no-op esta
+    historia no existía."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    viejo = _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
+    nuevo = _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
+    [p] = incorporar(incorporar(incorporar(partidas, viejo), nuevo), viejo)
+    assert list(p.versiones_documento) == ["a" * 12, "b" * 12]
+    assert p.version_que_rige == "b" * 12  # la última NUEVA, no la última procesada
+
+
+def test_un_reenvio_viejo_en_cualquier_posicion_no_cambia_el_desenlace():
+    """Idempotencia con mezclas: el mismo documento repetido entre y después de un rival,
+    en varias permutaciones — el resultado es el de la secuencia sin reenvíos."""
+    base = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    a = _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
+    b = _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
+
+    def secuencia(*docs):
+        partidas = base
+        for doc in docs:
+            partidas = incorporar(partidas, doc)
+        return partidas
+
+    limpio = secuencia(a, b)
+    assert secuencia(a, a, b) == limpio
+    assert secuencia(a, b, a) == limpio
+    assert secuencia(a, a, b, a, a) == limpio
+
+
 def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monkeypatch):
     """La suma por sha sigue existiendo, pero solo para tipos declarados acumulables
     (un banco emite un certificado por CDT y la exógena trae el agregado). El 220 no lo
