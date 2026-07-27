@@ -534,3 +534,34 @@ def test_la_suelta_cerrada_sin_soporte_no_dispara_el_aviso():
         for p in partidas
     ]
     assert not any(f.codigo == "POSIBLE_DOBLE_CONTEO" for f in avisos(partidas))
+
+
+def test_marcar_ajeno_no_excluye_en_silencio():
+    """I7 de la ronda 2, ruling: 'la exclusión jamás silenciosa' aplica a las TRES
+    decisiones sin hecho. MARCAR_AJENO sobre una partida que la DIAN reportó AL TITULAR
+    era la puerta paralela: 85M excluidos con avisos()==[] y nada en el borrador. Aviso
+    informativo con partida, tercero, concepto, cifra y motivo; bloqueante queda solo
+    para LLEVAR_A_MANO, donde la plata sí es del contribuyente."""
+    [p] = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    resuelta = resolver(p, Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO,
+                        quien="contador@x.co")
+    caso = _a_caso([resuelta])
+    assert caso.ingresos_brutos_totales == 0
+    [aviso] = avisos([resuelta])
+    assert aviso.codigo == "INGRESO_EXCLUIDO"
+    assert aviso.severidad == "info"
+    assert "900111222:SALARIOS" in aviso.mensaje
+    assert "ACME SAS" in aviso.mensaje
+    assert "85,000,000" in aviso.mensaje
+    assert "MARCAR_AJENO" in aviso.mensaje
+    assert "NO_ES_MIO" in aviso.mensaje
+
+
+def test_cerrar_sin_soporte_tambien_enumera_lo_excluido():
+    p = resolver(partida_concepto_desconocido(), Decision.CERRAR_SIN_SOPORTE,
+                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    [aviso] = avisos([p])
+    assert aviso.codigo == "INGRESO_EXCLUIDO"
+    assert aviso.severidad == "info"
+    assert "5,000,000" in aviso.mensaje
+    assert "sin clasificar" in aviso.mensaje  # concepto None: se dice, no se inventa

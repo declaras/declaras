@@ -19,6 +19,7 @@ from declaras.services.conciliacion.cruce import TIPO_A_CLAVE, abrir, incorporar
 from declaras.services.conciliacion.mapeo import (
     DECISIONES_CON_HECHO,
     DIVIDENDOS_SIN_DESAGREGAR,
+    INGRESO_EXCLUIDO,
     INGRESO_LLEVADO_A_MANO,
     PENSION_DISTRIBUIDA_UNIFORME,
     POSIBLE_DOBLE_CONTEO,
@@ -51,6 +52,7 @@ __all__ = [
     "CONCEPTOS_FUERA_DEL_MOTOR",
     "DECISIONES_CON_HECHO",
     "DIVIDENDOS_SIN_DESAGREGAR",
+    "INGRESO_EXCLUIDO",
     "INGRESO_LLEVADO_A_MANO",
     "NOTA_VALORES_CAMBIARON",
     "PENSION_DISTRIBUIDA_UNIFORME",

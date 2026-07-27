@@ -53,6 +53,7 @@ RETENCION_SIN_INGRESO = "RETENCION_SIN_INGRESO"
 INGRESO_LLEVADO_A_MANO = "INGRESO_LLEVADO_A_MANO"
 RETENCION_DESPLAZADA = "RETENCION_DESPLAZADA"
 POSIBLE_DOBLE_CONTEO = "POSIBLE_DOBLE_CONTEO"
+INGRESO_EXCLUIDO = "INGRESO_EXCLUIDO"
 
 # Orden de ensamble por tercero. También es la prioridad con que la retención explícita
 # (las filas R132 del tercero) se asigna a UN ingreso: el laboral primero.
@@ -148,6 +149,13 @@ def _ensamblar(partidas: list[Partida]) -> _Ensamble:
             ensamble.avisos.append(_aviso_llevada_a_mano(p))
             continue
         if p.resolucion.decision not in DECISIONES_CON_HECHO:
+            # I7 de la ronda 2, ruling: "la exclusión jamás silenciosa" aplica a las
+            # TRES decisiones sin hecho, no solo a LLEVAR_A_MANO. MARCAR_AJENO y
+            # CERRAR_SIN_SOPORTE eran la puerta paralela — plata fuera del 210 con
+            # avisos() vacío. Informativo, no bloqueante: acá una persona afirmó que la
+            # plata NO va ("no es mío" / "sin soporte"), que es más fuerte que "al
+            # motor le falta el concepto"; el borrador enumera lo excluido igual.
+            ensamble.avisos.append(_aviso_exclusion(p))
             continue
         if p.concepto is None:
             # Defensa contra partidas construidas a mano: la tabla de decisiones ya
@@ -386,6 +394,24 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                 "sin sustento. Revisar de qué ingreso viene."
             ),
         ))
+
+
+def _aviso_exclusion(p: Partida) -> Flag:
+    """El aviso informativo de una partida cerrada sin hecho: qué quedó por fuera del
+    210 y por qué. Enumera partida, tercero, concepto y cifra — la lista de exclusiones
+    que el contador repasa antes de presentar."""
+    res = _resuelta(p)
+    nombre = p.nombre_tercero or p.nit_tercero or "un tercero sin identificar"
+    concepto = str(p.concepto) if p.concepto is not None else "concepto sin clasificar"
+    return Flag(
+        codigo=INGRESO_EXCLUIDO,
+        severidad="info",
+        mensaje=(
+            f"La partida {p.id} de {nombre} ({concepto}, {_cifras_conocidas(p)}) quedó "
+            f"por fuera del 210 por decisión de {res.quien}: {res.decision} "
+            f"({res.motivo})."
+        ),
+    )
 
 
 def _aviso_llevada_a_mano(p: Partida) -> Flag:
