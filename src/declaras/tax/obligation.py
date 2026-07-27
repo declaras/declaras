@@ -35,6 +35,23 @@ THRESHOLD_LIMITS_IN_UVT: dict[ThresholdCode, float] = {
     ThresholdCode.COMPRAS: 1_400,
 }
 
+# Topes cuyo comparador es "iguales o superiores" (`>=`). La norma es asimetrica a
+# proposito y el comparador sale del verbo de cada articulo, uno por uno:
+#
+# - INGRESOS: el art. 592 num. 1 ET define al NO obligado como quien tuvo ingresos brutos
+#   "inferiores a 1.400 UVT". Negado, obligado es quien llega a 1.400 UVT, asi que estar
+#   exactamente en el tope ya obliga -> `>=`.
+# - PATRIMONIO: mismo numeral del art. 592, pero el verbo cambia: patrimonio bruto que "no
+#   exceda de 4.500 UVT". Estar exactamente en 4.500 UVT no lo excede -> `>` estricto.
+# - CONSUMO_TARJETA, MOVIMIENTOS y COMPRAS: art. 594-3 ET, los tres con verbo estricto
+#   ("que no excedan", "que no superen", "que no exceda") -> `>` estricto, igual que
+#   patrimonio.
+#
+# El motor (`motor/cierre.py`) compara con estos mismos comparadores: son dos
+# implementaciones de la misma regla y en el borde exacto tienen que responder lo mismo,
+# porque una alimenta el resumen del caso y la otra la liquidacion.
+THRESHOLDS_INCLUSIVE_OF_LIMIT: frozenset[ThresholdCode] = frozenset({ThresholdCode.INGRESOS})
+
 # Como explicarle cada tope a una persona, sin jerga. Es texto que ve el usuario, asi que
 # va con la ortografia correcta (los comentarios y nombres del codigo van sin tildes, pero
 # el contenido que se muestra, no).
@@ -85,6 +102,17 @@ def limit_for(code: ThresholdCode, year: int) -> int:
     return in_pesos(THRESHOLD_LIMITS_IN_UVT[code], year)
 
 
+def exceeds_limit(code: ThresholdCode, reported_amount: int, limit_amount: int) -> bool:
+    """Si el valor reportado supera el tope, con el comparador que ese tope exige.
+
+    Ver `THRESHOLDS_INCLUSIVE_OF_LIMIT`: solo ingresos obliga al alcanzar el tope; los
+    otros cuatro exigen pasarlo.
+    """
+    if code in THRESHOLDS_INCLUSIVE_OF_LIMIT:
+        return reported_amount >= limit_amount
+    return reported_amount > limit_amount
+
+
 def assess(*, tax_year: int, reported: dict[ThresholdCode, int]) -> ObligationAssessment:
     """Evalua los topes con los valores que la DIAN reporta.
 
@@ -92,16 +120,17 @@ def assess(*, tax_year: int, reported: dict[ThresholdCode, int]) -> ObligationAs
     cinco topes (aunque cuatro esten en cero) es lo que le explica por que esta o no
     obligado, y omitir uno haria parecer que no se reviso.
     """
-    evaluations = [
-        ThresholdEvaluation(
-            code=code,
-            label=THRESHOLD_LABELS[code],
-            reported_amount=reported.get(code, 0),
-            limit_amount=limit_for(code, tax_year),
-            limit_in_uvt=THRESHOLD_LIMITS_IN_UVT[code],
-            # "iguales o superiores": estar exactamente en el tope ya obliga.
-            exceeded=reported.get(code, 0) >= limit_for(code, tax_year),
-        )
-        for code in ThresholdCode
-    ]
+    evaluations = [_evaluate(code, reported.get(code, 0), tax_year) for code in ThresholdCode]
     return ObligationAssessment(tax_year=tax_year, uvt=uvt_for(tax_year), thresholds=evaluations)
+
+
+def _evaluate(code: ThresholdCode, reported_amount: int, year: int) -> ThresholdEvaluation:
+    limit_amount = limit_for(code, year)
+    return ThresholdEvaluation(
+        code=code,
+        label=THRESHOLD_LABELS[code],
+        reported_amount=reported_amount,
+        limit_amount=limit_amount,
+        limit_in_uvt=THRESHOLD_LIMITS_IN_UVT[code],
+        exceeded=exceeds_limit(code, reported_amount, limit_amount),
+    )
