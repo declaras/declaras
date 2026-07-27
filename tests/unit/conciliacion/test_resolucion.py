@@ -225,6 +225,54 @@ def test_autorresolver_deja_en_persona_lo_que_no_es_automatico():
     assert all(p.resolucion is None for p in resueltas)
 
 
+def test_autorresolver_acepta_los_aportes_obligatorios_del_220():
+    """El TERCER automatismo (ruling del coordinador, ronda de fixes 1 de T6).
+
+    La exógena reporta los aportes obligatorios bajo el NIT de la EPS o del fondo, nunca
+    bajo el del empleador, así que esta partida NO puede cruzar contra ninguna fila del
+    reporte — es imposible por construcción. Pedirle una decisión al contador ahí no gana
+    información: no hay dos versiones que comparar, y el 220 es el soporte que la ley exige.
+    """
+    partidas = autorresolver(incorporar([], _cert_220_completo("a")))
+    aportes = [p for p in partidas if p.concepto is Concepto.APORTES_SALUD]
+    assert aportes, "el 220 abre partida de aportes"
+    [salud] = aportes
+    assert salud.estado is EstadoPartida.SOLO_DOCUMENTO
+    resolucion = salud.resolucion
+    assert resolucion is not None
+    assert resolucion.decision is Decision.USAR_DOCUMENTO
+    assert resolucion.motivo is Motivo.SIN_CONTRAPARTE_DIAN
+    assert resolucion.origen is Origen.SISTEMA
+
+
+def test_el_tercer_automatismo_no_es_aceptar_todo_lo_del_220():
+    """La discrepancia de salarios sigue siendo del contador: ahí SÍ hay dos versiones que
+    comparar, y esa es exactamente la decisión que necesita criterio humano."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    resueltas = autorresolver(
+        incorporar(partidas, _cert_220_completo("a"), tolerancia_pesos=0)
+    )
+    por_concepto = {p.concepto: p for p in resueltas}
+    assert por_concepto[Concepto.SALARIOS].estado is EstadoPartida.DISCREPANCIA
+    assert por_concepto[Concepto.SALARIOS].resolucion is None
+    assert por_concepto[Concepto.APORTES_SALUD].resolucion is not None
+    assert [p.concepto for p in pendientes(resueltas)] == [Concepto.SALARIOS]
+
+
+def test_la_provisional_de_los_aportes_se_cae_si_cambian_las_cifras():
+    """Provisional en el mismo sentido que las otras dos: un 220 corregido con otros
+    aportes la invalida por huella, no la deja pegada a la cifra vieja."""
+    primera = autorresolver(incorporar([], _cert_220_completo("a", aportes_salud=3_400_000)))
+    segunda = incorporar([], _cert_220_completo("b", aportes_salud=5_000_000))
+    refrescadas, _huerfanas = refrescar(segunda, primera)
+    [salud] = [p for p in refrescadas if p.concepto is Concepto.APORTES_SALUD]
+    assert salud.version_documento is not None
+    assert salud.version_documento.monto == 5_000_000
+    resolucion = salud.resolucion
+    assert resolucion is not None
+    assert resolucion.valor == 5_000_000, "la provisional se rehizo sobre la cifra nueva"
+
+
 def test_autorresolver_respeta_las_resoluciones_existentes():
     """Una decisión del contador no se pisa por volver a correr el automatismo."""
     del_contador = resolver(partida_coincide(), Decision.USAR_DIAN,

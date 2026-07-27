@@ -2,10 +2,12 @@
 
 Dos caminos ponen resolución. `resolver` es el del contador: valida que la decisión sea
 posible para el estado de la partida y deja huella de quién y por qué. `autorresolver` es
-el del sistema, con exactamente dos automatismos: cerrar las COINCIDE (los dos lados dicen
-lo mismo) y ponerles una provisional USAR_DIAN a las SOLO_DIAN para que el 210 preliminar
-exista sin esperar documentos. Todo lo demás — discrepancias, conceptos sin clasificar,
-documentos sueltos y CUALQUIER partida ajena — es de una persona.
+el del sistema, con exactamente tres automatismos: cerrar las COINCIDE (los dos lados dicen
+lo mismo), ponerles una provisional USAR_DIAN a las SOLO_DIAN para que el 210 preliminar
+exista sin esperar documentos, y aceptar el documento en las SOLO_DOCUMENTO cuyo concepto la
+exógena NO puede corroborar por reportarlo bajo otro NIT (los aportes obligatorios de un
+220; ver `CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO`). Todo lo demás — discrepancias, conceptos
+sin clasificar, documentos sueltos y CUALQUIER partida ajena — es de una persona.
 
 `refrescar` reconcilia lo resuelto con una re-derivación del cruce (documento nuevo,
 re-consulta a la DIAN): las provisionales del sistema se reemplazan siempre; las del
@@ -19,7 +21,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR
+from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
 from declaras.services.conciliacion.cruce import _con_nota
 from declaras.services.conciliacion.modelos import (
     Decision,
@@ -38,6 +40,30 @@ QUIEN_SISTEMA = "sistema"
 # La nota con que `refrescar` devuelve a pendiente una partida cuya huella ya no coincide.
 # Texto del brief, literal: es lo que el contador lee en la cola.
 NOTA_VALORES_CAMBIARON = "los valores cambiaron desde la resolución anterior"
+
+# Los conceptos del TERCER automatismo (ruling del coordinador, ronda de fixes 1 de T6).
+#
+# LA RAZÓN ES UNA ASIMETRÍA DE NITs, no una comodidad: la exógena reporta los aportes
+# obligatorios bajo el NIT de la EPS o del fondo de pensiones, nunca bajo el del empleador,
+# así que la partida de aportes que abre un 220 NUNCA va a cruzar contra una fila del
+# reporte — es imposible por construcción, no "todavía no llegó". Pedirle al contador una
+# decisión ahí no gana información: no hay dos versiones que comparar, y el 220 es el
+# soporte que la ley exige para esa deducción. Sin esto, cada 220 dejaba TRES renglones por
+# decidir (la discrepancia de salarios más estos dos), y dos de ellos no tenían nada que
+# decidir.
+#
+# ES PROVISIONAL, en el mismo sentido que los otros dos automatismos: la resolución queda
+# con origen SISTEMA, visible en la lista, y cualquier cambio de cifras la invalida por
+# huella y la devuelve a la cola.
+#
+# LO QUE ESTE AUTOMATISMO NO ES: un "aceptar todo lo del 220". La discrepancia de salarios
+# sigue siendo del contador — ahí SÍ hay dos versiones que comparar y la decisión necesita
+# criterio. Un agente futuro que quiera ampliar esto a otros conceptos tiene que mostrar la
+# misma imposibilidad estructural de cruce; hoy, medido contra `TIPO_A_CLAVE`, el único
+# documento que abre partidas de estos dos conceptos es el 220 del empleador.
+CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO = frozenset(
+    {Concepto.APORTES_SALUD, Concepto.APORTES_PENSION}
+)
 
 # Qué decisión es posible sobre qué desenlace del cruce. La tabla del brief, con DOS
 # desviaciones autorizadas. (1) Herencia de T4 (riesgo 2 de la ronda 2): SOLO_DOCUMENTO
@@ -83,7 +109,8 @@ _MOTIVOS_POR_DECISION: dict[Decision, frozenset[Motivo]] = {
          Motivo.DECISION_DEL_CONTADOR}
     ),
     Decision.USAR_DOCUMENTO: frozenset(
-        {Motivo.ERROR_DEL_TERCERO, Motivo.COINCIDEN, Motivo.DECISION_DEL_CONTADOR}
+        {Motivo.ERROR_DEL_TERCERO, Motivo.COINCIDEN, Motivo.DECISION_DEL_CONTADOR,
+         Motivo.SIN_CONTRAPARTE_DIAN}
     ),
     Decision.USAR_OTRO: frozenset({Motivo.DECISION_DEL_CONTADOR}),
     Decision.MARCAR_AJENO: frozenset({Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}),
@@ -132,7 +159,7 @@ def resolver(
 
 
 def autorresolver(partidas: list[Partida]) -> list[Partida]:
-    """Los DOS automatismos del sistema. Pura: no muta la lista de entrada.
+    """Los TRES automatismos del sistema. Pura: no muta la lista de entrada.
 
     Una partida ajena (`reportado_a is not None`) NUNCA se toca, en ningún estado — el
     guard va antes de mirar el estado, porque una provisional sobre una ajena liquidaría
@@ -174,6 +201,18 @@ def autorresolver(partidas: list[Partida]) -> list[Partida]:
         elif p.estado is EstadoPartida.SOLO_DIAN:
             resueltas.append(_con_resolucion(
                 p, Decision.USAR_DIAN, motivo=Motivo.FALTA_DOCUMENTO,
+                quien=QUIEN_SISTEMA, origen=Origen.SISTEMA,
+            ))
+        elif (p.estado is EstadoPartida.SOLO_DOCUMENTO
+                and p.concepto in CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO):
+            # El TERCER automatismo (ver `CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO`): la exógena
+            # reporta los aportes obligatorios bajo el NIT de la EPS o del fondo, así que
+            # esta partida no puede cruzar contra ninguna fila del reporte —imposible por
+            # construcción, no "todavía no llegó"— y el 220 es el soporte que la ley exige.
+            # Provisional como las otras dos: origen SISTEMA, visible, y un cambio de cifras
+            # la invalida por huella.
+            resueltas.append(_con_resolucion(
+                p, Decision.USAR_DOCUMENTO, motivo=Motivo.SIN_CONTRAPARTE_DIAN,
                 quien=QUIEN_SISTEMA, origen=Origen.SISTEMA,
             ))
         else:

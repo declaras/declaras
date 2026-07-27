@@ -102,6 +102,13 @@ class Motivo(StrEnum):
     DECISION_DEL_CONTADOR = "DECISION_DEL_CONTADOR"
     # El soporte y la cifra existen; lo que falta es el motor (va con LLEVAR_A_MANO).
     FUERA_DEL_MOTOR = "FUERA_DEL_MOTOR"
+    # El documento es la fuente autoritativa del hecho y la exógena NO puede corroborarlo,
+    # porque el tercero lo reporta bajo otro NIT. Es el motivo del tercer automatismo (los
+    # aportes obligatorios de un 220, ver `autorresolver`): no es "coinciden" —no hay nada
+    # que comparar— ni "decisión del contador" —no la tomó una persona—, y usar cualquiera
+    # de los dos volvería a poner en la `Fuente` que lee un auditor una pareja
+    # decisión/motivo que se contradice, que es justo lo que el M1 de la ronda 2 cerró.
+    SIN_CONTRAPARTE_DIAN = "SIN_CONTRAPARTE_DIAN"
 
 
 class Origen(StrEnum):

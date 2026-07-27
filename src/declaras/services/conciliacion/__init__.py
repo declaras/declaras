@@ -55,6 +55,7 @@ from declaras.services.conciliacion.peticiones import (
     derivar_peticiones,
 )
 from declaras.services.conciliacion.resolucion import (
+    CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO,
     NOTA_VALORES_CAMBIARON,
     QUIEN_SISTEMA,
     autorresolver,
@@ -65,6 +66,7 @@ from declaras.services.conciliacion.resolucion import (
 from declaras.services.conciliacion.respuestas import Respuesta
 
 __all__ = [
+    "CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO",
     "CONCEPTOS_FUERA_DEL_MOTOR",
     "DECISIONES_CON_HECHO",
     "DIVIDENDOS_SIN_DESAGREGAR",
