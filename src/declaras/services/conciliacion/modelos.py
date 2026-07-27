@@ -99,6 +99,15 @@ class Partida(_Modelo):
     # con otro hash y sumarlo duplicaría la plata). Campo adicional al contrato del plan,
     # autorizado en la ronda de fixes 1 de la T4.
     versiones_documento: dict[str, Valor] = Field(default_factory=dict)
+    # Cuando hubo versiones rivales de un tipo NO acumulable: el sha corto del documento
+    # cuya versión se publicó en `version_documento` (la última en llegar). None = sin
+    # rivales, o tipo acumulable (rige el agregado). Es ESTRUCTURAL por la misma lección
+    # de `reportado_a`: la nota es texto libre que `refrescar` de T5 sobrescribe, y la
+    # huella de auditoría —"llegaron varios certificados y rigió este"— tiene que quedar
+    # en la partida, que es donde se busca la respuesta cuando el contador o la DIAN
+    # pregunten por qué se declaró esa cifra. Campo adicional al contrato del plan,
+    # autorizado en la ronda de fixes 3 de la T4.
+    version_que_rige: str | None = None
     estado: EstadoPartida
     nota: str | None = None
     # A quién le reportó el tercero cuando NO fue al titular: la otra identificación, o el

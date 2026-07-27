@@ -528,15 +528,20 @@ def _emparejar(
         # es lo que la exógena también reporta.
         publicada = _agregado(versiones)
         nota_rivales = None
+        version_que_rige = None
     else:
         # Tipo NO acumulable con más de una versión: el sha distingue bytes, no documentos,
         # así que esto es casi siempre el mismo certificado re-escaneado. Sumar duplicaría
         # la plata en silencio; rige la última versión en llegar y una persona decide.
+        # Cuál rigió queda ESTRUCTURAL en la partida (la nota es texto libre que otras
+        # capas reescriben): esa es la huella de auditoría de la cifra publicada.
         publicada = version
         nota_rivales = _NOTA_VERSIONES_RIVALES
+        version_que_rige = sha
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
         "version_documento": publicada,
+        "version_que_rige": version_que_rige,
     }
 
     if _es_ajena(partida):

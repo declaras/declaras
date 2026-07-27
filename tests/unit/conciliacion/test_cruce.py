@@ -406,6 +406,31 @@ def test_entre_versiones_rivales_rige_la_ultima():
     assert "cuál rige" in (salarios.nota or "")
 
 
+def test_la_huella_de_rivales_es_estructural_y_dice_cual_rigio():
+    """Si de dos certificados distintos uno cuadra con la exógena, la DIAN rompe el empate:
+    la partida queda COINCIDE (mandarla al contador sería trabajo inventado). Pero el hecho
+    "hubo rivales y rigió este" no puede vivir en la nota —texto libre que refrescar de T5
+    sobrescribe—: es la huella de auditoría de por qué se declaró esa cifra."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "a", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "b", salarios=87_400_000, aportes_salud=0, aportes_pension=0))
+    [p] = [x for x in partidas if x.concepto is Concepto.SALARIOS]
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.version_que_rige == "b" * 12
+    assert set(p.versiones_documento) == {"a" * 12, "b" * 12}
+    reescrita = p.model_copy(
+        update={"nota": "los valores cambiaron desde la resolución anterior"}
+    )
+    assert reescrita.version_que_rige == "b" * 12  # sobrevive al refrescar de T5
+
+
+def test_sin_rivales_no_hay_version_que_rige():
+    [p] = incorporar([], _cert_220("900111222", 85_000_000))
+    assert p.version_que_rige is None
+
+
 def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monkeypatch):
     """La suma por sha sigue existiendo, pero solo para tipos declarados acumulables
     (un banco emite un certificado por CDT y la exógena trae el agregado). El 220 no lo
