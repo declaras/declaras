@@ -209,6 +209,22 @@ def test_conceptos_distintos_sin_codigo_no_se_fusionan():
     assert sorted(p.version_dian.monto for p in partidas) == [3_500_000, 41_000_000]
 
 
+def test_un_texto_igual_a_un_concepto_no_se_cuela_en_la_partida_mapeada():
+    """El espacio de nombres de la clave no mezcla concepto normalizado con texto crudo:
+    una fila sin código cuyo texto sea exactamente "SALARIOS" no puede caer en la misma
+    partida que el 5001 (quedaría una sola partida cuyo concepto y estado dependen del
+    orden, y con concepto=None es lo que a_caso de T5 rechaza)."""
+    disfrazada = _fila("900111222", "", 41_000_000)
+    disfrazada["concept"] = "SALARIOS"
+    disfrazada["concept_code"] = None
+    partidas = abrir(_exogena(_fila("900111222", "5001", 50_000_000), disfrazada))
+    assert len(partidas) == 2
+    assert {p.estado for p in partidas} == {EstadoPartida.SOLO_DIAN,
+                                            EstadoPartida.CONCEPTO_DESCONOCIDO}
+    assert sorted(p.version_dian.monto for p in partidas) == [41_000_000, 50_000_000]
+    assert len({p.id for p in partidas}) == 2
+
+
 def test_terceros_sin_nit_no_se_fusionan():
     """Dos empresas sin NIT no pueden terminar sumadas bajo el nombre de la primera."""
     a = _fila("", "5001", 10_000_000, nombre="EMPRESA A")

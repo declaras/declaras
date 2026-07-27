@@ -182,9 +182,18 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         # Para un código sin mapear, la identidad del grupo es el código crudo, y a falta
         # de código el texto del concepto: fusionar dos conceptos desconocidos distintos
         # sería asumir que son el mismo hecho (aportes a salud + consignaciones bancarias
-        # del mismo tercero no son una partida de 44,5 millones).
+        # del mismo tercero no son una partida de 44,5 millones). El prefijo separa los
+        # espacios de nombres: sin él, una fila sin código cuyo texto fuera exactamente
+        # "SALARIOS" caería en la misma partida que el 5001.
         texto = str(valores.get("concept") or "").strip()
-        clave = str(concepto) if concepto is not None else (codigo or texto or "desconocido")
+        if concepto is not None:
+            clave = str(concepto)
+        elif codigo:
+            clave = f"codigo:{codigo}"
+        elif texto:
+            clave = f"texto:{texto}"
+        else:
+            clave = "desconocido"
         grupo = grupos.setdefault(
             (ref, clave, reportado_a),
             _Grupo(
