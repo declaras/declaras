@@ -355,7 +355,8 @@ def test_incorporar_dos_veces_el_mismo_documento_es_idempotente():
 
 def test_reincorporar_un_documento_sin_nit_no_duplica_la_plata():
     """El camino sin NIT siempre anexaba: el mismo documento dos veces daba dos partidas
-    de 85M = 170M. El id ahí sí es estable (viene del sha), así que empareja por id."""
+    de 85M = 170M. La partida sin NIT tiene id estable por (doc_type, concepto), así que
+    el reenvío empareja por id en vez de anexar."""
     campos = {"empleador_nombre": "ACME SAS", "salarios": 85_000_000, "retencion": 0}
     doc = DocumentReading(
         doc_type="CERT_INGRESOS_220", parser="test", content_sha256="c" * 64,
@@ -366,11 +367,56 @@ def test_reincorporar_un_documento_sin_nit_no_duplica_la_plata():
     assert resultado[0].version_documento.monto == 85_000_000
 
 
-def _cert_220_completo(sha: str, *, salarios=85_000_000, retencion=0,
+def test_dos_escaneos_sin_nit_del_mismo_220_no_suman_la_plata():
+    """El id sin NIT llevaba el sha: dos escaneos del mismo 220 eran DOS partidas que
+    nunca se encontraban — 6.800.000 de aportes donde hay 3.400.000, 170M de salarios,
+    cero notas y nada que las vinculara. Sin NIT no se puede distinguir "dos escaneos del
+    mismo certificado" de "dos certificados de dos empleadores que no pudimos
+    identificar", así que no se adivina (ruling de la ronda 4): la partida es UNA por
+    (doc_type, concepto), los documentos quedan como rivales anotados con todas sus
+    versiones conservadas, y el contador decide — incluso con cifras iguales, porque
+    iguales también podrían ser dos empleadores."""
+    partidas = incorporar(abrir(_exogena()), _cert_220_completo("c", nit=""))
+    partidas = incorporar(partidas, _cert_220_completo("d", nit=""))
+    assert len(partidas) == 3
+    por_concepto = {p.concepto: p for p in partidas}
+    salud = por_concepto[Concepto.APORTES_SALUD]
+    assert salud.version_documento.monto == 3_400_000  # publicada, nunca la suma (6.8M)
+    assert set(salud.versiones_documento) == {"c" * 12, "d" * 12}  # ninguna desaparece
+    assert "a mano" in (salud.nota or "")
+    assert salud.version_que_rige == "d" * 12
+    salarios = por_concepto[Concepto.SALARIOS]
+    assert salarios.version_documento.monto == 85_000_000  # no 170M
+    assert "a mano" in (salarios.nota or "")
+
+
+def test_mezcla_sin_nit_y_luego_con_nit_no_confirma_la_suelta_en_silencio():
+    """Un OCR que mejora: el primer escaneo llega sin NIT y el segundo con él legible.
+    El certificado con NIT concilia contra la DIAN; la partida suelta del primer escaneo
+    NO se suma ni se confirma sola — queda SOLO_DOCUMENTO con su nota, y una persona la
+    ve antes de que su plata entre a ninguna parte. (Nota T5: al agregar por concepto,
+    una suelta sin resolver no puede sumarse con la partida conciliada del mismo concepto
+    como si fueran dos hechos independientes.)"""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
+    partidas = incorporar(
+        partidas, _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
+    assert len(partidas) == 2
+    conciliada = next(p for p in partidas if p.id == "900111222:SALARIOS")
+    assert conciliada.estado == EstadoPartida.COINCIDE
+    suelta = next(p for p in partidas if p.id == "sin-nit:CERT_INGRESOS_220:SALARIOS")
+    assert suelta.estado == EstadoPartida.SOLO_DOCUMENTO
+    assert "no se pudo cruzar" in (suelta.nota or "")
+
+
+def _cert_220_completo(sha: str, *, nit="900111222", salarios=85_000_000, retencion=0,
                        aportes_salud=3_400_000, aportes_pension=3_600_000) -> DocumentReading:
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
+    campos = {"empleador_nit": nit, "empleador_nombre": "ACME SAS",
               "salarios": salarios, "retencion": retencion,
               "aportes_salud": aportes_salud, "aportes_pension": aportes_pension}
+    if not nit:
+        del campos["empleador_nit"]  # como un OCR que no encontró el NIT
     return DocumentReading(
         doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],

@@ -409,15 +409,20 @@ def _incorporar_clave(
     sha = documento.content_sha256[:12]
 
     if not nit:
-        # Sin NIT no hay llave de tercero (entrada manual o lectura incompleta): la partida
-        # es del documento mismo, con el sha como identidad. Reincorporarlo empareja por
-        # ese id — este era justo el camino que duplicaba la plata en cada subida.
-        id_suelta = f"{sha}:{clave.concepto}"
+        # Sin NIT no hay llave de tercero (entrada manual o lectura incompleta), y tampoco
+        # se puede distinguir en principio "dos escaneos del mismo certificado" de "dos
+        # certificados de dos terceros que no pudimos identificar" — así que no se adivina
+        # (ruling de la ronda 4): la identidad de la partida es (doc_type, concepto),
+        # estable entre subidas, y varios documentos que caigan en ella son RIVALES que
+        # decide una persona, nunca una suma. Con el sha en el id, dos escaneos del mismo
+        # 220 eran dos partidas que nunca se encontraban y duplicaban la plata en silencio.
+        id_suelta = f"sin-nit:{documento.doc_type}:{clave.concepto}"
         indice = next((i for i, p in enumerate(partidas) if p.id == id_suelta), None)
         if indice is not None:
             actualizadas = list(partidas)
             actualizadas[indice] = _emparejar(
-                partidas[indice], sha, version, tolerancia_pesos, clave.acumulable
+                partidas[indice], sha, version, tolerancia_pesos, clave.acumulable,
+                sin_nit=True,
             )
             return actualizadas
         suelta = Partida(
@@ -513,7 +518,13 @@ def _es_ajena(partida: Partida) -> bool:
 
 
 def _emparejar(
-    partida: Partida, sha: str, version: Valor, tolerancia_pesos: int, acumulable: bool
+    partida: Partida,
+    sha: str,
+    version: Valor,
+    tolerancia_pesos: int,
+    acumulable: bool,
+    *,
+    sin_nit: bool = False,
 ) -> Partida:
     # Mismo sha = los mismos bytes otra vez: su aporte se reemplaza. Sha nuevo: se guarda
     # SIEMPRE en `versiones_documento` — nada desaparece —, pero lo que se publica depende
@@ -533,7 +544,7 @@ def _emparejar(
         # Cuál rigió queda ESTRUCTURAL en la partida (la nota es texto libre que otras
         # capas reescriben): esa es la huella de auditoría de la cifra publicada.
         publicada = version
-        nota_rivales = _nota_rivales(len(versiones))
+        nota_rivales = _nota_rivales(len(versiones), sin_nit=sin_nit)
         version_que_rige = sha
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
@@ -586,8 +597,18 @@ def _con_nota(nota: str | None, *nuevas: str | None) -> str | None:
     return nota
 
 
-def _nota_rivales(n: int) -> str:
-    """El aviso de versiones rivales, con el número REAL de versiones en juego."""
+def _nota_rivales(n: int, *, sin_nit: bool) -> str:
+    """El aviso de versiones rivales, con el número REAL de versiones en juego.
+
+    Sin NIT el aviso dice la ambigüedad completa: no hay forma de saber si son versiones
+    del mismo certificado o certificados de terceros distintos, y esa es exactamente la
+    decisión que se le pide al contador.
+    """
+    if sin_nit:
+        return (
+            f"llegaron {n} documentos sin NIT del mismo tipo; pueden ser el mismo "
+            "certificado repetido o terceros distintos: hay que cruzarlos a mano"
+        )
     return (
         f"llegaron {n} certificados distintos del mismo empleador; "
         "hay que decidir cuál rige"
@@ -595,8 +616,11 @@ def _nota_rivales(n: int) -> str:
 
 
 _NOTA_RIVALES_RE = re.compile(
-    r"(?:; )?llegaron \d+ certificados distintos del mismo empleador; "
-    r"hay que decidir cuál rige"
+    r"(?:; )?llegaron \d+ (?:"
+    r"certificados distintos del mismo empleador; hay que decidir cuál rige"
+    r"|documentos sin NIT del mismo tipo; pueden ser el mismo certificado repetido "
+    r"o terceros distintos: hay que cruzarlos a mano"
+    r")"
 )
 
 
