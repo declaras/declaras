@@ -1,10 +1,15 @@
+from collections.abc import Sequence
+
 from pydantic import BaseModel, ConfigDict
 
 from declaras.caso import CasoTributario
-from declaras.motor import Elecciones, Liquidacion, liquidar
+from declaras.motor import Elecciones, Flag, Liquidacion, liquidar
 from declaras.parametros import ParametrosAnio
 
 __all__ = ["ResultadoOptimizacion", "ahorro_marginal", "optimizar"]
+
+# Severidad de `Flag` que impide optimizar. Literal del motor (`traza.Flag.severidad`).
+_BLOQUEANTE = "bloqueante"
 
 
 class ResultadoOptimizacion(BaseModel):
@@ -22,12 +27,27 @@ def _combos(caso: CasoTributario) -> list[Elecciones]:
             for a in (False, True) for b in (False, True)]
 
 
-def optimizar(caso: CasoTributario, p: ParametrosAnio) -> ResultadoOptimizacion:
+def optimizar(caso: CasoTributario, p: ParametrosAnio, *,
+              flags_previos: Sequence[Flag] = ()) -> ResultadoOptimizacion:
     """Enumera las elecciones legales, evalúa el motor y elige la de menor impuesto.
 
     Desempate determinista: menos elecciones activas, luego orden de la tupla.
+
+    NO OPTIMIZA SOBRE UNA LIQUIDACIÓN BLOQUEADA. Un aviso `bloqueante` dice que a esta
+    base le falta algo (hoy: un ingreso que el motor no liquida y que el contador tiene
+    que sumar a mano), y la elección de menor impuesto sobre una base incompleta puede ser
+    la equivocada para el 210 completo — el contador se quedaría con la elección mala
+    justo cuando ya nadie va a recalcular. Antes esto era una etiqueta que el render
+    pintaba y que acá nadie miraba.
+
+    Se revisan las dos fuentes: los flags que levanta el motor al liquidar y los
+    `flags_previos` de quien llama (los avisos del conciliador, que el motor no puede
+    levantar porque está congelado y `CasoTributario` no tiene dónde llevarlos). Cubrir
+    solo una dejaría la otra abierta.
     """
     evaluados = [(liquidar(caso, p, e), e) for e in _combos(caso)]
+    _exigir_sin_bloqueantes([*flags_previos,
+                             *(f for liq, _ in evaluados for f in liq.flags)])
     liq, e = min(
         evaluados,
         key=lambda par: (par[0].valor("IMPUESTO_NETO"), par[1].activas,
@@ -35,6 +55,17 @@ def optimizar(caso: CasoTributario, p: ParametrosAnio) -> ResultadoOptimizacion:
     )
     return ResultadoOptimizacion(liquidacion=liq, elecciones=e,
                                  evaluadas=len(evaluados))
+
+
+def _exigir_sin_bloqueantes(flags: Sequence[Flag]) -> None:
+    codigos = sorted({f.codigo for f in flags if f.severidad == _BLOQUEANTE})
+    if codigos:
+        raise ValueError(
+            f"No se optimiza una liquidación con alertas bloqueantes "
+            f"({', '.join(codigos)}): la elección de menor impuesto sobre una base "
+            "incompleta puede ser la equivocada para el 210 completo. Hay que resolver "
+            "esas alertas antes de elegir."
+        )
 
 
 def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
