@@ -2,11 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Unificar las dos ramas paralelas (conector DIAN de Juan + motor tributario) y construir la costura: el **conciliador** que cruza exógena vs certificados del cliente, la mesa del contador, el mapeo a `CasoTributario`, y los 8 extractores de certificados que faltan.
+**Goal:** MVP operado por un contador, sin conversacional: leer la DIAN → derivar la lista de peticiones → recibir los documentos del cliente → conciliar → liquidar el 210 y mostrar la ganancia. Incluye unificar las dos ramas paralelas (conector DIAN de Juan + motor tributario), el **conciliador incremental**, los 9 extractores de certificados y el cableado de la consola del contador en el front.
 
-**Architecture:** Base = arquitectura hexagonal de `origin/dev` (domain/adapters/services/api). Nuestro motor entra como paquete de cálculo intacto. El conciliador vive en `services/conciliacion/` y produce `CasoTributario` desde el expediente + las resoluciones del contador. Los extractores LLM se registran en el `documents/registry.py` existente, junto a los parsers deterministas del portal.
+**Architecture:** Base = arquitectura hexagonal de `origin/dev` (domain/adapters/services/api). Nuestro motor entra como paquete de cálculo intacto. El conciliador vive en `services/conciliacion/`; **nace con la consulta a la DIAN** (todas las partidas `SOLO_DIAN`) y **cada documento se incorpora de a uno**, actualizando partidas y recalculando la liquidación completa. Los extractores LLM se registran en el `documents/registry.py` existente, junto a los parsers deterministas del portal. Front: la consola de `declaras-front` (ya cableada al backend de Juan) gana las vistas de conciliación, peticiones y liquidación.
 
-**Tech Stack:** Python 3.12+ (piso de dev), pydantic v2, FastAPI async, SQLAlchemy async, pytest + pytest-asyncio, openpyxl/pypdf (parsers), SDK `anthropic` (extractores).
+**El ciclo de vida, que es lo que define el diseño:**
+
+```
+llega la DIAN ──► partidas SOLO_DIAN ──► 210 PRELIMINAR + lista de peticiones
+                        │                              │
+                        │              el contador pide los documentos
+                        │                              │
+                        ▼                              ▼
+        cada documento se INCORPORA (no re-cruza todo)
+                        │
+        SOLO_DIAN ──► COINCIDE (se cierra sola)
+                 └──► DISCREPANCIA (va a la mesa del contador)
+                        │
+        recalcular liquidación ──► ganancia = preliminar − actual
+                        │
+        sin pendientes ──► 210 final + memoria de cálculo
+```
+
+**Tech Stack:** Python 3.12+ (piso de dev), pydantic v2, FastAPI async, SQLAlchemy async, pytest + pytest-asyncio, openpyxl/pypdf (parsers), SDK `anthropic` (extractores). Front: React 19 + Vite + react-router.
 
 ## Global Constraints
 
@@ -17,8 +35,11 @@
 - **La clave DIAN nunca se persiste ni se loguea** (restricción heredada del doc maestro).
 - Identificadores de dominio en español en lo nuevo nuestro (`Partida`, `Resolucion`); se respeta el inglés de los módulos de Juan (`Case`, `DocumentReading`) — no se renombra su código.
 - Commits: mensaje en español, terminados en `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Rama de trabajo: `integracion`, creada desde `origin/dev` (su historia es la base; su trabajo en curso mergea más fácil).
-- **Fuera de alcance**: presentador en MUISCA, mapeo a casillas oficiales del 210, front (repo aparte).
+- Rama de trabajo (back): `integracion`, creada desde `origin/dev` (su historia es la base; su trabajo en curso mergea más fácil). **La T1+T2 se empujan a `dev` el mismo día** para cerrar la ventana de divergencia con Juan; el resto va en ramas normales sobre la base unificada.
+- Rama de trabajo (front): `dev` directamente — `origin/dev` desciende de `main`, no hay nada que fusionar.
+- **Contratos entre dueños** (no se cruzan): `DocumentReading` es la frontera de entrada (sus parsers del portal / nuestros extractores de certificados); `CasoTributario` es la de salida (el conciliador lo produce, el motor lo consume). No se editan archivos del otro salvo los puntos de extensión que él dejó (`registry.py`, `documents_read.py`) y `tax/uvt.py` una única vez.
+- **Los ahorros por petición NO son aditivos** (medido: sumarlos sobreestima hasta 64% cuando el tope del 40% se copa). La UI muestra `ahorro_estimado` como orientación, pero lo que se le dice al cliente es el **delta real** tras incorporar cada documento.
+- **Fuera de alcance**: agente conversacional / WhatsApp, presentador en MUISCA, pagos, mapeo a casillas oficiales del 210, perfil independiente (`HONORARIOS`/`SERVICIOS` lanzan `NotImplementedError` a propósito).
 
 ---
 
@@ -336,16 +357,22 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `Lado` (StrEnum): `DIAN`, `DOCUMENTO`.
   - `Valor{monto: int, retencion: int, lado: Lado, celda: str | None, confianza: float | None}`.
   - `EstadoPartida` (StrEnum): `COINCIDE, DISCREPANCIA, SOLO_DIAN, SOLO_DOCUMENTO, CONCEPTO_DESCONOCIDO`.
-  - `Partida{id: str, nit_tercero: str, nombre_tercero: str, concepto: Concepto | None, codigo_crudo: str, version_dian: Valor | None, version_documento: Valor | None, estado: EstadoPartida, resolucion: Resolucion | None}` con property `.diferencia -> int`.
-  - `cruzar(exogena: DocumentReading, certificados: list[DocumentReading], *, tolerancia_pesos: int = 1000) -> list[Partida]`.
-- Reglas: el `id` de la partida es determinista (`f"{nit}:{codigo}"`) para que re-cruzar preserve resoluciones. Filas de exógena cuyo `reported_id_number` no sea el del contribuyente se marcan `SOLO_DIAN` con nota de "reportado a otra identificación" (el caso que su parser ya detecta).
+  - `Partida{id: str, nit_tercero: str, nombre_tercero: str, concepto: Concepto | None, codigos_crudos: list[str], version_dian: Valor | None, version_documento: Valor | None, estado: EstadoPartida, nota: str | None, resolucion: Resolucion | None}` con properties `.diferencia_monto -> int` y `.diferencia_retencion -> int`.
+  - **`abrir(exogena: DocumentReading) -> list[Partida]`** — fase 1: todas nacen `SOLO_DIAN` (o `CONCEPTO_DESCONOCIDO`).
+  - **`incorporar(partidas, documento: DocumentReading, *, tolerancia_pesos: int = 1000) -> list[Partida]`** — fase 2: un documento a la vez; la partida que empareja cambia de estado, y si no empareja ninguna nace una `SOLO_DOCUMENTO`.
+- Reglas:
+  - **La llave es `(nit, Concepto normalizado)`, no el código crudo.** Dos códigos que normalizan al mismo concepto (5002 honorarios, 5003 comisiones) son UNA partida; los códigos quedan en `codigos_crudos`. El `id` es `f"{nit}:{concepto}"`, estable.
+  - **Se comparan dos números: monto y retención.** `DISCREPANCIA` si cualquiera excede la tolerancia — declarar más retención de la reportada casi garantiza requerimiento, así que va expuesta aparte.
+  - Varias filas de exógena de la misma llave se **suman** (un tercero reporta el mismo concepto en varias filas).
+  - Filas cuyo `reported_id_number` no sea el del contribuyente **nunca aportan hecho**: `SOLO_DIAN` con `nota` "reportado a otra identificación" (el caso que su parser ya detecta).
+  - **No hay operación en lote**: los documentos llegan de a uno, en días distintos. Un `cruzar(exogena, certificados)` que asuma los dos lados presentes es incorrecto.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
 ```python
 # tests/unit/conciliacion/test_cruce.py
 from declaras.documents.models import DocumentReading, ExtractedField, ExtractedRow
-from declaras.services.conciliacion import Concepto, EstadoPartida, Lado, cruzar
+from declaras.services.conciliacion import Concepto, EstadoPartida, Lado, abrir, incorporar
 
 
 def _exogena(*filas: dict) -> DocumentReading:
@@ -375,52 +402,72 @@ def _cert_220(nit, salarios, retencion=0):
     )
 
 
-def test_coinciden_dentro_de_la_tolerancia():
-    partidas = cruzar(_exogena(_fila("900111222", "5001", 85_000_500)),
-                      [_cert_220("900111222", 85_000_000)])
+def test_abrir_deja_todo_en_solo_dian():
+    """Fase 1: solo hay DIAN. Nada puede estar conciliado todavía."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000),
+                              _fila("890903938", "5010", 8_000_000)))
+    assert {p.estado for p in partidas} == {EstadoPartida.SOLO_DIAN}
+    assert {p.concepto for p in partidas} == {Concepto.SALARIOS, Concepto.RENDIMIENTOS}
+
+
+def test_incorporar_un_documento_que_confirma():
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_500)))
+    partidas = incorporar(partidas, _cert_220("900111222", 85_000_000))
     assert len(partidas) == 1
     assert partidas[0].estado == EstadoPartida.COINCIDE
     assert partidas[0].concepto == Concepto.SALARIOS
 
 
 def test_discrepancia_expone_las_dos_versiones():
-    [p] = cruzar(_exogena(_fila("900111222", "5001", 87_400_000)),
-                 [_cert_220("900111222", 85_000_000)])
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    [p] = incorporar(partidas, _cert_220("900111222", 85_000_000))
     assert p.estado == EstadoPartida.DISCREPANCIA
     assert p.version_dian.monto == 87_400_000
     assert p.version_documento.monto == 85_000_000
-    assert p.diferencia == 2_400_000
+    assert p.diferencia_monto == 2_400_000
     assert p.version_dian.lado is Lado.DIAN
 
 
-def test_solo_dian_cuando_no_hay_certificado():
-    [p] = cruzar(_exogena(_fila("901999888", "5004", 8_400_000)), [])
-    assert p.estado == EstadoPartida.SOLO_DIAN
-    assert p.concepto == Concepto.SERVICIOS
+def test_discrepancia_solo_en_la_retencion():
+    """Monto igual, retención distinta: sigue siendo discrepancia y se ve aparte."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000, retencion=8_000_000)))
+    [p] = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=6_000_000))
+    assert p.estado == EstadoPartida.DISCREPANCIA
+    assert p.diferencia_monto == 0
+    assert p.diferencia_retencion == 2_000_000
 
 
-def test_solo_documento_cuando_el_tercero_no_reporto():
-    [p] = cruzar(_exogena(), [_cert_220("900111222", 85_000_000)])
-    assert p.estado == EstadoPartida.SOLO_DOCUMENTO
+def test_dos_codigos_del_mismo_concepto_son_una_partida():
+    partidas = abrir(_exogena(_fila("901222333", "5002", 10_000_000),
+                              _fila("901222333", "5003", 4_000_000)))
+    assert len(partidas) == 1
+    assert partidas[0].version_dian.monto == 14_000_000
+    assert sorted(partidas[0].codigos_crudos) == ["5002", "5003"]
+
+
+def test_solo_documento_de_un_beneficio_que_la_dian_no_ve():
+    """Un certificado que nadie pidió y que la DIAN no puede conocer."""
+    partidas = incorporar(abrir(_exogena()), _cert_220("900111222", 85_000_000))
+    assert partidas[0].estado == EstadoPartida.SOLO_DOCUMENTO
 
 
 def test_reportado_a_otra_identificacion_no_se_cruza():
-    [p] = cruzar(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")),
-                 [_cert_220("901999888", 9_000_000)])
+    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
+    [p] = incorporar(partidas, _cert_220("901999888", 9_000_000))
     assert p.estado == EstadoPartida.SOLO_DIAN
     assert "otra identificación" in (p.nota or "")
 
 
 def test_concepto_desconocido_no_se_asume():
-    [p] = cruzar(_exogena(_fila("900111222", "9999", 5_000_000)), [])
+    [p] = abrir(_exogena(_fila("900111222", "9999", 5_000_000)))
     assert p.estado == EstadoPartida.CONCEPTO_DESCONOCIDO
     assert p.concepto is None
-    assert p.codigo_crudo == "9999"
+    assert p.codigos_crudos == ["9999"]
 
 
-def test_id_de_partida_es_estable():
-    args = (_exogena(_fila("900111222", "5001", 87_400_000)), [_cert_220("900111222", 85_000_000)])
-    assert cruzar(*args)[0].id == cruzar(*args)[0].id == "900111222:5001"
+def test_id_de_partida_es_estable_y_por_concepto():
+    ex = _exogena(_fila("900111222", "5001", 87_400_000))
+    assert abrir(ex)[0].id == abrir(ex)[0].id == "900111222:SALARIOS"
 ```
 
 ```python
@@ -451,19 +498,26 @@ Expected: FAIL — el paquete no existe.
 `5001→SALARIOS`, `5002→HONORARIOS`, `5003→COMISIONES` (trátalo como `HONORARIOS` si no agregas el miembro), `5004→SERVICIOS`, `5005→ARRENDAMIENTOS`, `5010→RENDIMIENTOS`, `5016→OTROS`.
 Deja un comentario diciendo que la tabla es incremental y que un código sin mapear es el comportamiento correcto, no un hueco.
 
-`modelos.py` con los pydantic (`extra="forbid"`) descritos en Interfaces. `Partida.diferencia` = `abs(dian.monto − doc.monto)` cuando las dos versiones existen, 0 si no.
+`modelos.py` con los pydantic (`extra="forbid"`) descritos en Interfaces. `Partida.diferencia_monto` = `abs(dian.monto − doc.monto)` y `.diferencia_retencion` = `abs(dian.retencion − doc.retencion)` cuando las dos versiones existen; 0 si falta alguna.
 
-`cruce.py` con `cruzar(...)`:
+`cruce.py` con las dos operaciones:
+
+`abrir(exogena)`:
 1. Lee la identificación del contribuyente de `exogena.field("id_number")`.
-2. Indexa las filas de exógena por `(reporter_nit, concept_code)`; suma montos si hay varias filas de la misma llave (un tercero puede reportar el mismo concepto en varias filas).
-3. Indexa los certificados por `(nit, concepto)` según el `doc_type` (para `CERT_INGRESOS_220`: `empleador_nit` + `SALARIOS`, y sus aportes/retención como parte del mismo `Valor`).
-4. Une las dos llaves; clasifica según presencia y `abs(diferencia) > tolerancia`.
-5. Marca `SOLO_DIAN` + `nota` cuando `reported_id_number` ≠ identificación del contribuyente.
+2. Recorre `exogena.rows`, normaliza `concept_code` → `Concepto`, agrupa por `(reporter_nit, concepto)` **sumando** monto y retención.
+3. Cada grupo nace `SOLO_DIAN`, o `CONCEPTO_DESCONOCIDO` si `concepto is None`.
+4. Grupos con `reported_id_number` ≠ contribuyente llevan `nota` y no aportarán hecho.
+
+`incorporar(partidas, documento)`:
+1. Deriva `(nit, concepto)` del documento con la tabla `TIPO_A_CLAVE` (`doc_type` → campo del NIT + `Concepto`).
+2. Si existe partida con ese `id`: adjunta `version_documento` y reclasifica — `COINCIDE` si monto y retención están dentro de la tolerancia, `DISCREPANCIA` si no.
+3. Si no existe: nace `SOLO_DOCUMENTO`.
+4. Si el documento no trae NIT (entrada manual sin la llave): no empareja, nace `SOLO_DOCUMENTO` con `nota` de que no se pudo cruzar.
 
 - [ ] **Step 4: Correr y ver el pass**
 
 Run: `uv run pytest tests/unit/conciliacion -q`
-Expected: 9 passed.
+Expected: 10 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -476,10 +530,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Resoluciones del contador y mapeo a CasoTributario
+### Task 5: Resoluciones, respuestas del cliente y mapeo a CasoTributario
 
 **Files:**
-- Create: `src/declaras/services/conciliacion/resolucion.py`, `src/declaras/services/conciliacion/mapeo.py`
+- Create: `src/declaras/services/conciliacion/resolucion.py`, `src/declaras/services/conciliacion/mapeo.py`, `src/declaras/services/conciliacion/respuestas.py`
 - Modify: `src/declaras/services/conciliacion/modelos.py` (agregar `Resolucion`)
 - Test: `tests/unit/conciliacion/test_resolucion.py`, `tests/unit/conciliacion/test_mapeo.py`
 
@@ -488,12 +542,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Produces:
   - `Decision` (StrEnum): `USAR_DIAN, USAR_DOCUMENTO, USAR_OTRO, MARCAR_AJENO, CERRAR_SIN_SOPORTE`.
   - `Motivo` (StrEnum): `COINCIDEN, ERROR_DEL_TERCERO, ERROR_DEL_CERTIFICADO, NO_ES_MIO, FALTA_DOCUMENTO, DECISION_DEL_CONTADOR`.
-  - `Resolucion{decision, valor: int, motivo, nota: str | None, quien: str, cuando: datetime}` (`extra="forbid"`).
+  - `Origen` (StrEnum): `SISTEMA` (provisional, puesta al abrir por falta de documento) y `CONTADOR` (decisión de una persona).
+  - `Resolucion{decision, valor: int, motivo, origen: Origen, huella: str, nota: str | None, quien: str, cuando: datetime}` (`extra="forbid"`). La `huella` es un hash de las dos versiones que el resolvedor vio.
+  - `Respuesta{pregunta: str, tiene: bool, detalle: dict, quien: str, cuando: datetime}` — lo que el cliente contestó a las preguntas básicas. **Sin esto el sistema pregunta por prepagada para siempre.**
+  - `refrescar(nuevas, guardadas) -> list[Partida]` — al incorporar un documento o re-consultar la DIAN: una resolución de `origen=SISTEMA` se **reemplaza siempre** (era provisional); una de `origen=CONTADOR` se preserva **solo si la huella coincide**, y si no, la partida vuelve a pendiente con `nota` "los valores cambiaron desde la resolución anterior".
   - `resolver(partida, decision, *, motivo, quien, valor=None, nota=None) -> Partida` — pura, devuelve una copia resuelta; valida que la decisión sea posible para el estado (ej. `USAR_DOCUMENTO` sobre `SOLO_DIAN` → `ValueError`), y que `USAR_OTRO` traiga `valor`.
-  - `autorresolver(partidas) -> list[Partida]` — resuelve sola las `COINCIDE` (`decision=USAR_DOCUMENTO`, `motivo=COINCIDEN`, `quien="sistema"`); todo lo demás queda pendiente.
+  - `autorresolver(partidas) -> list[Partida]` — dos automatismos: las `COINCIDE` se cierran (`USAR_DOCUMENTO`, `motivo=COINCIDEN`, `origen=SISTEMA`), y las `SOLO_DIAN` reciben una **provisional** `USAR_DIAN` `origen=SISTEMA` para que el 210 preliminar exista sin esperar documentos. Las `DISCREPANCIA` y `CONCEPTO_DESCONOCIDO` quedan pendientes de persona.
   - `pendientes(partidas) -> list[Partida]` ordenadas por `diferencia` descendente (la plata en juego primero).
   - `a_caso(partidas, *, contribuyente, anio_gravable, beneficios=None, patrimonio=None, creditos=None) -> CasoTributario` — exige que no queden pendientes (`ValueError` con el conteo si quedan) y que ninguna partida resuelta tenga concepto `None`.
-- Regla: `MARCAR_AJENO` y `CERRAR_SIN_SOPORTE` **no aportan hecho** al Caso (valor 0, no se mapean); todas las demás sí, con `Fuente.conciliacion(partida.id, detalle)`.
+- Reglas:
+  - `MARCAR_AJENO` y `CERRAR_SIN_SOPORTE` **no aportan hecho** al Caso; las demás sí, con `Fuente.conciliacion(partida.id, detalle)`.
+  - **`a_caso` agrupa por NIT, no por concepto.** Un `IngresoLaboral` se ensambla con las partidas de `SALARIOS` + `APORTES_SALUD` + `APORTES_PENSION` + retención **del mismo tercero**: en la exógena esos son conceptos distintos en filas distintas.
+  - **Pensión resuelta solo con datos de la DIAN**: la exógena da el total anual y la exención es mensual. Se reparte en 12 mesadas iguales y se levanta flag `PENSION_DISTRIBUIDA_UNIFORME` (sale impreso en el borrador): correcto en el caso común, equivocado si hubo retroactivo, y el contador tiene que verlo.
+  - `a_caso` exige que no queden pendientes de persona; las provisionales del sistema **sí** liquidan (son el preliminar).
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -534,8 +595,9 @@ def test_usar_otro_exige_valor():
 
 
 def test_pendientes_ordena_por_plata_en_juego():
-    ps = pendientes([partida_discrepancia(diferencia=100), partida_discrepancia(diferencia=9_000_000)])
-    assert ps[0].diferencia == 9_000_000
+    ps = pendientes([partida_discrepancia(diferencia=100),
+                     partida_discrepancia(diferencia=9_000_000)])
+    assert ps[0].diferencia_monto == 9_000_000
 ```
 
 ```python
@@ -607,64 +669,97 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Router de conciliación y liquidación sobre su API
+### Task 6: API — peticiones, incorporación de documentos y liquidación versionada
 
 **Files:**
-- Create: `src/declaras/api/routers/conciliacion.py`, `src/declaras/api/conciliacion_schemas.py`
-- Modify: `src/declaras/api/app.py` (registrar el router)
-- Test: `tests/integration/test_conciliacion_api.py`
+- Create: `src/declaras/api/routers/conciliacion.py`, `src/declaras/api/conciliacion_schemas.py`, `src/declaras/services/conciliacion/peticiones.py`, `src/declaras/services/conciliacion/liquidaciones.py`
+- Modify: `src/declaras/api/app.py`, `src/declaras/api/routers/documents.py`, `src/declaras/adapters/persistence/tables.py`
+- Test: `tests/unit/conciliacion/test_peticiones.py`, `tests/integration/test_conciliacion_api.py`
 
 **Interfaces:**
-- Consumes: `Container`/`deps` de su API, `case_service` (para leer el expediente y sus `CaseDocument.reading`), `cruzar`, `resolver`, `pendientes`, `a_caso`, `optimizar`, `cargar` de parámetros, `casillas`, `borrador_html`, `memoria_markdown`.
-- Produces (todos bajo `/cases/{case_id}`):
-  - `POST /conciliacion` → corre `cruzar` sobre el expediente, autorresuelve coincidencias, persiste las partidas, devuelve el resumen `{total, pendientes, por_estado}`.
-  - `GET /conciliacion` → partidas, ordenadas por plata en juego.
-  - `POST /conciliacion/{partida_id}/resolver` → body `{decision, motivo, valor?, nota?}`, 409 si la decisión no aplica al estado, 404 si la partida no existe.
-  - `POST /liquidar` → 409 con el conteo si quedan pendientes; si no, `a_caso` → `optimizar` → `{elecciones, impuesto_neto, saldo, casillas, flags}`.
+- `derivar_peticiones(partidas, respuestas, caso) -> list[Peticion]` — **derivada, no almacenada**. Tres orígenes:
+  1. Cada partida `SOLO_DIAN` cuyo certificado aporte algo → petición con el nombre y NIT del tercero.
+  2. Cada beneficio invisible sin `Respuesta` registrada → petición con `pregunta_previa`.
+  3. Condicionales: si `Respuesta.tiene is True` y falta el documento → petición del certificado.
+  Una `Respuesta.tiene is False` **apaga la petición para siempre**.
+- `Peticion{id, tipo_documento, tercero: {nit, nombre} | None, razon, ahorro_estimado: int, prioridad: int, pregunta_previa: str | None, copy_sugerido: str}`. `ahorro_estimado` sale de `optimizador.ahorro_marginal`; se ordena descendente y se corta por umbral (`>= 50_000`) y cantidad (10).
+- `liquidar_y_versionar(caso, partidas) -> Liquidacion versionada` — guarda cada liquidación con su momento. `GET /liquidacion` devuelve `{preliminar, actual, ganancia}` donde `ganancia = preliminar.impuesto − actual.impuesto`.
+- Endpoints bajo `/v1/cases/{case_id}`:
+  - `POST /conciliacion` → `abrir(exógena del expediente)` + `autorresolver` + persiste + liquida el preliminar. Devuelve `{total, pendientes, por_estado}`.
+  - `GET /conciliacion` → partidas ordenadas por plata en juego.
+  - `POST /conciliacion/{partida_id}/resolver` → `{decision, motivo, valor?, nota?}`. 409 si la decisión no aplica al estado; recalcula la liquidación.
+  - `GET /peticiones` → la lista derivada, priorizada.
+  - `POST /respuestas` → `{pregunta, tiene, detalle?}` — registra lo que contestó el cliente.
+  - `GET /liquidacion` → `{preliminar, actual, ganancia}`.
+  - `POST /cerrar-peticion/{peticion_id}` → cierra sin soporte, **devolviendo el costo** (diferencia de liquidar con y sin ese beneficio).
   - `GET /borrador` (HTML) y `GET /memoria` (texto).
-- Persistencia de partidas: tabla nueva en `adapters/persistence/tables.py` + repositorio, siguiendo el patrón de `case_repository.py`. El `id` estable de la partida permite re-cruzar sin perder resoluciones (**re-cruzar preserva** las resueltas y solo recalcula el estado de las pendientes).
+- `POST /v1/cases/{id}/documents` (el existente de Juan) pasa a aceptar **varios archivos** y un `peticion_id` opcional por archivo; por cada uno devuelve `{archivo, doc_type, estado: emparejado|sin_emparejar|a_bandeja, peticion_cerrada?, motivo?}`. Tras incorporar, corre `refrescar` y recalcula.
+- Persistencia: tablas de partidas, respuestas y liquidaciones, siguiendo el patrón de `case_repository.py`.
 
-- [ ] **Step 1: Escribir el test que falla**
+- [ ] **Step 1: Escribir los tests que fallan**
+
+`test_peticiones.py` (unitario, sin API):
 
 ```python
-# tests/integration/test_conciliacion_api.py
-# Sigue el patrón de tests/integration/test_documents_api.py existente (cliente async,
-# contenedor con dobles). Casos:
-#   1. POST /conciliacion sobre un expediente con exógena + 220 → 200, pendientes=1
-#   2. GET /conciliacion → la partida de discrepancia primero
-#   3. POST /liquidar con pendientes → 409 con el conteo
-#   4. POST resolver con decisión inválida para el estado → 409
-#   5. POST resolver válido → 200, pendientes=0
-#   6. POST /liquidar → 200 con impuesto_neto y saldo del caso
-#   7. GET /borrador → text/html con las casillas
-#   8. Re-POST /conciliacion → la resolución sobrevive
+def test_partida_solo_dian_genera_peticion_con_el_tercero():
+    ps = derivar_peticiones(abrir(_exogena(_fila("900111222", "5001", 87_400_000))), [], CASO)
+    assert any(p.tercero["nit"] == "900111222" for p in ps)
+
+
+def test_beneficio_invisible_pregunta_antes_de_pedir():
+    ps = derivar_peticiones([], [], CASO)
+    prepagada = next(p for p in ps if p.tipo_documento == "CERT_PREPAGADA")
+    assert prepagada.pregunta_previa is not None
+
+
+def test_respuesta_negativa_apaga_la_peticion_para_siempre():
+    respuestas = [Respuesta(pregunta="PREPAGADA", tiene=False, detalle={}, quien="c", cuando=AHORA)]
+    ps = derivar_peticiones([], respuestas, CASO)
+    assert not any(p.tipo_documento == "CERT_PREPAGADA" for p in ps)
+
+
+def test_se_ordenan_por_ahorro_y_se_corta_por_umbral():
+    ps = derivar_peticiones(PARTIDAS_VARIAS, [], CASO)
+    assert [p.ahorro_estimado for p in ps] == sorted((p.ahorro_estimado for p in ps), reverse=True)
+    assert all(p.ahorro_estimado >= 50_000 or p.ahorro_estimado == 0 for p in ps)
+    assert len(ps) <= 10
 ```
 
-Escribir los 8 con el estilo de sus tests de integración existentes.
+`test_conciliacion_api.py` (integración, con el estilo de `test_documents_api.py` existente), 10 casos:
+1. `POST /conciliacion` sobre un expediente con exógena → 200, todas `SOLO_DIAN`, provisionales puestas.
+2. `GET /liquidacion` inmediatamente después → `preliminar` poblado, `ganancia == 0`.
+3. `GET /peticiones` → incluye la del 220 de ACME y la de prepagada.
+4. Subida **masiva** de 3 archivos → por cada uno su desenlace; el 220 empareja y crea `DISCREPANCIA`.
+5. `GET /liquidacion` → `actual` cambió y `ganancia > 0`.
+6. `POST resolver` con decisión inválida para el estado → 409.
+7. `POST resolver` válido → 200, la partida sale de pendientes.
+8. `POST /respuestas` con `tiene=False` → la petición desaparece de `GET /peticiones`.
+9. `POST /cerrar-peticion` → 200 con el costo calculado.
+10. **Idempotencia**: re-`POST /conciliacion` preserva la resolución del contador y reemplaza las provisionales del sistema.
 
 - [ ] **Step 2: Correr y ver el fallo**
 
-Run: `uv run pytest tests/integration/test_conciliacion_api.py -q`
-Expected: FAIL — el router no existe.
+Run: `uv run pytest tests/unit/conciliacion/test_peticiones.py tests/integration/test_conciliacion_api.py -q`
+Expected: FAIL — nada existe.
 
 - [ ] **Step 3: Implementar**
 
-Router + schemas (`extra="forbid"`) + tabla y repositorio de partidas + registro en `app.py`. Errores de dominio (`ValueError` del conciliador) → 409 con el mensaje, siguiendo el `register_exception_handlers` que ya existe.
+Router + schemas (`extra="forbid"`) + tablas + repositorios + registro en `app.py`. Los `ValueError` del conciliador → 409 vía el `register_exception_handlers` existente. El `copy_sugerido` de cada tipo de petición sale de una tabla de textos (es el copy del doc maestro, no improvisado).
 
 - [ ] **Step 4: Correr y ver el pass**
 
 Run: `uv run pytest -q`
-Expected: suite completa verde.
+Expected: suite completa verde; los 6 goldens intactos.
 
 - [ ] **Step 5: Verificación manual**
 
-Levantar la app y correr el flujo con un expediente sembrado: conciliar → ver pendientes → resolver → liquidar → abrir el borrador. Dejar el comando exacto en el reporte.
+Levantar la app, sembrar un expediente con la exógena de fixture, y correr el flujo entero por curl: conciliar → ver preliminar → ver peticiones → subir 2 documentos → ver la ganancia → resolver → cerrar → abrir el borrador. Dejar los comandos exactos en el reporte.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add -A
-git commit -m "API: conciliación y liquidación sobre el expediente
+git commit -m "API: peticiones derivadas, incorporación masiva de documentos y liquidación versionada
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -866,9 +961,83 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
+### Task 11: Front — cliente de API y vistas de conciliación
+
+**Files** (repo `~/Desktop/declaras/front`, rama `dev`):
+- Modify: `src/consola/api.js`
+- Create: `src/consola/Conciliacion.jsx`, `src/consola/Peticiones.jsx`, `src/consola/Ganancia.jsx`
+- Modify: `src/consola/DetalleExpediente.jsx` (pestañas nuevas), `src/consola/consola.css`
+
+**Interfaces:**
+- Consumes: los endpoints de la Task 6. La consola **ya tiene** cliente de API (`request`, `ApiError`, `api.*`), hooks y componentes — esto es **aditivo**, no reescritura.
+- Produces en `api.js`: `runConciliacion(caseId)`, `listPartidas(caseId)`, `resolverPartida(caseId, partidaId, payload)`, `listPeticiones(caseId)`, `postRespuesta(caseId, payload)`, `getLiquidacion(caseId)`, `cerrarPeticion(caseId, peticionId)`, y `uploadDocuments(caseId, files, peticionId?)` (multipart con varios archivos).
+- `Ganancia.jsx`: la tarjeta de tres cifras — **según la DIAN / optimizada / te ahorras** — leyendo `{preliminar, actual, ganancia}`. Es la misma tarjeta que el prototipo ya tiene hardcodeada en `App.jsx` (`SavingsCard`): reutilizar su markup y CSS, cambiando la fuente de los números.
+- `Peticiones.jsx`: lista priorizada. Cada ítem muestra `copy_sugerido` (con botón de copiar, porque en el MVP el contador lo manda a mano por WhatsApp), el `ahorro_estimado` como orientación, y zona de arrastrar-y-soltar **múltiples archivos**. Las de `pregunta_previa` se responden con Sí/No inline → `POST /respuestas`.
+- `Conciliacion.jsx`: la mesa. Por partida, las dos versiones lado a lado (DIAN vs documento) con las dos diferencias (monto y retención), y los botones de decisión **filtrados por estado** (no ofrecer "usar documento" en una `SOLO_DIAN`).
+
+- [ ] **Step 1: Extender `api.js`**
+
+Seguir el patrón exacto de las funciones existentes (`request(path, options)`, helper `json(payload)`). Para la subida múltiple, un `FormData` con varios `files` y el `peticion_id` opcional.
+
+- [ ] **Step 2: `Ganancia.jsx` y engancharlo en `DetalleExpediente`**
+
+Verificación manual: con el back corriendo y un caso conciliado, la tarjeta muestra las tres cifras reales y `ganancia` coincide con `preliminar.impuesto − actual.impuesto`.
+
+- [ ] **Step 3: `Peticiones.jsx`**
+
+Verificación manual: responder "No" a prepagada hace desaparecer la petición sin recargar; soltar 2 archivos muestra el desenlace de cada uno.
+
+- [ ] **Step 4: `Conciliacion.jsx`**
+
+Verificación manual: una `SOLO_DIAN` **no** ofrece "usar documento"; resolver una discrepancia actualiza la ganancia en pantalla.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "Consola: conciliación, peticiones y tarjeta de ganancia sobre el API real
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 12: Recorrido completo del MVP, punta a punta
+
+**Files:**
+- Create: `docs/mvp-recorrido.md`
+- Test: `tests/integration/test_recorrido_mvp.py`
+
+**Interfaces:**
+- Un test de integración que recorre **todo** con dobles (sin red, sin API key real): abrir caso → sembrar exógena de fixture → conciliar → preliminar → peticiones → subir 220 + prepagada + registro civil → resolver la discrepancia → liquidar → borrador. Afirma las cifras de cada etapa, incluida la ganancia.
+- `docs/mvp-recorrido.md`: el guion para operar un caso real, con los comandos y qué se espera en cada paso — lo que el contador va a seguir en la primera sesión.
+
+- [ ] **Step 1: Escribir el test del recorrido**
+
+Debe afirmar, con números: el impuesto preliminar, el impuesto tras el 220, el impuesto final tras los beneficios, y que `ganancia` es la diferencia. Reusar los goldens donde apliquen (**1.495.977** y **5.418.627** son cifras ya verificadas del motor).
+
+- [ ] **Step 2: Correr y ver el fallo, luego el pass**
+
+Run: `uv run pytest tests/integration/test_recorrido_mvp.py -q`
+
+- [ ] **Step 3: Escribir el guion de operación**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "Recorrido del MVP punta a punta: test de integración y guion de operación
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
 ## Self-review del plan
 
-1. **Cobertura**: fusión (T1) + duplicados (T2) + registry (T3) + conciliador (T4-T5) + API (T6) + llave de cruce (T7) + extractores (T8-T10). Lo pedido —conciliador y subir certificados— son T4-T6 y T8-T10; T1-T3 y T7 son prerequisitos técnicos, no alcance añadido.
-2. **Riesgo mayor**: que la fusión rompa algo de Juan. Mitigación: T1 exige la suite de los dos lados verde antes de seguir, y no se toca su código salvo `tax/uvt.py` (delegación) y `registry.py`/`documents_read.py` (extensión).
-3. **Coordinación**: Juan sigue trabajando en `dev`. La rama `integracion` sale de `origin/dev`, así que su trabajo futuro mergea contra una base que ya contiene la suya. Hay que avisarle antes del push.
-4. **Lo que queda fuera y está declarado**: presentador MUISCA, casillas oficiales, front, conceptos de independientes (`HONORARIOS/SERVICIOS` mapean a `NotImplementedError` a propósito — el motor no cubre ese perfil).
+1. **Cobertura del MVP**: fusión (T1) + duplicados (T2) + registry (T3) + conciliador incremental (T4-T5) + peticiones/liquidación/API (T6) + llave de cruce (T7) + extractores (T8-T10) + front (T11) + recorrido punta a punta (T12). El flujo acordado —DIAN → peticiones → documentos → conciliar → 210 con ganancia— queda cubierto de extremo a extremo.
+2. **Orden de los extractores por lo que la DIAN NO puede traer**: T9 (ingresos) va antes que T10 (beneficios) porque cada certificado de ingreso aporta algo estructural que la exógena no tiene — las 12 mesadas (exención mensual), la discriminación de dividendos, los costos del arriendo, el GMF. Dentro de T10, dependientes y prepagada son los de mayor valor: son plata que la DIAN jamás verá.
+3. **Riesgo mayor**: que la fusión rompa algo de Juan. Mitigación: T1 exige la suite de los dos lados verde antes de seguir; su código no se toca salvo `tax/uvt.py` (una vez) y los puntos de extensión que él dejó.
+4. **Coordinación**: Juan sigue trabajando en `dev`. T1+T2 se empujan a `dev` el mismo día para que su ventana de divergencia sean minutos, no días. **Hay que avisarle antes del push.**
+5. **El conversacional no está en el plan, y el MVP no lo necesita**: las peticiones y la incorporación de documentos son dos endpoints. En el MVP los consume la consola y el contador pregunta a mano; después los consume el agente sin cambiar el conciliador, el motor ni el render.
+6. **Lo que queda fuera y está declarado**: agente conversacional, presentador MUISCA, pagos, casillas oficiales del 210, perfil independiente.
