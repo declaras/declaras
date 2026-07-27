@@ -122,6 +122,16 @@ class _Ensamble:
 
 
 def _ensamblar(partidas: list[Partida]) -> _Ensamble:
+    ids = [p.id for p in partidas]
+    if len(set(ids)) != len(ids):
+        # I3 de la ronda 2: el id es la identidad del hecho — la misma partida dos
+        # veces (una lista persistida y reensamblada mal, T6) duplicaba ingresos y
+        # retención sin aviso. El cruce garantiza ids únicos; acá se exige.
+        repetidos = sorted({i for i in ids if ids.count(i) > 1})
+        raise ValueError(
+            f"Hay partidas con el id repetido: {', '.join(repetidos)}. Cada hecho "
+            "entra al caso una sola vez; una lista con duplicados duplicaría la plata."
+        )
     ensamble = _Ensamble()
     grupos: dict[str, list[Partida]] = {}
     for p in partidas:

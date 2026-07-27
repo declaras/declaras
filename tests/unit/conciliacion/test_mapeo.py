@@ -420,3 +420,14 @@ def test_un_concepto_que_nadie_ensambla_revienta_en_vez_de_desaparecer(monkeypat
         _a_caso(partidas)
     with pytest.raises(NotImplementedError, match="ARRENDAMIENTOS"):
         avisos(partidas)
+
+
+def test_la_misma_partida_dos_veces_revienta_en_vez_de_duplicar_la_plata():
+    """I3 de la ronda 2: el cruce ya advierte que dos partidas pueden nacer con el mismo
+    id, y T6 va a persistir y reensamblar listas — la misma partida dos veces declaraba
+    170M y 16M de retención sin aviso. El ensamble exige ids únicos."""
+    [p] = autorresolver([partida_coincide()])
+    with pytest.raises(ValueError, match="900111222:SALARIOS"):
+        _a_caso([p, p])
+    with pytest.raises(ValueError, match="900111222:SALARIOS"):
+        avisos([p, p])
