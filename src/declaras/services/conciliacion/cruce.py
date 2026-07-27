@@ -39,6 +39,9 @@ _NOTA_CERTIFICADO_SIN_RESPALDO = (
 _NOTA_RETENCION_AMBIGUA = (
     "la DIAN asigna esta fila a retenciones y a otro renglón a la vez; hay que clasificarla a mano"
 )
+_NOTA_VERSIONES_RIVALES = (
+    "llegaron dos certificados distintos del mismo empleador; hay que decidir cuál rige"
+)
 
 # R132 del formulario 210: "Retenciones año gravable a declarar". Es el renglón con que la
 # columna "Uso declaración Sugerida" marca las filas que son retención practicada, no ingreso.
@@ -62,6 +65,13 @@ class _ClaveDocumento:
     # Un hecho secundario del documento solo abre partida si trae plata: presente en 0 no
     # hay nada que perder ni pregunta que hacerle al contador.
     omitir_en_cero: bool = False
+    # ¿Documentos DISTINTOS del mismo tercero se suman? True solo cuando el tipo emite
+    # varios por tercero de verdad (un banco: un certificado por CDT). False para el 220:
+    # el sha es identidad de BYTES, no de documento — el mismo certificado re-escaneado o
+    # re-exportado llega con otro hash (el repo lo documenta para las descargas del
+    # portal), y sumarlo duplicaría salarios y aportes en silencio. En ese caso rige la
+    # última versión, con nota, y el contador decide.
+    acumulable: bool = False
 
 
 # doc_type → los hechos que ese documento afirma. Tabla incremental, igual que la de
@@ -383,7 +393,9 @@ def _incorporar_clave(
         indice = next((i for i, p in enumerate(partidas) if p.id == id_suelta), None)
         if indice is not None:
             actualizadas = list(partidas)
-            actualizadas[indice] = _emparejar(partidas[indice], sha, version, tolerancia_pesos)
+            actualizadas[indice] = _emparejar(
+                partidas[indice], sha, version, tolerancia_pesos, clave.acumulable
+            )
             return actualizadas
         suelta = Partida(
             id=id_suelta,
@@ -412,7 +424,9 @@ def _incorporar_clave(
         return [*partidas, nueva]
 
     actualizadas = list(partidas)
-    actualizadas[objetivo] = _emparejar(partidas[objetivo], sha, version, tolerancia_pesos)
+    actualizadas[objetivo] = _emparejar(
+        partidas[objetivo], sha, version, tolerancia_pesos, clave.acumulable
+    )
     return actualizadas
 
 
@@ -473,15 +487,28 @@ def _es_ajena(partida: Partida) -> bool:
     return partida.reportado_a is not None
 
 
-def _emparejar(partida: Partida, sha: str, version: Valor, tolerancia_pesos: int) -> Partida:
-    # Mismo sha = el mismo documento otra vez: su aporte se reemplaza (reenvío corregido).
-    # Sha nuevo = otro documento del mismo pagador: se agrega. Nada desaparece en silencio.
+def _emparejar(
+    partida: Partida, sha: str, version: Valor, tolerancia_pesos: int, acumulable: bool
+) -> Partida:
+    # Mismo sha = los mismos bytes otra vez: su aporte se reemplaza. Sha nuevo: se guarda
+    # SIEMPRE en `versiones_documento` — nada desaparece —, pero lo que se publica depende
+    # del tipo de documento.
     versiones = dict(partida.versiones_documento)
     versiones[sha] = version
-    agregado = _agregado(versiones)
+    if acumulable or len(versiones) == 1:
+        # Documentos distintos que sí se suman (un certificado por CDT): el agregado, que
+        # es lo que la exógena también reporta.
+        publicada = _agregado(versiones)
+        nota_rivales = None
+    else:
+        # Tipo NO acumulable con más de una versión: el sha distingue bytes, no documentos,
+        # así que esto es casi siempre el mismo certificado re-escaneado. Sumar duplicaría
+        # la plata en silencio; rige la última versión en llegar y una persona decide.
+        publicada = version
+        nota_rivales = _NOTA_VERSIONES_RIVALES
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
-        "version_documento": agregado,
+        "version_documento": publicada,
     }
 
     if _es_ajena(partida):
@@ -489,31 +516,42 @@ def _emparejar(partida: Partida, sha: str, version: Valor, tolerancia_pesos: int
         # confirmar este certificado: la partida no cambia de estado. El documento queda
         # adjunto y anotado para que el contador vea las dos cosas y decida (puede resolver
         # con otro valor); descartarlo sería una pérdida silenciosa.
-        nota = partida.nota or ""
-        if _NOTA_CERTIFICADO_SIN_RESPALDO not in nota:
-            prefijo = f"{nota}; " if nota else ""
-            nota = prefijo + _NOTA_CERTIFICADO_SIN_RESPALDO
+        nota = _con_nota(partida.nota, _NOTA_CERTIFICADO_SIN_RESPALDO, nota_rivales)
         return partida.model_copy(update={**adjuntos, "nota": nota})
 
     dian = partida.version_dian
     if dian is None:
         # Emparejó contra una partida que ya era solo-documento: sigue sin haber contra
         # qué comparar.
-        return partida.model_copy(update={**adjuntos, "estado": EstadoPartida.SOLO_DOCUMENTO})
+        return partida.model_copy(
+            update={
+                **adjuntos,
+                "estado": EstadoPartida.SOLO_DOCUMENTO,
+                "nota": _con_nota(partida.nota, nota_rivales),
+            }
+        )
 
-    # Se compara contra el AGREGADO de los documentos: la exógena también agrega (un banco
-    # reporta la suma de sus CDT en una sola fila).
-    coincide = abs(dian.monto - agregado.monto) <= tolerancia_pesos
-    if dian.retencion is not None and agregado.retencion is not None:
+    # Se compara contra lo publicado: el agregado si el tipo acumula, o la versión que rige.
+    coincide = abs(dian.monto - publicada.monto) <= tolerancia_pesos
+    if dian.retencion is not None and publicada.retencion is not None:
         # La retención solo se compara cuando los DOS lados la afirman: "no reportada"
         # no es un cero contra el cual discrepar.
-        coincide = coincide and abs(dian.retencion - agregado.retencion) <= tolerancia_pesos
+        coincide = coincide and abs(dian.retencion - publicada.retencion) <= tolerancia_pesos
     return partida.model_copy(
         update={
             **adjuntos,
             "estado": EstadoPartida.COINCIDE if coincide else EstadoPartida.DISCREPANCIA,
+            "nota": _con_nota(partida.nota, nota_rivales),
         }
     )
+
+
+def _con_nota(nota: str | None, *nuevas: str | None) -> str | None:
+    """Suma notas sin repetirlas ni pisar las que ya había."""
+    for nueva in nuevas:
+        if nueva and nueva not in (nota or ""):
+            nota = f"{nota}; {nueva}" if nota else nueva
+    return nota
 
 
 def _agregado(versiones: dict[str, Valor]) -> Valor:

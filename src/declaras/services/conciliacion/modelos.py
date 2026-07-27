@@ -91,11 +91,13 @@ class Partida(_Modelo):
     # de sus CDT en una fila).
     version_documento: Valor | None = None
     # El aporte de cada documento, llaveado por su identificador corto (sha[:12], el mismo
-    # del expediente). Distingue "el mismo documento otra vez" (reemplaza su aporte: un
-    # reenvío corregido) de "otro documento del mismo pagador" (suma: un certificado por
-    # CDT) — sin esto, cada segundo certificado del mismo NIT borraba al anterior en
-    # silencio y el resultado dependía del orden de llegada. Campo adicional al contrato
-    # del plan, autorizado en la ronda de fixes 1 de la T4.
+    # del expediente): los mismos bytes otra vez reemplazan su aporte, y un sha nuevo se
+    # GUARDA siempre — nada desaparece en silencio. Lo que se publica arriba depende del
+    # tipo de documento (`acumulable` en TIPO_A_CLAVE): la suma cuando el tipo emite varios
+    # por tercero de verdad (un certificado por CDT), o la última versión con nota cuando
+    # no (el sha es identidad de bytes, no de documento: el mismo 220 re-escaneado llega
+    # con otro hash y sumarlo duplicaría la plata). Campo adicional al contrato del plan,
+    # autorizado en la ronda de fixes 1 de la T4.
     versiones_documento: dict[str, Valor] = Field(default_factory=dict)
     estado: EstadoPartida
     nota: str | None = None

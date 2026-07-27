@@ -333,26 +333,75 @@ def test_reincorporar_un_documento_sin_nit_no_duplica_la_plata():
     assert resultado[0].version_documento.monto == 85_000_000
 
 
-def test_dos_documentos_del_mismo_tercero_se_suman_sin_importar_el_orden():
-    """Un banco emite un certificado por CDT y la exógena trae el agregado: el segundo
-    documento no puede borrar al primero en silencio. Documentos distintos (sha distinto)
-    del mismo pagador se suman, y el resultado no depende del orden de llegada."""
+def _cert_220_completo(sha: str, *, salarios=85_000_000, retencion=0,
+                       aportes_salud=3_400_000, aportes_pension=3_600_000) -> DocumentReading:
+    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
+              "salarios": salarios, "retencion": retencion,
+              "aportes_salud": aportes_salud, "aportes_pension": aportes_pension}
+    return DocumentReading(
+        doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
+        fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
+    )
+
+
+def test_el_mismo_220_con_otro_hash_no_duplica_los_aportes():
+    """El sha es identidad de BYTES, no de documento: el mismo certificado re-escaneado o
+    re-exportado llega con otro hash (el repo lo documenta para las descargas del portal).
+    Sumar las dos versiones duplicaba los aportes en silencio —deducción inflada, ~2M de
+    impuesto de menos— sin nota y con la procedencia colapsada como si fuera un solo
+    documento. El 220 no es acumulable: rige la última versión y el contador decide."""
+    partidas = incorporar(abrir(_exogena()), _cert_220_completo("a"))
+    partidas = incorporar(partidas, _cert_220_completo("b"))
+    por_concepto = {p.concepto: p for p in partidas}
+    salud = por_concepto[Concepto.APORTES_SALUD]
+    assert salud.version_documento.monto == 3_400_000
+    assert len(salud.versiones_documento) == 2  # nada desaparece
+    assert "cuál rige" in (salud.nota or "")
+    assert por_concepto[Concepto.SALARIOS].version_documento.monto == 85_000_000
+    assert "cuál rige" in (por_concepto[Concepto.SALARIOS].nota or "")
+
+
+def test_entre_versiones_rivales_rige_la_ultima():
+    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "a", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo(
+        "b", salarios=87_400_000, aportes_salud=0, aportes_pension=0))
+    [salarios] = [p for p in partidas if p.concepto is Concepto.SALARIOS]
+    assert salarios.version_documento.monto == 87_400_000
+    assert salarios.estado == EstadoPartida.COINCIDE  # la que rige es la que la DIAN corrobora
+    assert "cuál rige" in (salarios.nota or "")
+
+
+def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monkeypatch):
+    """La suma por sha sigue existiendo, pero solo para tipos declarados acumulables
+    (un banco emite un certificado por CDT y la exógena trae el agregado). El 220 no lo
+    es: dos 220 del mismo empleador no tienen caso legítimo de suma."""
+    from declaras.services.conciliacion import cruce
+
+    clave = cruce._ClaveDocumento(
+        concepto=Concepto.RENDIMIENTOS, campo_nit="banco_nit", campo_nombre="banco_nombre",
+        campos_monto=("rendimientos",), campo_retencion="retencion", acumulable=True,
+    )
+    monkeypatch.setitem(cruce.TIPO_A_CLAVE, "CERT_BANCARIO_TEST", (clave,))
+
     def cert(sha: str, monto: int) -> DocumentReading:
-        campos = {"empleador_nit": "890903938", "empleador_nombre": "BANCO X",
-                  "salarios": monto, "retencion": 0}
+        campos = {"banco_nit": "890903938", "banco_nombre": "BANCO X",
+                  "rendimientos": monto, "retencion": 0}
         return DocumentReading(
-            doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
+            doc_type="CERT_BANCARIO_TEST", parser="test", content_sha256=sha * 64,
             fields=[ExtractedField(name=k, value=v) for k, v in campos.items()],
         )
 
     a, b = cert("a", 40_000_000), cert("b", 30_000_000)
-    base = abrir(_exogena(_fila("890903938", "5001", 70_000_000)))
+    base = abrir(_exogena(_fila("890903938", "5010", 70_000_000)))
     ab = incorporar(incorporar(base, a), b)
     ba = incorporar(incorporar(base, b), a)
     assert ab == ba
     [p] = ab
     assert p.version_documento.monto == 70_000_000
     assert p.estado == EstadoPartida.COINCIDE
+    assert p.nota is None
 
 
 def test_con_campos_repetidos_gana_el_primero_como_en_field():
