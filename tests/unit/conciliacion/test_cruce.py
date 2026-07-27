@@ -250,6 +250,51 @@ def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
     assert p.diferencia_retencion == 0
 
 
+def test_incorporar_dos_veces_el_mismo_documento_es_idempotente():
+    """Un reenvío del mismo certificado (mismo sha) reemplaza su aporte, no lo duplica."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_500)))
+    doc = _cert_220("900111222", 85_000_000)
+    una_vez = incorporar(partidas, doc)
+    dos_veces = incorporar(una_vez, doc)
+    assert dos_veces == una_vez
+    assert dos_veces[0].version_documento.monto == 85_000_000
+
+
+def test_reincorporar_un_documento_sin_nit_no_duplica_la_plata():
+    """El camino sin NIT siempre anexaba: el mismo documento dos veces daba dos partidas
+    de 85M = 170M. El id ahí sí es estable (viene del sha), así que empareja por id."""
+    campos = {"empleador_nombre": "ACME SAS", "salarios": 85_000_000, "retencion": 0}
+    doc = DocumentReading(
+        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="c" * 64,
+        fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
+    )
+    resultado = incorporar(incorporar([], doc), doc)
+    assert len(resultado) == 1
+    assert resultado[0].version_documento.monto == 85_000_000
+
+
+def test_dos_documentos_del_mismo_tercero_se_suman_sin_importar_el_orden():
+    """Un banco emite un certificado por CDT y la exógena trae el agregado: el segundo
+    documento no puede borrar al primero en silencio. Documentos distintos (sha distinto)
+    del mismo pagador se suman, y el resultado no depende del orden de llegada."""
+    def cert(sha: str, monto: int) -> DocumentReading:
+        campos = {"empleador_nit": "890903938", "empleador_nombre": "BANCO X",
+                  "salarios": monto, "retencion": 0}
+        return DocumentReading(
+            doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
+            fields=[ExtractedField(name=k, value=v) for k, v in campos.items()],
+        )
+
+    a, b = cert("a", 40_000_000), cert("b", 30_000_000)
+    base = abrir(_exogena(_fila("890903938", "5001", 70_000_000)))
+    ab = incorporar(incorporar(base, a), b)
+    ba = incorporar(incorporar(base, b), a)
+    assert ab == ba
+    [p] = ab
+    assert p.version_documento.monto == 70_000_000
+    assert p.estado == EstadoPartida.COINCIDE
+
+
 def test_sin_retencion_reportada_por_la_dian_no_hay_discrepancia_falsa():
     """El XLSX real no tiene columna de retención, así que el lado DIAN no la reporta.
     "No reportada" no es "cero": comparar 0 contra la retención real del 220 mandaba a

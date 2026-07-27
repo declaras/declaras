@@ -288,17 +288,28 @@ def incorporar(
     version = _version_documento(documento, clave)
     nit = str(documento.field(clave.campo_nit) or "").strip()
     nombre = str(documento.field(clave.campo_nombre) or "").strip()
+    # El identificador corto del documento, el mismo con que el expediente lo refiere. Es
+    # la llave del aporte en `versiones_documento`: reincorporar el MISMO documento
+    # reemplaza su aporte (idempotente) y un documento NUEVO del mismo pagador suma.
+    sha = documento.content_sha256[:12]
 
     if not nit:
-        # Sin NIT no hay llave (entrada manual o lectura incompleta): nace suelta y con la
-        # explicación, en vez de adivinar a qué tercero pertenece. El prefijo del sha es el
-        # mismo identificador corto con que el expediente refiere el documento.
+        # Sin NIT no hay llave de tercero (entrada manual o lectura incompleta): la partida
+        # es del documento mismo, con el sha como identidad. Reincorporarlo empareja por
+        # ese id — este era justo el camino que duplicaba la plata en cada subida.
+        id_suelta = f"{sha}:{clave.concepto}"
+        indice = next((i for i, p in enumerate(partidas) if p.id == id_suelta), None)
+        if indice is not None:
+            actualizadas = list(partidas)
+            actualizadas[indice] = _emparejar(partidas[indice], sha, version, tolerancia_pesos)
+            return actualizadas
         suelta = Partida(
-            id=f"{documento.content_sha256[:12]}:{clave.concepto}",
+            id=id_suelta,
             nit_tercero="",
             nombre_tercero=nombre,
             concepto=clave.concepto,
             version_documento=version,
+            versiones_documento={sha: version},
             estado=EstadoPartida.SOLO_DOCUMENTO,
             nota=_NOTA_SIN_NIT,
         )
@@ -313,12 +324,13 @@ def incorporar(
             nombre_tercero=nombre,
             concepto=clave.concepto,
             version_documento=version,
+            versiones_documento={sha: version},
             estado=EstadoPartida.SOLO_DOCUMENTO,
         )
         return [*partidas, nueva]
 
     actualizadas = list(partidas)
-    actualizadas[objetivo] = _emparejar(partidas[objetivo], version, tolerancia_pesos)
+    actualizadas[objetivo] = _emparejar(partidas[objetivo], sha, version, tolerancia_pesos)
     return actualizadas
 
 
@@ -370,7 +382,17 @@ def _es_ajena(partida: Partida) -> bool:
     return partida.reportado_a is not None
 
 
-def _emparejar(partida: Partida, version: Valor, tolerancia_pesos: int) -> Partida:
+def _emparejar(partida: Partida, sha: str, version: Valor, tolerancia_pesos: int) -> Partida:
+    # Mismo sha = el mismo documento otra vez: su aporte se reemplaza (reenvío corregido).
+    # Sha nuevo = otro documento del mismo pagador: se agrega. Nada desaparece en silencio.
+    versiones = dict(partida.versiones_documento)
+    versiones[sha] = version
+    agregado = _agregado(versiones)
+    adjuntos: dict[str, object] = {
+        "versiones_documento": versiones,
+        "version_documento": agregado,
+    }
+
     if _es_ajena(partida):
         # La fila de la DIAN es de otra persona y NUNCA aporta hecho, así que tampoco puede
         # confirmar este certificado: la partida no cambia de estado. El documento queda
@@ -380,25 +402,47 @@ def _emparejar(partida: Partida, version: Valor, tolerancia_pesos: int) -> Parti
         if _NOTA_CERTIFICADO_SIN_RESPALDO not in nota:
             prefijo = f"{nota}; " if nota else ""
             nota = prefijo + _NOTA_CERTIFICADO_SIN_RESPALDO
-        return partida.model_copy(update={"version_documento": version, "nota": nota})
+        return partida.model_copy(update={**adjuntos, "nota": nota})
 
     dian = partida.version_dian
     if dian is None:
-        # Emparejó contra una partida que ya era solo-documento: una lectura nueva del mismo
-        # tercero reemplaza a la anterior (el caso real es un reenvío corregido) y sigue sin
-        # haber contra qué comparar.
-        return partida.model_copy(
-            update={"version_documento": version, "estado": EstadoPartida.SOLO_DOCUMENTO}
-        )
+        # Emparejó contra una partida que ya era solo-documento: sigue sin haber contra
+        # qué comparar.
+        return partida.model_copy(update={**adjuntos, "estado": EstadoPartida.SOLO_DOCUMENTO})
 
-    coincide = abs(dian.monto - version.monto) <= tolerancia_pesos
-    if dian.retencion is not None and version.retencion is not None:
+    # Se compara contra el AGREGADO de los documentos: la exógena también agrega (un banco
+    # reporta la suma de sus CDT en una sola fila).
+    coincide = abs(dian.monto - agregado.monto) <= tolerancia_pesos
+    if dian.retencion is not None and agregado.retencion is not None:
         # La retención solo se compara cuando los DOS lados la afirman: "no reportada"
         # no es un cero contra el cual discrepar.
-        coincide = coincide and abs(dian.retencion - version.retencion) <= tolerancia_pesos
+        coincide = coincide and abs(dian.retencion - agregado.retencion) <= tolerancia_pesos
     return partida.model_copy(
         update={
-            "version_documento": version,
+            **adjuntos,
             "estado": EstadoPartida.COINCIDE if coincide else EstadoPartida.DISCREPANCIA,
         }
+    )
+
+
+def _agregado(versiones: dict[str, Valor]) -> Valor:
+    """La suma de los aportes de los documentos, como un solo `Valor` del lado documento.
+
+    Con un solo documento es su aporte tal cual. Con varios: los montos se suman, la
+    retención suma solo los lados que la afirman (None si ninguno), la confianza es la
+    mínima (la suma no es más confiable que su peor sumando) y las celdas se ordenan para
+    que el agregado no dependa del orden de llegada de los documentos.
+    """
+    valores = list(versiones.values())
+    if len(valores) == 1:
+        return valores[0]
+    retenciones = [v.retencion for v in valores if v.retencion is not None]
+    confianzas = [v.confianza for v in valores if v.confianza is not None]
+    celdas = sorted({v.celda for v in valores if v.celda})
+    return Valor(
+        monto=sum(v.monto for v in valores),
+        retencion=sum(retenciones) if retenciones else None,
+        lado=Lado.DOCUMENTO,
+        celda=", ".join(celdas) or None,
+        confianza=min(confianzas) if confianzas else None,
     )

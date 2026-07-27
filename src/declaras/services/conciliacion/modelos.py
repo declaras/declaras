@@ -86,7 +86,17 @@ class Partida(_Modelo):
     # (5002 y 5003) son una sola partida, y acá queda el rastro de cuáles fueron.
     codigos_crudos: list[str] = Field(default_factory=list)
     version_dian: Valor | None = None
+    # El AGREGADO de los aportes de abajo (o None si no ha llegado documento): contra esto
+    # se compara el lado DIAN, porque la exógena también agrega (un banco reporta la suma
+    # de sus CDT en una fila).
     version_documento: Valor | None = None
+    # El aporte de cada documento, llaveado por su identificador corto (sha[:12], el mismo
+    # del expediente). Distingue "el mismo documento otra vez" (reemplaza su aporte: un
+    # reenvío corregido) de "otro documento del mismo pagador" (suma: un certificado por
+    # CDT) — sin esto, cada segundo certificado del mismo NIT borraba al anterior en
+    # silencio y el resultado dependía del orden de llegada. Campo adicional al contrato
+    # del plan, autorizado en la ronda de fixes 1 de la T4.
+    versiones_documento: dict[str, Valor] = Field(default_factory=dict)
     estado: EstadoPartida
     nota: str | None = None
     # A quién le reportó el tercero cuando NO fue al titular: la otra identificación, o el
