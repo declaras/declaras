@@ -39,9 +39,6 @@ _NOTA_CERTIFICADO_SIN_RESPALDO = (
 _NOTA_RETENCION_AMBIGUA = (
     "la DIAN asigna esta fila a retenciones y a otro renglón a la vez; hay que clasificarla a mano"
 )
-_NOTA_VERSIONES_RIVALES = (
-    "llegaron dos certificados distintos del mismo empleador; hay que decidir cuál rige"
-)
 _NOTA_AJENAS_MULTIPLES = (
     "el tercero tiene varias filas reportadas a otras personas; "
     "el certificado queda aparte para cruzarlo a mano"
@@ -536,20 +533,22 @@ def _emparejar(
         # Cuál rigió queda ESTRUCTURAL en la partida (la nota es texto libre que otras
         # capas reescriben): esa es la huella de auditoría de la cifra publicada.
         publicada = version
-        nota_rivales = _NOTA_VERSIONES_RIVALES
+        nota_rivales = _nota_rivales(len(versiones))
         version_que_rige = sha
     adjuntos: dict[str, object] = {
         "versiones_documento": versiones,
         "version_documento": publicada,
         "version_que_rige": version_que_rige,
     }
+    # El aviso de rivales anterior se quita antes de sumar el vigente: el número cambió.
+    nota_base = _sin_nota_rivales(partida.nota)
 
     if _es_ajena(partida):
         # La fila de la DIAN es de otra persona y NUNCA aporta hecho, así que tampoco puede
         # confirmar este certificado: la partida no cambia de estado. El documento queda
         # adjunto y anotado para que el contador vea las dos cosas y decida (puede resolver
         # con otro valor); descartarlo sería una pérdida silenciosa.
-        nota = _con_nota(partida.nota, _NOTA_CERTIFICADO_SIN_RESPALDO, nota_rivales)
+        nota = _con_nota(nota_base, _NOTA_CERTIFICADO_SIN_RESPALDO, nota_rivales)
         return partida.model_copy(update={**adjuntos, "nota": nota})
 
     dian = partida.version_dian
@@ -560,7 +559,7 @@ def _emparejar(
             update={
                 **adjuntos,
                 "estado": EstadoPartida.SOLO_DOCUMENTO,
-                "nota": _con_nota(partida.nota, nota_rivales),
+                "nota": _con_nota(nota_base, nota_rivales),
             }
         )
 
@@ -574,7 +573,7 @@ def _emparejar(
         update={
             **adjuntos,
             "estado": EstadoPartida.COINCIDE if coincide else EstadoPartida.DISCREPANCIA,
-            "nota": _con_nota(partida.nota, nota_rivales),
+            "nota": _con_nota(nota_base, nota_rivales),
         }
     )
 
@@ -585,6 +584,29 @@ def _con_nota(nota: str | None, *nuevas: str | None) -> str | None:
         if nueva and nueva not in (nota or ""):
             nota = f"{nota}; {nueva}" if nota else nueva
     return nota
+
+
+def _nota_rivales(n: int) -> str:
+    """El aviso de versiones rivales, con el número REAL de versiones en juego."""
+    return (
+        f"llegaron {n} certificados distintos del mismo empleador; "
+        "hay que decidir cuál rige"
+    )
+
+
+_NOTA_RIVALES_RE = re.compile(
+    r"(?:; )?llegaron \d+ certificados distintos del mismo empleador; "
+    r"hay que decidir cuál rige"
+)
+
+
+def _sin_nota_rivales(nota: str | None) -> str | None:
+    """Quita el aviso de rivales anterior: el número de versiones pudo cambiar, y dos
+    avisos con números distintos conviviendo en la misma nota confunden más que ninguno."""
+    if not nota:
+        return nota
+    limpia = _NOTA_RIVALES_RE.sub("", nota).strip("; ")
+    return limpia or None
 
 
 def _agregado(versiones: dict[str, Valor]) -> Valor:

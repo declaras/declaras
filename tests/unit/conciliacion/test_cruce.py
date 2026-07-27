@@ -431,6 +431,18 @@ def test_sin_rivales_no_hay_version_que_rige():
     assert p.version_que_rige is None
 
 
+def test_la_nota_de_rivales_dice_el_numero_real_de_versiones():
+    """Con tres versiones en juego la nota no puede seguir diciendo 'dos': el aviso viejo
+    se reemplaza por el vigente, no se acumulan."""
+    partidas = incorporar(abrir(_exogena()), _cert_220_completo("a"))
+    partidas = incorporar(partidas, _cert_220_completo("b"))
+    partidas = incorporar(partidas, _cert_220_completo("c"))
+    [salarios] = [p for p in partidas if p.concepto is Concepto.SALARIOS]
+    assert "llegaron 3 certificados" in (salarios.nota or "")
+    assert "llegaron 2" not in (salarios.nota or "")
+    assert salarios.version_que_rige == "c" * 12
+
+
 def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monkeypatch):
     """La suma por sha sigue existiendo, pero solo para tipos declarados acumulables
     (un banco emite un certificado por CDT y la exógena trae el agregado). El 220 no lo
