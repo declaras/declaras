@@ -207,9 +207,10 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
             ),
         )
         grupo.monto += _entero(valores.get("amount"))
-        if "retencion" in valores:
-            # Solo cuenta como reportada si la fila trae la clave: el XLSX real no tiene
-            # columna de retención, y "no reportada" no puede convertirse en un 0 que
+        if valores.get("retencion") is not None:
+            # Solo cuenta como reportada si la fila trae un VALOR: el XLSX real no tiene
+            # columna de retención, y el lector emite None para celdas ausentes por
+            # convención — ni la clave ausente ni None pueden convertirse en un 0 que
             # después discrepe contra el certificado.
             grupo.retencion = (grupo.retencion or 0) + _entero(valores.get("retencion"))
         if codigo and codigo not in grupo.codigos:

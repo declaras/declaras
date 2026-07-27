@@ -464,6 +464,18 @@ def test_sin_retencion_reportada_por_la_dian_no_hay_discrepancia_falsa():
     assert p.diferencia_retencion == 0
 
 
+def test_retencion_none_del_lector_no_es_un_cero_afirmado():
+    """El lector de exógena emite None para celdas ausentes por convención: el día que
+    alguien agregue la columna, {"retencion": None} no puede volverse un 0 afirmado que
+    reviva la discrepancia falsa que I4 mató."""
+    fila = _fila("900111222", "5001", 85_000_000)
+    fila["retencion"] = None
+    partidas = abrir(_exogena(fila))
+    [p] = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    assert p.version_dian.retencion is None
+    assert p.estado == EstadoPartida.COINCIDE
+
+
 def test_retencion_reportada_en_cero_si_es_comparable():
     """Distinto de la ausente: un lado que afirma 0 sí se compara contra el certificado."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000, retencion=0)))
