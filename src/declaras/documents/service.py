@@ -8,6 +8,7 @@ ni cola, la operacion es sincronica. Lo que si hay es cache por contenido, para 
 from __future__ import annotations
 
 import hashlib
+import threading
 
 from declaras.documents.models import DocumentReading
 from declaras.documents.registry import reader_for, supported_types
@@ -21,6 +22,7 @@ class DocumentReaderService:
     def __init__(self, *, cache_size: int = 256) -> None:
         self._cache: dict[str, DocumentReading] = {}
         self._cache_size = cache_size
+        self._candado = threading.Lock()
 
     def read(
         self, *, content: bytes, doc_type: str, anio_esperado: int | None = None
@@ -64,6 +66,13 @@ class DocumentReaderService:
         return reading
 
     def _remember(self, key: str, reading: DocumentReading) -> None:
-        if len(self._cache) >= self._cache_size:
-            self._cache.pop(next(iter(self._cache)))
-        self._cache[key] = reading
+        # Con candado porque `read` ya no corre solo en el hilo del event loop: los tres
+        # llamadores la despachan al threadpool, asi que dos lecturas concurrentes pueden
+        # elegir la MISMA clave mas vieja para desalojar y la segunda `pop` revienta con
+        # KeyError. Ese KeyError no es un DeclarasError: saldria como 500 despues de haberle
+        # pagado la lectura al modelo, y por el camino del expediente escaparia a
+        # `_try_read_and_flag`, dejando el documento sin lectura y sin flag.
+        with self._candado:
+            if len(self._cache) >= self._cache_size:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[key] = reading
