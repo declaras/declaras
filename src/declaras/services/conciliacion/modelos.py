@@ -48,7 +48,13 @@ class Valor(_Modelo):
     """Lo que un lado afirma: los dos números que se comparan, con su procedencia."""
 
     monto: int
-    retencion: int
+    # None = este lado NO reportó la retención. No es lo mismo que 0: el XLSX real de la
+    # exógena no trae columna de retención, y tratar "no reportada" como 0 hacía imposible
+    # que un asalariado real quedara COINCIDE (discrepancia falsa del tamaño de toda su
+    # retención). Desviación deliberada del brief (`retencion: int`), autorizada en la
+    # ronda de fixes 1 de la T4: el brief se escribió antes de saber qué columnas trae el
+    # lector. Un agente futuro no debe "corregirla" de vuelta a `int`.
+    retencion: int | None
     lado: Lado
     # Celda del XLSX o fragmento del documento que respalda el valor (el `source` de la
     # lectura). Es lo que después se traduce a `Fuente.celda` cuando el hecho entra al caso.
@@ -107,9 +113,14 @@ class Partida(_Modelo):
     @property
     def diferencia_retencion(self) -> int:
         """La retención se expone aparte del monto: declarar más retención de la que el
-        tercero reportó casi garantiza un requerimiento de la DIAN."""
+        tercero reportó casi garantiza un requerimiento de la DIAN.
+
+        Si un lado no la reportó (None) no hay diferencia que medir: 0.
+        """
         if self.version_dian is None or self.version_documento is None:
             return 0
         if self.reportado_a is not None:
+            return 0
+        if self.version_dian.retencion is None or self.version_documento.retencion is None:
             return 0
         return abs(self.version_dian.retencion - self.version_documento.retencion)

@@ -99,7 +99,8 @@ class _Grupo:
     codigos: list[str] = field(default_factory=list)
     celdas: list[str] = field(default_factory=list)
     monto: int = 0
-    retencion: int = 0
+    # None mientras ninguna fila afirme una retención: el XLSX real no trae esa columna.
+    retencion: int | None = None
 
     @property
     def id(self) -> str:
@@ -152,7 +153,11 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
             ),
         )
         grupo.monto += int(valores.get("amount") or 0)
-        grupo.retencion += int(valores.get("retencion") or 0)
+        if "retencion" in valores:
+            # Solo cuenta como reportada si la fila trae la clave: el XLSX real no tiene
+            # columna de retención, y "no reportada" no puede convertirse en un 0 que
+            # después discrepe contra el certificado.
+            grupo.retencion = (grupo.retencion or 0) + int(valores.get("retencion") or 0)
         if codigo and codigo not in grupo.codigos:
             grupo.codigos.append(codigo)
         if fila.source:
@@ -325,7 +330,8 @@ def _version_documento(documento: DocumentReading, clave: _ClaveDocumento) -> Va
     confianzas = [c.confidence for c in usados]
     return Valor(
         monto=sum(int(campos[n].value or 0) for n in clave.campos_monto if n in campos),
-        retencion=int(retencion.value or 0) if retencion is not None else 0,
+        # None cuando la lectura no trae el campo: este lado no afirma ninguna retención.
+        retencion=int(retencion.value or 0) if retencion is not None else None,
         lado=Lado.DOCUMENTO,
         # La procedencia viene de la lectura (`ExtractedField.source`/`.confidence`). La
         # confianza del agregado es la mínima de los campos usados: la suma no es más
@@ -385,10 +391,11 @@ def _emparejar(partida: Partida, version: Valor, tolerancia_pesos: int) -> Parti
             update={"version_documento": version, "estado": EstadoPartida.SOLO_DOCUMENTO}
         )
 
-    coincide = (
-        abs(dian.monto - version.monto) <= tolerancia_pesos
-        and abs(dian.retencion - version.retencion) <= tolerancia_pesos
-    )
+    coincide = abs(dian.monto - version.monto) <= tolerancia_pesos
+    if dian.retencion is not None and version.retencion is not None:
+        # La retención solo se compara cuando los DOS lados la afirman: "no reportada"
+        # no es un cero contra el cual discrepar.
+        coincide = coincide and abs(dian.retencion - version.retencion) <= tolerancia_pesos
     return partida.model_copy(
         update={
             "version_documento": version,

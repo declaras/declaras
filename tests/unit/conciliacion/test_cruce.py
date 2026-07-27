@@ -250,6 +250,28 @@ def test_las_diferencias_de_una_ajena_no_comparan_hechos_de_dos_personas():
     assert p.diferencia_retencion == 0
 
 
+def test_sin_retencion_reportada_por_la_dian_no_hay_discrepancia_falsa():
+    """El XLSX real no tiene columna de retención, así que el lado DIAN no la reporta.
+    "No reportada" no es "cero": comparar 0 contra la retención real del 220 mandaba a
+    todo asalariado al contador con una discrepancia falsa del tamaño de su retención,
+    encabezando la cola de pendientes."""
+    fila = _fila("900111222", "5001", 85_000_000)
+    del fila["retencion"]  # como el lector real: la clave no existe
+    partidas = abrir(_exogena(fila))
+    [p] = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    assert p.estado == EstadoPartida.COINCIDE
+    assert p.version_dian.retencion is None
+    assert p.diferencia_retencion == 0
+
+
+def test_retencion_reportada_en_cero_si_es_comparable():
+    """Distinto de la ausente: un lado que afirma 0 sí se compara contra el certificado."""
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000, retencion=0)))
+    [p] = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    assert p.estado == EstadoPartida.DISCREPANCIA
+    assert p.diferencia_retencion == 8_000_000
+
+
 def test_incorporar_no_muta_la_lista_de_entrada():
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
     incorporar(partidas, _cert_220("900111222", 85_000_000))
