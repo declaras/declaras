@@ -2,13 +2,14 @@
 
 DOS COSAS PASAN ACÁ Y NINGUNA ES COSMÉTICA.
 
-1. LA FUSIÓN DE AVISOS. `conciliacion.avisos(partidas)` es el único canal por el que seis
-   códigos llegan impresos al borrador: el motor está congelado y no puede levantarlos, y
-   `CasoTributario` no tiene dónde llevarlos. Uno es BLOQUEANTE —"este ingreso quedó por
-   fuera de la liquidación", con el tercero, el concepto y la cifra para que el contador lo
-   sume a mano—, y sin la fusión un 210 incompleto NO SE VE incompleto. Por eso la fusión
-   vive dentro de `liquidar_conciliado` y no en el llamador: un llamador que se la olvide
-   es un 210 que miente, y no puede depender de que alguien recuerde un segundo paso.
+1. LA FUSIÓN DE AVISOS. `conciliacion.avisos(partidas)` es el único canal por el que los
+   SIETE códigos del conciliador llegan impresos al borrador: el motor está congelado y no
+   puede levantarlos, y `CasoTributario` no tiene dónde llevarlos. Uno es BLOQUEANTE —"este
+   ingreso quedó por fuera de la liquidación", con el tercero, el concepto y la cifra para
+   que el contador lo sume a mano—, y sin la fusión un 210 incompleto NO SE VE incompleto.
+   Por eso la fusión vive dentro de `liquidar_conciliado` y no en el llamador: un llamador
+   que se la olvide es un 210 que miente, y no puede depender de que alguien recuerde un
+   segundo paso.
 
 2. QUE `bloqueante` BLOQUEE DE VERDAD. Era una etiqueta que solo se pintaba: el render la
    imprimía y el optimizador elegía elecciones sin mirarla. Bloqueante significa: la
@@ -58,6 +59,13 @@ class LiquidacionVersionada(_Modelo):
     version: int = Field(ge=1)
     momento: datetime
     liquidacion: Liquidacion
+    # ¿Esta versión se liquidó SIN ningún documento del cliente, o sea solo con lo que la
+    # DIAN reporta? Es lo que hace que la ganancia signifique "lo que el trabajo con los
+    # documentos le ahorró". El preliminar tiene que serlo, y cuando no se pudo (el
+    # expediente ya traía documentos cruzables y el caso sin ellos no se podía armar) la
+    # ganancia subestima y quien la muestre tiene que poder decirlo. Es estructural y no
+    # inferido de `version == 1`: la versión 1 puede no ser el preliminar puro.
+    base_sin_documentos: bool = False
 
     @property
     def impuesto(self) -> int:
@@ -113,6 +121,7 @@ def liquidar_y_versionar(
     p: ParametrosAnio | None = None,
     version: int = 1,
     momento: datetime | None = None,
+    base_sin_documentos: bool = False,
 ) -> LiquidacionVersionada:
     """Liquida y rotula el resultado con su versión y su momento.
 
@@ -124,6 +133,7 @@ def liquidar_y_versionar(
         version=version,
         momento=momento if momento is not None else datetime.now(tz=UTC),
         liquidacion=liquidar_conciliado(caso, partidas, parametros),
+        base_sin_documentos=base_sin_documentos,
     )
 
 

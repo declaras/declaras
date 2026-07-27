@@ -333,6 +333,37 @@ class LiquidacionBloqueadaError(DeclarasError):
     )
 
 
+class AnioSinParametrosError(DeclarasError):
+    """El ano gravable del expediente no tiene tabla de parametros calibrada.
+
+    Es 409 y no 500: no fallo el servidor, es que ese ano todavia no se liquida. Se abren
+    expedientes desde 2015 y las tablas se calibran ano por ano.
+    """
+
+    code = "ANIO_SIN_PARAMETROS"
+    http_status = 409
+    default_message = (
+        "Todavía no está calibrada la tabla de ese año gravable, así que no se puede "
+        "calcular la declaración."
+    )
+
+
+class ConflictoDeConcurrenciaError(DeclarasError):
+    """Alguien mas cambio este expediente entre que se leyo y se iba a guardar.
+
+    Se responde en vez de sobrescribir: guardar encima perderia la decision de la otra
+    persona en silencio, y esta API afirmaria haber guardado algo que no guardo.
+    """
+
+    code = "CONFLICTO_DE_CONCURRENCIA"
+    http_status = 409
+    retryable = True
+    default_message = (
+        "Alguien más cambió esta declaración mientras se preparaba el cambio. "
+        "Hay que volver a cargarla y repetir la decisión."
+    )
+
+
 class TaxpayerMismatchError(DeclarasError):
     """Los datos que se intentan vincular pertenecen a otro contribuyente.
 

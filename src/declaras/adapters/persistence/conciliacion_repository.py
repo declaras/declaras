@@ -16,9 +16,11 @@ existen, y `a_caso` cuenta dos veces cualquier id repetido.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from declaras.adapters.persistence.tables import (
@@ -26,6 +28,7 @@ from declaras.adapters.persistence.tables import (
     CasePartidaRow,
     CaseRespuestaRow,
 )
+from declaras.domain.errors import ConflictoDeConcurrenciaError
 from declaras.services.conciliacion import LiquidacionVersionada, Partida, Respuesta
 
 
@@ -68,28 +71,93 @@ class SqlConciliacionRepository:
     async def huerfanas(self, case_id: UUID) -> list[Partida]:
         return await self._partidas(case_id, sin_partida=True)
 
-    async def reemplazar_partidas(
-        self, case_id: UUID, *, partidas: list[Partida], huerfanas: list[Partida]
-    ) -> None:
-        """Deja EXACTAMENTE estas partidas y estas huerfanas, en una sola transaccion."""
-        ahora = _utcnow()
-        async with self._sessions() as session, session.begin():
-            await session.execute(
-                delete(CasePartidaRow).where(CasePartidaRow.case_id == str(case_id))
-            )
-            for sin_partida, grupo in ((False, partidas), (True, huerfanas)):
-                for partida in grupo:
-                    session.add(
-                        CasePartidaRow(
-                            id=str(uuid4()),
-                            case_id=str(case_id),
-                            partida_id=partida.id,
-                            estado=partida.estado.value,
-                            sin_partida=sin_partida,
-                            partida_json=partida.model_dump(mode="json"),
-                            updated_at=ahora,
-                        )
+    async def revision(self, case_id: UUID) -> int:
+        """La revision del bloque de partidas del expediente; 0 si todavia no hay ninguna."""
+        async with self._sessions() as session:
+            actual = (
+                await session.execute(
+                    select(func.max(CasePartidaRow.revision)).where(
+                        CasePartidaRow.case_id == str(case_id)
                     )
+                )
+            ).scalar()
+            return int(actual or 0)
+
+    async def reemplazar_partidas(
+        self,
+        case_id: UUID,
+        *,
+        partidas: list[Partida],
+        huerfanas: list[Partida],
+        revision_esperada: int,
+    ) -> int:
+        """Deja EXACTAMENTE estas partidas y estas huerfanas, si nadie mas escribio antes.
+
+        CHEQUEO OPTIMISTA, no bloqueo. La ventana entre que quien llama lee el estado y
+        llega aca es ancha (varias consultas y la liquidacion completa en medio), y sin
+        precondicion la segunda escritura borraba el bloque de la primera: las dos
+        respondian 200 y en la base quedaba una sola decision.
+
+        LA PRECONDICION ES UN UPDATE CONDICIONAL, NO UN SELECT. Medido: con un `SELECT` de
+        la revision dentro de la transaccion el defecto seguia reproduciendose 1 de 1, porque
+        la segunda transaccion alcanza a leer el estado de ANTES de que la primera confirme y
+        pasa el chequeo igual. Un `UPDATE ... WHERE revision = :esperada` es un
+        comparar-y-cambiar: toma el candado de escritura y se evalua contra lo ya confirmado,
+        asi que si alguien subio la revision no coincide con ninguna fila y se sabe. Va como
+        PRIMERA sentencia para que la transaccion nazca escritora y espere el candado en vez
+        de fallar al subir de lectora a escritora.
+
+        No se usa `SELECT ... FOR UPDATE`: exigiria hilar una sesion por todo el caso de uso
+        y no corre en SQLite, que es lo que usan las pruebas.
+
+        `IntegrityError` se traduce al mismo conflicto: dos primeras escrituras concurrentes
+        (revision 0, cuando todavia no hay bloque que comparar) chocan contra
+        `uq_partida_caso`, que es el mismo accidente visto desde la base. Sin esta
+        traduccion seria un 500 donde corresponde un 409.
+        """
+        ahora = _utcnow()
+        nueva = revision_esperada + 1
+        try:
+            async with self._sessions() as session, session.begin():
+                if revision_esperada:
+                    # `execute` esta tipado como `Result`, pero un UPDATE devuelve
+                    # `CursorResult`, que es el unico que trae el conteo de filas tocadas
+                    # (que es justo la respuesta del comparar-y-cambiar).
+                    cambiadas = cast(
+                        "CursorResult[Any]",
+                        await session.execute(
+                            update(CasePartidaRow)
+                            .where(
+                                CasePartidaRow.case_id == str(case_id),
+                                CasePartidaRow.revision == revision_esperada,
+                            )
+                            .values(revision=nueva)
+                        ),
+                    )
+                    if not cambiadas.rowcount:
+                        raise ConflictoDeConcurrenciaError(
+                            revision_leida=revision_esperada
+                        )
+                await session.execute(
+                    delete(CasePartidaRow).where(CasePartidaRow.case_id == str(case_id))
+                )
+                for sin_partida, grupo in ((False, partidas), (True, huerfanas)):
+                    for partida in grupo:
+                        session.add(
+                            CasePartidaRow(
+                                id=str(uuid4()),
+                                case_id=str(case_id),
+                                partida_id=partida.id,
+                                estado=partida.estado.value,
+                                sin_partida=sin_partida,
+                                revision=nueva,
+                                partida_json=partida.model_dump(mode="json"),
+                                updated_at=ahora,
+                            )
+                        )
+        except IntegrityError as exc:
+            raise ConflictoDeConcurrenciaError() from exc
+        return nueva
 
     async def _partidas(self, case_id: UUID, *, sin_partida: bool) -> list[Partida]:
         async with self._sessions() as session:
@@ -163,6 +231,7 @@ class SqlConciliacionRepository:
                         "version": f.version,
                         "momento": _as_utc(f.momento),
                         "liquidacion": f.liquidacion_json,
+                        "base_sin_documentos": f.base_sin_documentos,
                     }
                 )
                 for f in filas
@@ -180,6 +249,7 @@ class SqlConciliacionRepository:
                     momento=version.momento,
                     impuesto=version.impuesto,
                     saldo=version.saldo,
+                    base_sin_documentos=version.base_sin_documentos,
                     liquidacion_json=version.liquidacion.model_dump(mode="json"),
                 )
             )

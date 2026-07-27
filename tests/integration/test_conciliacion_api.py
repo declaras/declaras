@@ -8,6 +8,7 @@ determinístico (el real cuesta una llamada a un modelo), todo lo demás es el s
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 import pytest
@@ -170,6 +171,26 @@ async def test_cada_renglon_dice_que_se_puede_decidir_sobre_el(client):
     assert "LLEVAR_A_MANO" not in salarios
 
 
+async def test_una_cifra_imposible_no_hace_eco_del_validador(client):
+    """F3. Una fila de exógena con monto negativo (el lector real las pasa tal cual) revienta
+    el modelo del caso con un `ValidationError` de pydantic, que HEREDA de `ValueError`: el
+    mensaje crudo del validador salía en el cuerpo 200 de conciliar y en el 409 de la
+    liquidación. Nadie que declara tiene que leer "errors.pydantic.dev"."""
+    negativa = dict(FILA_RENDIMIENTOS, amount=-5_000_000)
+    case_id = await _abrir_caso(client, FILA_SALARIO, negativa)
+    resumen = (await client.post(f"/v1/cases/{case_id}/conciliacion")).json()
+
+    falta = resumen["falta_para_liquidar"]
+    assert falta is not None
+    for interno in ("pydantic", "validation error", "Input should be", "[type="):
+        assert interno not in falta
+    assert "revisar los renglones" in falta
+
+    negado = await client.get(f"/v1/cases/{case_id}/borrador")
+    assert negado.status_code == 409
+    assert "pydantic" not in negado.json()["message"]
+
+
 async def test_las_partidas_salen_ordenadas_por_plata_en_juego(client):
     case_id = await _conciliado(client)
     montos = [p["plata_en_juego"] for p in await _partidas(client, case_id)]
@@ -265,6 +286,74 @@ async def test_el_documento_que_llega_con_su_peticion_la_cierra(client):
     assert resultado["peticion_cerrada"] is True
 
 
+async def test_dos_archivos_con_el_mismo_nombre_reciben_su_propio_desenlace(client):
+    """F5. Con el NOMBRE como llave, dos `certificado.pdf` en la misma request recibían los
+    dos el desenlace del último: al contador se le decía que el 220 de su empleador no cruzó
+    justo cuando acababa de abrir la discrepancia que ahora tiene que decidir. Y el desenlace
+    por archivo es el contrato nuevo de esta tarea."""
+    case_id = await _conciliado(client)
+    respuesta = await client.post(
+        f"/v1/cases/{case_id}/documents",
+        data={"doc_type": [DOC_220, DOC_220]},
+        files=[
+            ("file", ("certificado.pdf", _bytes_220(), "application/pdf")),
+            (
+                "file",
+                (
+                    "certificado.pdf",
+                    _bytes_220("900999888", 12_000_000, nombre="OTRA SAS"),
+                    "application/pdf",
+                ),
+            ),
+        ],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    resultados = respuesta.json()["resultados"]
+    assert [r["archivo"] for r in resultados] == ["certificado.pdf", "certificado.pdf"]
+    assert [r["estado"] for r in resultados] == ["emparejado", "sin_emparejar"]
+
+    acme = next(p for p in await _partidas(client, case_id) if p["id"] == "900111222:SALARIOS")
+    assert acme["estado"] == "DISCREPANCIA"
+    assert acme["diferencia_monto"] == 2_400_000
+
+
+async def test_un_archivo_que_no_se_puede_recibir_no_tumba_los_demas(client, monkeypatch):
+    """F7. Una excepción no prevista abortaba la request con 500 dejando persistidos los
+    archivos anteriores y sin correr el cruce; el cliente reintentaba y duplicaba todo. El
+    archivo que falla se reporta como no recibido y los demás siguen su camino."""
+    from declaras.services import case_service as modulo
+
+    original = modulo.CaseService.add_client_upload
+    llamadas = {"n": 0}
+
+    async def falla_el_segundo(self, **kwargs):
+        llamadas["n"] += 1
+        if llamadas["n"] == 2:
+            raise RuntimeError("el disco se cayó a mitad de la subida")
+        return await original(self, **kwargs)
+
+    case_id = await _conciliado(client)
+    monkeypatch.setattr(modulo.CaseService, "add_client_upload", falla_el_segundo)
+    llamadas["n"] = 0
+
+    respuesta = await client.post(
+        f"/v1/cases/{case_id}/documents",
+        data={"doc_type": [DOC_220, "CERT_PREPAGADA", "CERT_ICETEX"]},
+        files=[
+            ("file", ("220.pdf", _bytes_220(), "application/pdf")),
+            ("file", ("roto.jpg", b"bytes que revientan", "image/jpeg")),
+            ("file", ("icetex.pdf", b"otro certificado", "application/pdf")),
+        ],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    resultados = respuesta.json()["resultados"]
+    assert [r["estado"] for r in resultados] == ["emparejado", "no_recibido", "a_bandeja"]
+    assert "volver a mandar solo este" in resultados[1]["motivo"]
+    # Y el cruce SÍ corrió con lo que entró: la discrepancia del 220 está en la cola.
+    acme = next(p for p in await _partidas(client, case_id) if p["id"] == "900111222:SALARIOS")
+    assert acme["estado"] == "DISCREPANCIA"
+
+
 async def test_un_doc_type_por_archivo_o_ninguno(client):
     """Dos archivos y tres tipos es una petición mal armada, no un tipo que se adivina."""
     case_id = await _conciliado(client)
@@ -283,11 +372,27 @@ async def test_un_doc_type_por_archivo_o_ninguno(client):
 # ─────────────────────────── 5. la ganancia ───────────────────────────
 
 
+async def test_un_220_deja_un_unico_renglon_por_decidir(client):
+    """El ruling del tercer automatismo. Un 220 abre tres renglones: la discrepancia de
+    salarios y los dos de aportes obligatorios. Los aportes NUNCA van a cruzar contra la
+    exógena —el tercero los reporta bajo el NIT de la EPS o del fondo, no del empleador—,
+    así que pedirle una decisión al contador ahí no gana información. El que queda es el
+    único que sí necesita criterio: cuál de las dos cifras de salario manda."""
+    case_id = await _conciliado(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    partidas = await _partidas(client, case_id)
+    pendientes = [p["id"] for p in partidas if p["resolucion"] is None]
+    assert pendientes == ["900111222:SALARIOS"]
+
+    aportes = [p for p in partidas if p["concepto"] == "APORTES_SALUD"]
+    assert [p["resolucion"]["origen"] for p in aportes] == ["SISTEMA"]
+    assert [p["resolucion"]["motivo"] for p in aportes] == ["SIN_CONTRAPARTE_DIAN"]
+
+
 async def test_la_ganancia_aparece_cuando_el_220_queda_resuelto(client):
-    """El 220 trae los aportes obligatorios (INCRNGO) y la retención. Los aportes abren
-    partidas SOLO_DOCUMENTO —la exógena los reporta bajo el NIT de la EPS, no del
-    empleador—, así que NO se auto-resuelven: la ganancia aparece cuando el contador
-    decide, no al soltar el archivo."""
+    """El 220 trae los aportes obligatorios (INCRNGO) y la retención: la ganancia aparece
+    cuando el único renglón que necesita criterio humano —cuál cifra de salario manda—
+    queda decidido."""
     case_id = await _conciliado(client)
     await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
     antes = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
@@ -343,6 +448,52 @@ async def test_resolver_saca_la_partida_de_la_cola_de_pendientes(client):
     assert respuesta.json()["partida"]["resolucion"]["origen"] == "CONTADOR"
     pendientes = [p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is None]
     assert "900111222:SALARIOS" not in pendientes
+
+
+async def test_dos_resoluciones_simultaneas_no_se_pierden_en_silencio(client):
+    """F2. Leer el estado, armar la lista completa y reemplazar el bloque entero deja una
+    ventana ancha (varias idas a la base y la liquidación completa en medio) en la que la
+    segunda escritura borra la decisión de la primera. Las dos respondían 200 y en la base
+    quedaba UNA sola decisión: el API afirmaba haber guardado algo que no guardó. Perder la
+    decisión de un contador en silencio no es aceptable; la perdedora recibe 409."""
+    # Dos empleadores y dos certificados que discrepan: dos renglones DISTINTOS por decidir,
+    # que es el escenario del defecto (no hace falta que compitan por el mismo renglón).
+    otro = dict(FILA_SALARIO, reporter_nit="900999888", reporter_name="OTRA SAS")
+    case_id = await _conciliado(client, FILA_SALARIO, otro)
+    await _subir(client, case_id, DOC_220, "acme.pdf", _bytes_220())
+    await _subir(
+        client, case_id, DOC_220, "otra.pdf", _bytes_220("900999888", nombre="OTRA SAS")
+    )
+    pendientes = [p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is None]
+    assert len(pendientes) >= 2, pendientes
+
+    async def resolver(partida_id: str):
+        return await client.post(
+            f"/v1/cases/{case_id}/conciliacion/{partida_id}/resolver",
+            json={
+                "decision": "USAR_DOCUMENTO",
+                "motivo": "ERROR_DEL_TERCERO",
+                "quien": f"contador-{partida_id}",
+            },
+        )
+
+    respuestas = await asyncio.gather(
+        resolver(pendientes[0]), resolver(pendientes[1]), return_exceptions=True
+    )
+    codigos = sorted(
+        r.status_code for r in respuestas if not isinstance(r, BaseException)
+    )
+    resueltas = {
+        p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is not None
+    }
+
+    # O las dos entraron (si la base las serializó), o la perdedora dijo 409 — nunca dos
+    # 200 con una sola decisión guardada.
+    if codigos == [200, 200]:
+        assert {pendientes[0], pendientes[1]} <= resueltas
+    else:
+        assert codigos == [200, 409]
+        assert len({pendientes[0], pendientes[1]} & resueltas) == 1
 
 
 async def test_resolver_una_partida_que_no_existe_da_404(client):
@@ -435,6 +586,46 @@ async def test_reconciliar_preserva_la_decision_del_contador_y_repone_las_provis
     assert por_id["900111222:SALARIOS"]["resolucion"]["origen"] == "SISTEMA"
 
 
+async def test_el_documento_que_llega_antes_de_conciliar_no_borra_la_ganancia(client):
+    """F4, y es el ORDEN NATURAL del producto: el cliente manda el certificado por chat y
+    el contador concilia después. Si el preliminar fuera "la primera versión que se pudo
+    guardar", ya vendría con el 220 dentro y la ganancia saldría 0 — desaparecerían los
+    1.311.000 de impuesto y los 10.226.282 de saldo que el producto existe para mostrar.
+    La versión 1 se liquida SIEMPRE desde la exógena sola."""
+    case_id = await _abrir_caso(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+    for partida in await _partidas(client, case_id):
+        if partida["resolucion"] is None:
+            decision = "USAR_DIAN" if partida["estado"] == "SOLO_DIAN" else "USAR_DOCUMENTO"
+            motivo = "FALTA_DOCUMENTO" if decision == "USAR_DIAN" else "ERROR_DEL_TERCERO"
+            await client.post(
+                f"/v1/cases/{case_id}/conciliacion/{partida['id']}/resolver",
+                json={"decision": decision, "motivo": motivo, "quien": "contador"},
+            )
+
+    cuerpo = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert cuerpo["preliminar_sin_documentos"] is True
+    assert cuerpo["preliminar"]["impuesto"] == 3_661_127
+    assert cuerpo["actual"]["impuesto"] == 2_350_127
+    assert cuerpo["ganancia"] == 1_311_000
+    assert cuerpo["ganancia_saldo"] == 10_226_282
+
+
+async def test_el_preliminar_dice_cuando_no_pudo_liquidarse_sin_documentos(client):
+    """El caso en que la exógena sola NO se puede liquidar (trae honorarios, que el motor
+    no cubre y el automatismo no toca): el preliminar cae al primer estado que sí se pudo
+    armar, y entonces la ganancia subestima. Se dice, no se disimula."""
+    case_id = await _abrir_caso(client, FILA_SALARIO, FILA_HONORARIOS)
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+    await client.post(
+        f"/v1/cases/{case_id}/conciliacion/901222333:HONORARIOS/resolver",
+        json={"decision": "LLEVAR_A_MANO", "motivo": "FUERA_DEL_MOTOR", "quien": "contador"},
+    )
+    cuerpo = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert cuerpo["preliminar_sin_documentos"] is False
+
+
 async def test_reconciliar_sin_cambios_no_agrega_una_version_de_la_liquidacion(client):
     """Una versión por request llenaría la historia de filas idénticas y el número de
     versión —que es lo que separa el preliminar de la de hoy— dejaría de significar nada."""
@@ -471,6 +662,40 @@ async def test_una_resolucion_cuya_partida_desaparece_se_lista_en_vez_de_botarse
     assert huerfanas[0]["resolucion"]["origen"] == "CONTADOR"
     estado = (await client.get(f"/v1/cases/{case_id}/conciliacion")).json()
     assert [h["id"] for h in estado["resoluciones_sin_partida"]] == ["890903938:RENDIMIENTOS"]
+
+
+async def test_una_decision_invalidada_deja_rastro_permanente(client):
+    """F6. `refrescar` invalida la decisión del contador con una NOTA, y la nota es texto
+    libre que el siguiente rebuild vuelve a derivar desde cero: a la segunda reconstrucción
+    desaparecía y quedaba un renglón resuelto por el sistema, fuera de la cola, sin huérfana
+    y sin rastro de que una persona había decidido. La plata declarada es la conservadora,
+    así que no hay cifra mala — se perdía la auditoría."""
+    case_id = await _conciliado(client)
+    await client.post(
+        f"/v1/cases/{case_id}/conciliacion/890903938:RENDIMIENTOS/resolver",
+        json={
+            "decision": "USAR_OTRO",
+            "motivo": "DECISION_DEL_CONTADOR",
+            "valor": 7_777_777,
+            "quien": "contador@declaras.co",
+        },
+    )
+    # La DIAN republica la fila del banco con otra cifra: la decisión ya no aplica.
+    otra_cifra = dict(FILA_RENDIMIENTOS, amount=9_500_000)
+    await _subir(client, case_id, "EXOGENA", "v2.xlsx", _exogena(FILA_SALARIO, otra_cifra))
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+    # Y cualquier reconstrucción posterior, que es la que borraba la nota.
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    eventos = [e for e in detalle["events"] if e["kind"] == "RESOLUCION_DESCARTADA"]
+    assert len(eventos) == 1, "una vez, ni cero ni una por reconstrucción"
+    assert eventos[0]["payload"]["partida_id"] == "890903938:RENDIMIENTOS"
+    assert eventos[0]["payload"]["valor"] == 7_777_777
+    assert eventos[0]["payload"]["quien"] == "contador@declaras.co"
+    alertas = [f for f in detalle["flags"] if f["code"] == "RESOLUCION_DESCARTADA"]
+    assert len(alertas) == 1
+    assert alertas[0]["resolved_at"] is None
 
 
 # ─────────────────────────── borrador, memoria y cierre ───────────────────────────
@@ -516,6 +741,65 @@ async def test_no_se_cierra_el_borrador_con_un_aviso_bloqueante_vivo(client):
     assert respuesta.status_code == 409
     assert respuesta.json()["code"] == "LIQUIDACION_BLOQUEADA"
     assert "INGRESO_LLEVADO_A_MANO" in str(respuesta.json()["details"])
+
+
+async def test_no_se_cierra_un_borrador_que_el_sistema_se_niega_a_imprimir(client):
+    """F1, escenario A. El flujo normal: llega el 220 y quedan renglones por decidir, así
+    que el caso no se arma y `/borrador` responde 409. Cerrar tiene que negarse por lo
+    MISMO: dar por listo un borrador que el propio sistema no imprime, y fechar el evento
+    con la cifra de antes del 220, es afirmar que está lista una declaración que no existe."""
+    case_id = await _conciliado(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
+
+    respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert respuesta.status_code == 409
+    assert respuesta.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    assert detalle["status"] != "DRAFT_READY"
+    assert not [e for e in detalle["events"] if e["kind"] == "DRAFT_READY"]
+
+
+async def test_un_bloqueante_que_aparece_despues_de_la_ultima_version_igual_bloquea(client):
+    """F1, escenario B: el que rompía el requisito 2. La DIAN republica el reporte con
+    honorarios → queda 1 pendiente → el caso no se arma → no hay versión nueva. Si `cerrar`
+    mira la última versión GUARDADA, el bloqueante nunca se calcula y el borrador se cierra:
+    el aviso que existe para impedir exactamente esto no llega a existir."""
+    case_id = await _conciliado(client)
+    republicada = _exogena(FILA_SALARIO, FILA_HONORARIOS)
+    await _subir(client, case_id, "EXOGENA", "exogena-v2.xlsx", republicada)
+    resumen = (await client.post(f"/v1/cases/{case_id}/conciliacion")).json()
+    assert resumen["pendientes"] == 1
+
+    # Mientras el caso no se arme, cerrar se niega por falta de decisiones...
+    primero = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert primero.status_code == 409
+    assert primero.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
+
+    # ...y una vez resuelto (llevado a mano), se niega por el BLOQUEANTE, que ahora sí se
+    # calcula sobre el estado de hoy y no sobre una versión vieja sin él.
+    await client.post(
+        f"/v1/cases/{case_id}/conciliacion/901222333:HONORARIOS/resolver",
+        json={"decision": "LLEVAR_A_MANO", "motivo": "FUERA_DEL_MOTOR", "quien": "contador"},
+    )
+    segundo = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
+    assert segundo.status_code == 409
+    assert segundo.json()["code"] == "LIQUIDACION_BLOQUEADA"
+    assert "INGRESO_LLEVADO_A_MANO" in str(segundo.json()["details"])
+
+
+async def test_la_liquidacion_dice_cuando_la_version_guardada_ya_no_es_la_de_hoy(client):
+    """El colateral de F1: una `actual` rancia sin marca de que lo está es el front
+    pintando la cifra pre-220 como "la declaración de hoy", con el 220 ya en la mano."""
+    case_id = await _conciliado(client)
+    vigente = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert vigente["actual_vigente"] is True
+    assert vigente["falta_para_liquidar"] is None
+
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    rancia = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
+    assert rancia["actual_vigente"] is False
+    assert "sin resolver" in rancia["falta_para_liquidar"]
 
 
 async def test_el_borrador_sin_bloqueantes_si_se_cierra(client):

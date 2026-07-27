@@ -347,12 +347,27 @@ class LiquidacionesResponse(BaseModel):
     actual: LiquidacionResponse
     ganancia: int
     ganancia_saldo: int
+    # ¿`actual` corresponde a los renglones que hay hoy? False cuando llegó un documento y
+    # quedan decisiones pendientes: entonces `actual` es lo último que se pudo calcular y
+    # NO la declaración de hoy, y las dos ganancias se miden contra ella. Sin esta marca la
+    # interfaz pinta la cifra de antes del último documento como si fuera la vigente.
+    actual_vigente: bool
+    # Qué falta para que vuelva a haber una liquidación de hoy (None si está vigente).
+    falta_para_liquidar: str | None
+    # ¿El preliminar se liquidó SIN ningún documento del cliente? Es lo que hace que la
+    # ganancia signifique "lo que el trabajo con los documentos le ahorró". False cuando el
+    # expediente ya tenía documentos cruzables antes de la primera conciliación y el
+    # preliminar puro no se pudo armar: ahí la ganancia subestima, y hay que decirlo.
+    preliminar_sin_documentos: bool
 
     @classmethod
     def from_liquidaciones(cls, liquidaciones: Liquidaciones) -> LiquidacionesResponse:
         return cls(
             preliminar=LiquidacionResponse.from_version(liquidaciones.preliminar),
             actual=LiquidacionResponse.from_version(liquidaciones.actual),
+            actual_vigente=liquidaciones.vigente,
+            falta_para_liquidar=liquidaciones.falta,
+            preliminar_sin_documentos=liquidaciones.preliminar.base_sin_documentos,
             ganancia=liquidaciones.ganancia,
             # Lo que el cliente SIENTE: la retención no baja el impuesto, baja lo que le
             # toca girar. La ganancia del contrato es la del impuesto; esta va al lado.

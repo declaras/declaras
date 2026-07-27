@@ -154,6 +154,11 @@ class CasePartidaRow(Base):
     # texto libre derivado del reporte y puede pasar de 36 caracteres.
     partida_id: Mapped[str] = mapped_column(String(300))
     estado: Mapped[str] = mapped_column(String(24), index=True)
+    # Revision del BLOQUE de partidas del expediente: todas las filas de un caso la
+    # comparten y sube en cada reemplazo. Es la precondicion del chequeo optimista: quien
+    # leyo la revision N solo puede escribir si sigue siendo N. Sin ella, dos decisiones
+    # simultaneas de dos contadores respondian 200 las dos y en la base quedaba una sola.
+    revision: Mapped[int] = mapped_column(Integer, default=1)
     sin_partida: Mapped[bool] = mapped_column(Boolean, default=False)
     partida_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -201,6 +206,11 @@ class CaseLiquidacionRow(Base):
     momento: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     impuesto: Mapped[int] = mapped_column(Integer)
     saldo: Mapped[int] = mapped_column(Integer)
+    # ¿Se liquido SIN ningun documento del cliente? El preliminar tiene que serlo, y cuando
+    # no se pudo (el expediente ya traia documentos cruzables y el caso sin ellos no se
+    # podia armar) la ganancia subestima y quien la muestre debe poder decirlo. Es una
+    # columna y no un `version == 1`: la version 1 puede no ser el preliminar puro.
+    base_sin_documentos: Mapped[bool] = mapped_column(Boolean, default=False)
     liquidacion_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     __table_args__ = (

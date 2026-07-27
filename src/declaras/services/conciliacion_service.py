@@ -25,9 +25,10 @@ from pydantic import ValidationError as PydanticValidationError
 
 from declaras.caso import CasoTributario, Contribuyente
 from declaras.documents.models import DocumentReading
-from declaras.domain.case import Case, CaseDetail, CaseStatus
+from declaras.domain.case import Case, CaseDetail, CaseStatus, FlagSeverity
 from declaras.domain.case_ports import CaseRepository
 from declaras.domain.errors import (
+    AnioSinParametrosError,
     CaseNotFoundError,
     DecisionNoAplicaError,
     LiquidacionBloqueadaError,
@@ -36,7 +37,7 @@ from declaras.domain.errors import (
     PeticionNoEncontradaError,
     SinReporteDeTercerosError,
 )
-from declaras.motor import Flag
+from declaras.motor import Flag, Liquidacion
 from declaras.observability import get_logger
 from declaras.parametros import ParametrosAnio, cargar
 from declaras.render import borrador_html, memoria_markdown
@@ -45,15 +46,18 @@ from declaras.services.conciliacion import (
     Decision,
     LiquidacionVersionada,
     Motivo,
+    Origen,
     Partida,
     Peticion,
     Respuesta,
     a_caso,
     abrir,
+    autorresolver,
     bloqueantes,
     derivar_peticiones,
     ganancia,
     incorporar,
+    liquidar_conciliado,
     liquidar_y_versionar,
     pendientes,
     refrescar,
@@ -75,6 +79,11 @@ DOC_TYPE_EXOGENA = "EXOGENA"
 ESTADO_EMPAREJADO = "emparejado"
 ESTADO_SIN_EMPAREJAR = "sin_emparejar"
 ESTADO_A_BANDEJA = "a_bandeja"
+# Cuarto desenlace, más allá de los tres del contrato del plan: el archivo NO entró. Decir
+# "a bandeja" de algo que no se guardó afirmaría que quedó en la declaración esperando
+# revisión manual, y el contador lo buscaría donde no está. Sin este estado la única salida
+# era abortar la request con 500 dejando persistidos los archivos anteriores (F7).
+ESTADO_NO_RECIBIDO = "no_recibido"
 
 _MOTIVO_A_BANDEJA = (
     "El conciliador todavía no sabe cruzar documentos de este tipo: el archivo queda en "
@@ -104,9 +113,16 @@ class ConciliacionRepository(Protocol):
 
     async def huerfanas(self, case_id: UUID) -> list[Partida]: ...
 
+    async def revision(self, case_id: UUID) -> int: ...
+
     async def reemplazar_partidas(
-        self, case_id: UUID, *, partidas: list[Partida], huerfanas: list[Partida]
-    ) -> None: ...
+        self,
+        case_id: UUID,
+        *,
+        partidas: list[Partida],
+        huerfanas: list[Partida],
+        revision_esperada: int,
+    ) -> int: ...
 
     async def respuestas(self, case_id: UUID) -> list[Respuesta]: ...
 
@@ -129,6 +145,9 @@ class Estado:
     # que el contador pueda accionar.
     caso: CasoTributario | None
     falta: str | None
+    # La revisión del bloque de partidas que se leyó. Es la precondición con que se escribe:
+    # si alguien más lo cambió en el intervalo, el reemplazo se niega en vez de pisarlo.
+    revision: int = 0
 
     @property
     def pendientes(self) -> list[Partida]:
@@ -148,6 +167,24 @@ class Estado:
 
 
 @dataclass
+class Subido:
+    """UN archivo que acabó de entrar al expediente, con la identidad con que quedó.
+
+    `sha` es el identificador corto del documento guardado —la MISMA llave con que el cruce
+    registra sus versiones— y es None cuando el archivo no se pudo guardar. La identidad va
+    por acá y no por el nombre porque dos archivos homónimos en la misma request son dos
+    documentos distintos, y con el nombre como llave los dos recibían el desenlace del
+    último (F5).
+    """
+
+    archivo: str
+    doc_type: str
+    peticion_id: str | None
+    sha: str | None
+    motivo: str | None = None
+
+
+@dataclass
 class ArchivoIncorporado:
     """El desenlace de UN archivo de una subida masiva."""
 
@@ -162,6 +199,14 @@ class ArchivoIncorporado:
 class Liquidaciones:
     preliminar: LiquidacionVersionada
     actual: LiquidacionVersionada
+    # ¿La versión `actual` corresponde a los renglones que hay HOY? Es False cuando el
+    # estado dejó de poder liquidarse desde que se guardó (llegó un documento y hay
+    # decisiones pendientes): ahí `actual` es lo último que se pudo calcular, NO la
+    # declaración de hoy, y la ganancia se mide contra ella. Sin esta marca el front pinta
+    # la cifra de antes del último documento como si fuera la vigente.
+    vigente: bool
+    # Qué falta para que vuelva a haber una liquidación de hoy (None si `vigente`).
+    falta: str | None
 
     @property
     def ganancia(self) -> int:
@@ -185,6 +230,7 @@ class ConciliacionService:
         coincidiendo. Volver a llamarla no duplica nada porque no acumula: reemplaza.
         """
         estado = await self._reconstruir(case_id)
+        await self._asegurar_preliminar(case_id)
         await self._recalcular(case_id, estado)
         log.info(
             "conciliacion.conciliada",
@@ -198,10 +244,17 @@ class ConciliacionService:
     async def estado(self, case_id: UUID) -> Estado:
         """Lo que ya está persistido, sin re-derivar nada."""
         detail = await self._detalle(case_id)
+        revision = await self._repo.revision(case_id)
         partidas = await self._repo.vivas(case_id)
         huerfanas = await self._repo.huerfanas(case_id)
         caso, falta = self._intentar_caso(partidas, detail)
-        return Estado(partidas=partidas, huerfanas=huerfanas, caso=caso, falta=falta)
+        return Estado(
+            partidas=partidas,
+            huerfanas=huerfanas,
+            caso=caso,
+            falta=falta,
+            revision=revision,
+        )
 
     async def resolver_partida(
         self,
@@ -233,12 +286,21 @@ class ConciliacionService:
         # Sin volver a pasar por `refrescar`: no cambiaron ni las cifras ni los documentos,
         # solo la decisión sobre una partida. Reconstruir acá reemplazaría las demás
         # provisionales sin razón y movería su `cuando`.
-        await self._repo.reemplazar_partidas(
-            case_id, partidas=nuevas, huerfanas=estado.huerfanas
+        revision = await self._repo.reemplazar_partidas(
+            case_id,
+            partidas=nuevas,
+            huerfanas=estado.huerfanas,
+            revision_esperada=estado.revision,
         )
         detail = await self._detalle(case_id)
         caso, falta = self._intentar_caso(nuevas, detail)
-        nuevo = Estado(partidas=nuevas, huerfanas=estado.huerfanas, caso=caso, falta=falta)
+        nuevo = Estado(
+            partidas=nuevas,
+            huerfanas=estado.huerfanas,
+            caso=caso,
+            falta=falta,
+            revision=revision,
+        )
         await self._recalcular(case_id, nuevo)
         return resuelta, nuevo
 
@@ -305,7 +367,14 @@ class ConciliacionService:
         return cerrada, quedan
 
     async def liquidaciones(self, case_id: UUID) -> Liquidaciones:
-        """El preliminar, la de hoy y la ganancia entre las dos."""
+        """El preliminar, la de hoy y la ganancia entre las dos.
+
+        Sirve las versiones GUARDADAS (el preliminar es una foto que no se recalcula), pero
+        dice si la última todavía corresponde al estado de hoy. Que esto responda 200 con
+        una `actual` rancia marcada, mientras `/borrador` responde 409, no es una
+        inconsistencia: acá hay datos que existen (las versiones), allá hace falta un caso
+        que no se puede armar.
+        """
         estado = await self.estado(case_id)
         versiones = await self._repo.versiones(case_id)
         if not versiones:
@@ -313,30 +382,51 @@ class ConciliacionService:
                 estado.falta or LiquidacionNoDisponibleError.default_message,
                 case_id=str(case_id),
             )
-        return Liquidaciones(preliminar=versiones[0], actual=versiones[-1])
+        de_hoy = self._liquidar_estado(estado)
+        vigente = de_hoy is not None and de_hoy == versiones[-1].liquidacion
+        return Liquidaciones(
+            preliminar=versiones[0],
+            actual=versiones[-1],
+            vigente=vigente,
+            falta=None if vigente else estado.falta,
+        )
 
     async def borrador(self, case_id: UUID) -> str:
-        liquidacion, caso = await self._para_render(case_id)
-        return borrador_html(liquidacion.liquidacion, caso)
+        estado, liquidacion = await self._de_hoy(case_id)
+        assert estado.caso is not None  # `_de_hoy` ya se negó si no
+        return borrador_html(liquidacion, estado.caso)
 
     async def memoria(self, case_id: UUID) -> str:
-        liquidacion, caso = await self._para_render(case_id)
-        return memoria_markdown(liquidacion.liquidacion, caso)
+        estado, liquidacion = await self._de_hoy(case_id)
+        assert estado.caso is not None  # `_de_hoy` ya se negó si no
+        return memoria_markdown(liquidacion, estado.caso)
 
     async def cerrar_borrador(self, case_id: UUID) -> Case:
-        """Da el borrador por listo. Se NIEGA si hay una alerta bloqueante viva.
+        """Da el borrador por listo. Se NIEGA si no se puede calcular, o si hay bloqueante.
 
         Es la mitad "no permitir cerrar" de que `bloqueante` bloquee de verdad: la
         liquidación se puede ver —el borrador es donde el contador lee qué le falta— pero
         no darse por buena. Cerrar con un ingreso por fuera sería dar por completo un
         formulario incompleto.
+
+        LA LIQUIDACIÓN SE CALCULA SOBRE EL ESTADO DE HOY, no sobre la última versión
+        guardada (F1). Mirar la guardada tenía dos consecuencias, las dos medidas: se cerraba
+        un borrador que `/borrador` se niega a imprimir —fechando el evento con la cifra de
+        antes del último documento—, y un bloqueante que aparece DESPUÉS de la última versión
+        (una republicación con honorarios deja el caso sin armar, así que no hay versión
+        nueva) no se calculaba nunca, justo en el único momento en que se calcularía. El
+        aviso que existe para impedir cerrar no puede depender de que ya esté guardado.
         """
-        actual = (await self.liquidaciones(case_id)).actual
-        vivos = bloqueantes(actual.liquidacion)
+        estado, liquidacion = await self._de_hoy(case_id)
+        vivos = bloqueantes(liquidacion)
         if vivos:
             raise LiquidacionBloqueadaError(
                 detalles=[{"codigo": f.codigo, "mensaje": f.mensaje} for f in vivos]
             )
+        # Se guarda antes de cerrar para que el evento feche la cifra que se dio por buena.
+        await self._recalcular(case_id, estado)
+        versiones = await self._repo.versiones(case_id)
+        actual = versiones[-1]
         caso = await self._cases.transition(case_id, status=CaseStatus.DRAFT_READY)
         await self._cases.add_event(
             case_id=case_id,
@@ -347,13 +437,15 @@ class ConciliacionService:
         return caso
 
     async def incorporar_documentos(
-        self, case_id: UUID, subidos: Sequence[tuple[str, str, str | None]]
+        self, case_id: UUID, subidos: Sequence[Subido]
     ) -> list[ArchivoIncorporado]:
         """Cruza los archivos que ACABAN de entrar al expediente y recalcula.
 
-        `subidos` es (nombre del archivo, doc_type, peticion_id) por archivo, ya guardados
-        y leídos por el servicio del expediente. Acá no se lee nada: la lectura ya está
-        adjunta al documento (y por eso este camino no necesita otro `run_in_threadpool`).
+        Cada `Subido` viene ya guardado y leído por el servicio del expediente, con el SHA
+        con que quedó: la identidad va por ese SHA y no por el nombre, porque dos archivos
+        homónimos en la misma request son dos documentos distintos. Acá no se lee nada: la
+        lectura ya está adjunta al documento (y por eso este camino no necesita otro
+        `run_in_threadpool`).
 
         Si la declaración todavía no se ha conciliado, los archivos NO arrancan el cruce
         solos: quedan guardados y entran cuando alguien concilie. Refrescar sin nada
@@ -365,41 +457,47 @@ class ConciliacionService:
             await self._detalle(case_id)
             return [
                 ArchivoIncorporado(
-                    archivo=archivo,
-                    doc_type=doc_type,
-                    estado=ESTADO_A_BANDEJA,
-                    peticion_cerrada=None if peticion_id is None else False,
-                    motivo=_MOTIVO_SIN_CONCILIAR,
+                    archivo=s.archivo,
+                    doc_type=s.doc_type,
+                    estado=ESTADO_NO_RECIBIDO if s.sha is None else ESTADO_A_BANDEJA,
+                    peticion_cerrada=None if s.peticion_id is None else False,
+                    motivo=s.motivo or _MOTIVO_SIN_CONCILIAR,
                 )
-                for archivo, doc_type, peticion_id in subidos
+                for s in subidos
             ]
         estado = await self._reconstruir(case_id)
+        await self._asegurar_preliminar(case_id)
         await self._recalcular(case_id, estado)
         detail = await self._detalle(case_id)
-        shas = {
-            d.filename: d.content_sha256[:12]
-            for d in detail.documents
-            if d.superseded_at is None
-        }
-        lecturas = {d.filename: d.reading for d in detail.documents}
+        # La identidad de cada archivo es su SHA, que llega por índice desde quien lo
+        # guardó (F5). Indexar por NOMBRE hacía que dos archivos homónimos en la misma
+        # request —`certificado.pdf` y `certificado.pdf`— recibieran los dos el desenlace
+        # del último: al contador se le informaba que el 220 de su empleador no cruzó
+        # cuando acababa de abrir la discrepancia que ahora tiene que decidir.
+        lecturas = {d.content_sha256[:12]: d.reading for d in detail.documents}
         vivas = await self.peticiones(case_id)
         abiertas = {p.id for p in vivas}
 
         resultados: list[ArchivoIncorporado] = []
-        for archivo, doc_type, peticion_id in subidos:
-            estado_archivo, motivo = self._desenlace(
-                estado.partidas, doc_type, shas.get(archivo), lecturas.get(archivo)
-            )
+        for s in subidos:
+            if s.sha is None:
+                # No se pudo guardar: no hay documento que cruzar y decir "a bandeja"
+                # afirmaría que quedó en la declaración cuando no quedó.
+                estado_archivo, motivo = ESTADO_NO_RECIBIDO, s.motivo
+            else:
+                estado_archivo, motivo = self._desenlace(
+                    estado.partidas, s.doc_type, s.sha, lecturas.get(s.sha)
+                )
             resultados.append(
                 ArchivoIncorporado(
-                    archivo=archivo,
-                    doc_type=doc_type,
+                    archivo=s.archivo,
+                    doc_type=s.doc_type,
                     estado=estado_archivo,
                     # Cerrada = ya no aparece en la lista derivada. No se declara
                     # "cumplida" por haber llegado el archivo: lo que cuenta es que la
                     # petición efectivamente desapareció.
                     peticion_cerrada=(
-                        None if peticion_id is None else peticion_id not in abiertas
+                        None if s.peticion_id is None else s.peticion_id not in abiertas
                     ),
                     motivo=motivo,
                 )
@@ -424,13 +522,29 @@ class ConciliacionService:
         for lectura in self._cruzables(detail):
             nuevas = incorporar(nuevas, lectura)
 
+        # La revisión se lee ANTES de derivar: es la precondición de la escritura de abajo,
+        # y el trabajo que va en medio (el cruce completo) es justo la ventana en la que
+        # otra request puede colarse. "El contador decide mientras entra un documento"
+        # perdía una de las dos cosas por acá, no solo por `resolver_partida`.
+        revision_leida = await self._repo.revision(case_id)
         guardadas = await self._repo.guardadas(case_id)
         partidas, huerfanas = refrescar(nuevas, guardadas)
-        await self._repo.reemplazar_partidas(
-            case_id, partidas=partidas, huerfanas=huerfanas
+        descartadas = self._resoluciones_descartadas(guardadas, partidas)
+        revision = await self._repo.reemplazar_partidas(
+            case_id,
+            partidas=partidas,
+            huerfanas=huerfanas,
+            revision_esperada=revision_leida,
         )
+        await self._registrar_descartadas(case_id, descartadas)
         caso, falta = self._intentar_caso(partidas, detail)
-        return Estado(partidas=partidas, huerfanas=huerfanas, caso=caso, falta=falta)
+        return Estado(
+            partidas=partidas,
+            huerfanas=huerfanas,
+            caso=caso,
+            falta=falta,
+            revision=revision,
+        )
 
     def _exogena_vigente(self, detail: CaseDetail) -> DocumentReading | None:
         """La lectura del reporte de terceros que rige hoy.
@@ -499,19 +613,155 @@ class ConciliacionService:
         candidata = liquidar_y_versionar(
             estado.caso,
             estado.partidas,
-            p=cargar(estado.caso.anio_gravable),
+            p=self._parametros_de(estado.caso.anio_gravable),
             version=len(versiones) + 1,
         )
         if versiones and versiones[-1].liquidacion == candidata.liquidacion:
             return
         await self._repo.agregar_version(case_id, candidata)
 
-    async def _para_render(self, case_id: UUID) -> tuple[LiquidacionVersionada, CasoTributario]:
+    def _resoluciones_descartadas(
+        self, guardadas: Sequence[Partida], partidas: Sequence[Partida]
+    ) -> list[Partida]:
+        """Las decisiones de una PERSONA que la re-derivación acaba de invalidar (F6).
+
+        `refrescar` invalida una resolución del contador cuando las cifras cambiaron, y lo
+        señala con la `nota` — que es texto libre y que el siguiente rebuild vuelve a
+        derivar desde cero: medido, a la segunda reconstrucción la nota desaparece y queda
+        un renglón resuelto por el sistema, fuera de la cola, sin huérfana y sin rastro. La
+        plata declarada es la conservadora, así que no hay cifra mala; lo que se pierde es
+        la auditoría de una decisión humana, la misma clase de pérdida que T4 cerró
+        volviendo ESTRUCTURAL la marca de plata ajena.
+
+        Se detecta desde afuera, sin tocar `refrescar`: una guardada con resolución de
+        CONTADOR cuyo id SIGUE existiendo pero que ya no la tiene. Las que desaparecieron
+        son huérfanas y viajan por el otro canal.
+        """
+        nuevas = {p.id: p for p in partidas}
+        descartadas = []
+        for guardada in guardadas:
+            previa = guardada.resolucion
+            if previa is None or previa.origen is not Origen.CONTADOR:
+                continue
+            nueva = nuevas.get(guardada.id)
+            if nueva is None:
+                continue  # desapareció: es huérfana, va por el otro canal
+            if nueva.resolucion is None or nueva.resolucion.origen is not Origen.CONTADOR:
+                descartadas.append(guardada)
+        return descartadas
+
+    async def _registrar_descartadas(
+        self, case_id: UUID, descartadas: Sequence[Partida]
+    ) -> None:
+        """Deja la decisión descartada como HECHO, no como texto que el próximo rebuild borra.
+
+        Dos registros, cada uno con su razón de ser: un evento en la bitácora (append-only y
+        fechado: es la auditoría de que una persona decidió y su decisión se cayó) y una
+        alerta abierta (para que aparezca en lo que el contador tiene que revisar y pueda
+        cerrarla, en vez de vivir solo en un log). Se escribe UNA vez: al siguiente rebuild
+        la partida ya trae resolución del sistema, no de CONTADOR, y no se vuelve a detectar.
+        """
+        for partida in descartadas:
+            previa = partida.resolucion
+            assert previa is not None  # filtrado en `_resoluciones_descartadas`
+            resumen = (
+                f"{previa.decision} por {previa.valor:,} pesos, decidida por {previa.quien}"
+            )
+            await self._cases.add_event(
+                case_id=case_id,
+                kind="RESOLUCION_DESCARTADA",
+                message=(
+                    f"Se descartó una decisión sobre {partida.id} ({resumen}): los valores "
+                    "cambiaron y hay que volver a decidir."
+                ),
+                payload={
+                    "partida_id": partida.id,
+                    "decision": previa.decision.value,
+                    "motivo": previa.motivo.value,
+                    "valor": previa.valor,
+                    "quien": previa.quien,
+                    "cuando": previa.cuando.isoformat(),
+                    "huella": previa.huella,
+                },
+            )
+            await self._cases.add_flag(
+                case_id=case_id,
+                code="RESOLUCION_DESCARTADA",
+                message=(
+                    f"La decisión sobre {partida.id} ({resumen}) quedó sin efecto porque "
+                    "las cifras cambiaron. Hay que volver a decidir ese renglón."
+                ),
+                severity=FlagSeverity.WARNING,
+            )
+            log.info(
+                "conciliacion.resolucion_descartada",
+                case_id=str(case_id),
+                partida_id=partida.id,
+                quien=previa.quien,
+            )
+
+    async def _asegurar_preliminar(self, case_id: UUID) -> None:
+        """La versión 1 se liquida SIEMPRE desde la exógena sola (F4).
+
+        El orden natural del producto es que el cliente mande el certificado por chat y el
+        contador concilie después. Con el preliminar definido como "la primera versión que
+        se pudo guardar", ese orden lo dejaba naciendo con el 220 ya dentro y la ganancia en
+        0 para siempre: desaparecían justo las cifras que el producto existe para mostrar.
+        El preliminar es la foto de lo que la DIAN sabía, no la de cuándo pudimos calcular.
+
+        Si la exógena sola NO se puede liquidar (trae honorarios, o una fila ajena: nada de
+        eso lo resuelve el automatismo), no se fuerza nada — `_recalcular` pondrá la versión
+        1 con lo que haya y `base_sin_documentos` en False dirá que la ganancia subestima.
+        Residuo asumido: si más tarde el contador resuelve ese renglón, el preliminar sigue
+        siendo el que se pudo guardar; re-fechar la versión 1 hacia atrás sería reescribir
+        una foto.
+        """
+        if await self._repo.versiones(case_id):
+            return
+        detail = await self._detalle(case_id)
+        exogena = self._exogena_vigente(detail)
+        if exogena is None:  # pragma: no cover - `_reconstruir` ya se habría negado
+            return
+        solo_dian = autorresolver(abrir(exogena))
+        caso, _falta = self._intentar_caso(solo_dian, detail)
+        if caso is None:
+            return
+        await self._repo.agregar_version(
+            case_id,
+            liquidar_y_versionar(
+                caso,
+                solo_dian,
+                p=self._parametros_de(caso.anio_gravable),
+                version=1,
+                base_sin_documentos=True,
+            ),
+        )
+
+    def _liquidar_estado(self, estado: Estado) -> Liquidacion | None:
+        """La liquidación del estado tal como está, o None si el caso no se puede armar."""
+        if estado.caso is None:
+            return None
+        return liquidar_conciliado(
+            estado.caso, estado.partidas, self._parametros_de(estado.caso.anio_gravable)
+        )
+
+    async def _de_hoy(self, case_id: UUID) -> tuple[Estado, Liquidacion]:
+        """El estado de hoy y su liquidación, o 409 diciendo qué falta para calcularla.
+
+        No sirve la última versión guardada: puede ser de antes del último cambio, y
+        rendirla junto al caso de hoy mezclaría las cifras de dos momentos. El guard NO es
+        inalcanzable —es el que produce el 409 de `/borrador` en cuanto llega un documento
+        que deja renglones por decidir—; el `pragma: no cover` que tenía era falso y fue lo
+        que dejó creer que `cerrar_borrador` no lo necesitaba (F1).
+        """
         estado = await self.estado(case_id)
-        liquidaciones = await self.liquidaciones(case_id)
-        if estado.caso is None:  # pragma: no cover - `liquidaciones` ya lo habría negado
-            raise LiquidacionNoDisponibleError(estado.falta, case_id=str(case_id))
-        return liquidaciones.actual, estado.caso
+        liquidacion = self._liquidar_estado(estado)
+        if liquidacion is None:
+            raise LiquidacionNoDisponibleError(
+                estado.falta or LiquidacionNoDisponibleError.default_message,
+                case_id=str(case_id),
+            )
+        return estado, liquidacion
 
     def _intentar_caso(
         self, partidas: Sequence[Partida], detail: CaseDetail
@@ -523,6 +773,13 @@ class ConciliacionService:
         no modela (hay que llevarlo a mano), o el caso salió con una cifra imposible. El
         tercero NO hace eco del mensaje de pydantic: ese texto habla de campos del modelo y
         quien lee esto es un contador.
+
+        EL ORDEN DE LOS `except` ES LOAD-BEARING (F3): `pydantic.ValidationError` HEREDA de
+        `ValueError`, así que con `ValueError` arriba la rama de pydantic era código muerto y
+        su mensaje de producto no salía nunca — el que salía era el crudo del validador
+        ("Input should be greater than or equal to 0 … errors.pydantic.dev"), en el cuerpo
+        200 de conciliar y en el 409 de la liquidación, el borrador y la memoria. Un
+        `except ValueError` puesto antes vuelve a cerrar esa rama sin que nada falle.
         """
         try:
             return (
@@ -533,10 +790,6 @@ class ConciliacionService:
                 ),
                 None,
             )
-        except ValueError as exc:
-            return None, str(exc)
-        except NotImplementedError as exc:
-            return None, str(exc)
         except PydanticValidationError as exc:
             campos = sorted({str(e["loc"][-1]) for e in exc.errors() if e.get("loc")})
             log.warning("conciliacion.caso_invalido", campos=campos)
@@ -545,6 +798,10 @@ class ConciliacionService:
                 "ejemplo un valor negativo). Hay que revisar los renglones resueltos "
                 "antes de calcular."
             )
+        except NotImplementedError as exc:
+            return None, str(exc)
+        except ValueError as exc:
+            return None, str(exc)
 
     def _caso_vacio(self, detail: CaseDetail) -> CasoTributario:
         """Un caso sin hechos, para poder derivar peticiones cuando todavía no hay 210.
@@ -573,7 +830,19 @@ class ConciliacionService:
         )
 
     def _parametros(self, detail: CaseDetail) -> ParametrosAnio:
-        return cargar(detail.case.tax_year)
+        return self._parametros_de(detail.case.tax_year)
+
+    def _parametros_de(self, anio: int) -> ParametrosAnio:
+        """Los parámetros del año gravable, o un 409 que se puede accionar (F8).
+
+        `OpenCaseRequest` acepta expedientes desde 2015 y el repo solo trae los YAML de los
+        años calibrados: sin esta traducción, conciliar un 2019 daba 500 con el texto crudo
+        del cargador. No es un fallo del servidor — es un año que todavía no se liquida.
+        """
+        try:
+            return cargar(anio)
+        except ValueError as exc:
+            raise AnioSinParametrosError(anio=anio) from exc
 
     async def _detalle(self, case_id: UUID) -> CaseDetail:
         detail = await self._cases.get_detail(case_id)

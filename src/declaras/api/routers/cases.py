@@ -6,6 +6,7 @@ lo que el conector DIAN descarga o lo que el cliente sube por chat a un expedien
 
 from __future__ import annotations
 
+import hashlib
 from urllib.parse import quote
 from uuid import UUID
 
@@ -25,8 +26,12 @@ from declaras.api.conciliacion_schemas import (
     UploadDocumentsResponse,
 )
 from declaras.api.deps import ApiKeyDep, ContainerDep
-from declaras.domain.errors import JobNotFoundError, ValidationError
+from declaras.domain.errors import DeclarasError, JobNotFoundError, ValidationError
+from declaras.observability import get_logger
 from declaras.services.case_summary import CaseSummary, build_summary
+from declaras.services.conciliacion_service import Subido
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["cases"])
 
@@ -163,18 +168,55 @@ async def upload_client_document(
             peticiones=len(peticion_id),
         )
 
-    subidos: list[tuple[str, str, str | None]] = []
+    subidos: list[Subido] = []
     detail = None
     for indice, subido in enumerate(file):
         nombre = subido.filename or f"documento-{indice + 1}"
         content = await subido.read()
-        detail = await container.case_service.add_client_upload(
-            case_id=case_id, doc_type=doc_type[indice], content=content, filename=nombre
-        )
         pedida = peticion_id[indice].strip() if peticion_id is not None else ""
-        subidos.append((nombre, doc_type[indice], pedida or None))
+        # El SHA se calcula acá, sobre los bytes que llegaron, y viaja POR ÍNDICE: es la
+        # misma llave con que el cruce registra las versiones de un documento, y es lo que
+        # distingue dos archivos que llegan con el mismo nombre en una sola request.
+        sha = hashlib.sha256(content).hexdigest()[:12]
+        try:
+            detail = await container.case_service.add_client_upload(
+                case_id=case_id, doc_type=doc_type[indice], content=content, filename=nombre
+            )
+        except DeclarasError:
+            # Las fallas previstas del expediente (declaración que no existe, identidad que
+            # no cuadra) valen para toda la subida, no para un archivo: se dejan subir.
+            raise
+        except Exception:
+            # Un archivo que revienta por algo no previsto NO puede abortar la request: los
+            # anteriores ya quedaron guardados, el cruce no correría, y el cliente
+            # reintentaría duplicando todo (F7). Se reporta ese archivo como no recibido —
+            # con su traza en el log— y los demás siguen su camino.
+            log.exception("case.upload_failed", case_id=str(case_id), archivo=nombre)
+            subidos.append(
+                Subido(
+                    archivo=nombre,
+                    doc_type=doc_type[indice],
+                    peticion_id=pedida or None,
+                    sha=None,
+                    motivo=(
+                        "No se pudo recibir este archivo. Los demás sí entraron; hay que "
+                        "volver a mandar solo este."
+                    ),
+                )
+            )
+            continue
+        subidos.append(
+            Subido(
+                archivo=nombre,
+                doc_type=doc_type[indice],
+                peticion_id=pedida or None,
+                sha=sha,
+            )
+        )
 
-    if detail is None:  # pragma: no cover - FastAPI exige al menos un archivo
+    if detail is None:
+        # Todos los archivos fallaron: el expediente se devuelve igual, con el desenlace
+        # de cada uno, en vez de un 500 que no dice cuál entró y cuál no.
         detail = await container.case_service.get_detail(case_id)
 
     # El cruce se rehace UNA vez con todos los archivos ya dentro, no uno por archivo:
