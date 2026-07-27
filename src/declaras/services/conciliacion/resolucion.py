@@ -169,17 +169,26 @@ def pendientes(partidas: list[Partida]) -> list[Partida]:
     )
 
 
-def refrescar(nuevas: list[Partida], guardadas: list[Partida]) -> list[Partida]:
+def refrescar(
+    nuevas: list[Partida], guardadas: list[Partida]
+) -> tuple[list[Partida], list[Partida]]:
     """Reconcilia una re-derivación del cruce con las resoluciones que ya había.
 
-    `nuevas` es la lista fresca (abrir + reincorporar todo); `guardadas` la persistida.
-    Por id: una resolución de SISTEMA se reemplaza SIEMPRE (era provisional; el
-    autorresolver del final vuelve a poner las que sigan aplicando); una de CONTADOR se
-    preserva solo si su huella coincide con las cifras de la partida nueva — si no, la
-    partida vuelve a pendiente con la nota de que los valores cambiaron (sumada a la nota
-    fresca del cruce, no encima de ella). Una guardada cuyo id ya no existe en `nuevas`
-    no transfiere su resolución a nada: la partida que la reemplace nace pendiente (los
-    ids inestables están documentados en `_Grupo.id`; huérfana = a la cola otra vez).
+    Devuelve `(partidas, huerfanas)`. `nuevas` es la lista fresca (abrir + reincorporar
+    todo); `guardadas` la persistida. Por id: una resolución de SISTEMA se reemplaza
+    SIEMPRE (era provisional; el autorresolver del final vuelve a poner las que sigan
+    aplicando); una de CONTADOR se preserva solo si su huella coincide con las cifras de
+    la partida nueva — si no, la partida vuelve a pendiente con la nota de que los
+    valores cambiaron (sumada a la nota fresca del cruce, no encima de ella). Una
+    guardada cuyo id ya no existe en `nuevas` no transfiere su resolución a nada: la
+    partida que la reemplace nace pendiente (los ids inestables están documentados en
+    `_Grupo.id`; huérfana = a la cola otra vez).
+
+    Las `huerfanas` son esas guardadas cuyo id desapareció, tal cual estaban —
+    resoluciones incluidas (I5 de la ronda 2): botarlas en silencio escondía deducción
+    real (los aportes de un 220 que la re-consulta no trae) y decisiones de una persona.
+    Quien llama decide qué hacer con ellas (mostrarlas, re-anclarlas, descartarlas), pero
+    enterarse no es opcional: por eso van en el retorno y no en una función aparte.
 
     RESIDUO ASUMIDO de esa decisión de diseño: si el contador había MARCADO AJENA una
     partida sin marca estructural (p. ej. la `nombre:...` de un homónimo) y el id cambia,
@@ -190,6 +199,8 @@ def refrescar(nuevas: list[Partida], guardadas: list[Partida]) -> list[Partida]:
     (`reportado_a`) NO caen acá porque la marca se re-deriva en el cruce y el guard de
     `autorresolver` las salta siempre.
     """
+    ids_nuevos = {p.id for p in nuevas}
+    huerfanas = [p for p in guardadas if p.id not in ids_nuevos]
     previas = {p.id: p for p in guardadas}
     resultado: list[Partida] = []
     for nueva in nuevas:
@@ -209,7 +220,7 @@ def refrescar(nuevas: list[Partida], guardadas: list[Partida]) -> list[Partida]:
                 "resolucion": None,
                 "nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON),
             }))
-    return autorresolver(resultado)
+    return autorresolver(resultado), huerfanas
 
 
 def _con_resolucion(

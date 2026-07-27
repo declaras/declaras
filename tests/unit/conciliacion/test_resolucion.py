@@ -23,7 +23,12 @@ from tests.unit.conciliacion.fabricas import (
     partida_solo_dian,
     partida_solo_documento,
 )
-from tests.unit.conciliacion.test_cruce import _cert_220, _exogena, _fila
+from tests.unit.conciliacion.test_cruce import (
+    _cert_220,
+    _cert_220_completo,
+    _exogena,
+    _fila,
+)
 
 # ─────────────────────────── contrato del brief, literal ───────────────────────────
 
@@ -288,7 +293,7 @@ def test_refrescar_reemplaza_siempre_la_provisional_del_sistema():
     guardadas = autorresolver(abrir(exogena))
     assert guardadas[0].resolucion.decision is Decision.USAR_DIAN  # la provisional
     nuevas = incorporar(abrir(exogena), _cert_220("900111222", 85_000_000))
-    [p] = refrescar(nuevas, guardadas)
+    [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion.decision is Decision.USAR_DOCUMENTO
     assert p.resolucion.motivo is Motivo.COINCIDEN
 
@@ -298,7 +303,7 @@ def test_refrescar_preserva_la_decision_del_contador_si_la_huella_coincide():
                           motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
     nuevas = incorporar(abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
                         _cert_220("900111222", 85_000_000), tolerancia_pesos=0)
-    [p] = refrescar(nuevas, guardadas)
+    [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion == guardadas[0].resolucion  # quien, cuando y nota intactos
 
 
@@ -311,8 +316,8 @@ def test_refrescar_preserva_aunque_la_dian_republique_con_la_fila_corrida():
                            _fila("900111222", "5001", 87_400_000))
     nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000),
                         tolerancia_pesos=0)
-    objetivo = next(p for p in refrescar(nuevas, guardadas)
-                    if p.id == "900111222:SALARIOS")
+    actualizadas, _ = refrescar(nuevas, guardadas)
+    objetivo = next(p for p in actualizadas if p.id == "900111222:SALARIOS")
     assert objetivo.version_dian.celda == "A21"  # la fila sí se corrió
     assert objetivo.resolucion == guardadas[0].resolucion
 
@@ -325,7 +330,7 @@ def test_refrescar_invalida_si_los_valores_cambiaron():
     republicada = _exogena(_fila("900111222", "5001", 90_000_000))  # la DIAN corrigió
     nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000),
                         tolerancia_pesos=0)
-    [p] = refrescar(nuevas, guardadas)
+    [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion is None  # pendiente de nuevo: DISCREPANCIA no se autorresuelve
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
 
@@ -339,7 +344,7 @@ def test_refrescar_suma_la_nota_sin_pisar_la_del_cruce():
     guardadas = [resolver(ajena, Decision.MARCAR_AJENO,
                           motivo=Motivo.NO_ES_MIO, quien="contador@x.co")]
     republicada = _exogena(_fila("901999888", "5001", 12_000_000, reportado_a="99999"))
-    [p] = refrescar(abrir(republicada), guardadas)
+    [p], _ = refrescar(abrir(republicada), guardadas)
     assert p.resolucion is None
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
     assert "otra identificación" in (p.nota or "")
@@ -354,7 +359,7 @@ def test_refrescar_no_arrastra_la_resolucion_a_un_id_que_cambio():
     guardadas = [resolver(vieja, Decision.MARCAR_AJENO,
                           motivo=Motivo.NO_ES_MIO, quien="contador@x.co")]
     fila_nueva = _fila("", "5001", 10_000_000, nombre="ACME SAS")
-    [p] = refrescar(abrir(_exogena(fila_nueva)), guardadas)
+    [p], _ = refrescar(abrir(_exogena(fila_nueva)), guardadas)
     assert p.id != vieja.id
     assert p.resolucion is None or p.resolucion.origen is Origen.SISTEMA
     assert p.resolucion is None or p.resolucion.decision is not Decision.MARCAR_AJENO
@@ -373,7 +378,7 @@ def test_refrescar_sin_nit_una_version_nueva_invalida_aunque_las_cifras_coincida
     guardadas = [resolver(suelta, Decision.USAR_DOCUMENTO,
                           motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")]
     nuevas = incorporar(incorporar([], doc_c), doc_d)
-    [p] = refrescar(nuevas, guardadas)
+    [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion is None
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
 
@@ -386,7 +391,7 @@ def test_refrescar_con_nit_bytes_nuevos_con_cifras_iguales_no_invalidan():
     guardadas = [resolver(base[0], Decision.USAR_DOCUMENTO,
                           motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
     nuevas = incorporar(base, _cert_220_bis("e"), tolerancia_pesos=0)  # re-exportado
-    [p] = refrescar(nuevas, guardadas)
+    [p], _ = refrescar(nuevas, guardadas)
     assert set(p.versiones_documento) == {"b" * 12, "e" * 12}
     assert p.resolucion == guardadas[0].resolucion
 
@@ -395,7 +400,7 @@ def test_refrescar_autorresuelve_lo_nuevo():
     """Una partida que aparece por primera vez entra por los mismos automatismos:
     el preliminar existe en una sola llamada."""
     nuevas = abrir(_exogena(_fila("890903938", "5010", 8_000_000)))
-    [p] = refrescar(nuevas, [])
+    [p], _ = refrescar(nuevas, [])
     assert p.resolucion is not None
     assert p.resolucion.origen is Origen.SISTEMA
 
@@ -421,7 +426,7 @@ def test_refrescar_nunca_arrastra_una_provisional_del_sistema():
     guardadas = autorresolver(abrir(exogena))
     assert guardadas[0].resolucion is not None
     nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
-    [p] = refrescar([nueva_ajena], guardadas)
+    [p], _ = refrescar([nueva_ajena], guardadas)
     assert p.resolucion is None
 
 
@@ -515,7 +520,7 @@ def test_refrescar_le_quita_la_resolucion_pegada_a_una_nueva_invalidada():
     incrementales = incorporar(guardadas, _cert_220_bis("b", salarios=86_000_000),
                                tolerancia_pesos=0)
     assert incrementales[0].resolucion is not None  # el arrastre que C1 documenta
-    [p] = refrescar(incrementales, guardadas)
+    [p], _ = refrescar(incrementales, guardadas)
     assert p.resolucion is None  # pendiente de verdad, no "resuelta con nota"
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
 
@@ -531,5 +536,27 @@ def test_una_decision_del_contador_no_sobrevive_a_una_partida_que_se_volvio_ajen
     guardadas = [resolver(titular, Decision.USAR_DIAN,
                           motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")]
     nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
-    [p] = refrescar([nueva_ajena], guardadas)
+    [p], _ = refrescar([nueva_ajena], guardadas)
     assert p.resolucion is None  # pendiente: la decisión era sobre una partida del titular
+
+
+def test_refrescar_devuelve_las_partidas_cuyo_id_desaparecio():
+    """I5 de la ronda 2: refrescar botaba EN SILENCIO toda guardada cuyo id no está en
+    `nuevas` — con `refrescar(abrir(exogena), guardadas)` desaparecían los aportes
+    resueltos (6.8M de deducción) sin que nadie pudiera enterarse. La información
+    existía y no se exponía: ahora vuelve como segunda salida, con sus resoluciones
+    intactas, para que T6 la muestre en vez de botarla."""
+    exogena = _exogena(_fila("900111222", "5001", 85_000_000))
+    guardadas = incorporar(abrir(exogena), _cert_220_completo("a"))
+    guardadas = [
+        p if p.resolucion is not None
+        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
+                      quien="contador@x.co")
+        for p in autorresolver(guardadas)
+    ]
+    # la re-consulta trae SOLO la exógena: los aportes del 220 no están en `nuevas`
+    partidas, huerfanas = refrescar(abrir(exogena), guardadas)
+    assert [p.id for p in partidas] == ["900111222:SALARIOS"]
+    assert sorted(p.id for p in huerfanas) == [
+        "900111222:APORTES_PENSION", "900111222:APORTES_SALUD"]
+    assert all(p.resolucion is not None for p in huerfanas)  # con su decisión intacta
