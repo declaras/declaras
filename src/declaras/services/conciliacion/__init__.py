@@ -9,8 +9,17 @@ resuelva lo que no cierre solo.
 """
 
 from declaras.services.conciliacion.conceptos import Concepto, concepto_de_codigo
+from declaras.services.conciliacion.cruce import TIPO_A_CLAVE, abrir, incorporar
+from declaras.services.conciliacion.modelos import EstadoPartida, Lado, Partida, Valor
 
 __all__ = [
+    "TIPO_A_CLAVE",
     "Concepto",
+    "EstadoPartida",
+    "Lado",
+    "Partida",
+    "Valor",
+    "abrir",
     "concepto_de_codigo",
+    "incorporar",
 ]
