@@ -45,6 +45,17 @@ _CODIGO_A_CONCEPTO: dict[str, Concepto] = {
 }
 
 
+# Los conceptos que el motor NO liquida todavía (no hay cédula de independientes en el
+# caso). Vive acá y no en el mapeo porque lo comparten las dos capas que deciden con él:
+# `resolver` (la salida LLEVAR_A_MANO es SOLO para estos), `autorresolver` (no les pone
+# provisional: garantizaría que a_caso truene y escondería la partida de la cola) y
+# `a_caso` (un hecho de estos conceptos revienta). Cuando el motor cubra independientes,
+# sacar el concepto de acá enciende su mapeo y apaga la salida manual en el mismo commit.
+CONCEPTOS_FUERA_DEL_MOTOR = frozenset(
+    {Concepto.HONORARIOS, Concepto.SERVICIOS, Concepto.OTROS}
+)
+
+
 def concepto_de_codigo(code: str) -> Concepto | None:
     """El concepto de un código oficial, o None si no está mapeado.
 

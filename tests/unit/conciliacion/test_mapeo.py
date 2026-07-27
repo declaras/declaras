@@ -9,8 +9,13 @@ from declaras.caso import (
     Patrimonio,
 )
 from declaras.services.conciliacion import (
+    Concepto,
     Decision,
+    EstadoPartida,
+    Lado,
     Motivo,
+    Partida,
+    Valor,
     a_caso,
     abrir,
     autorresolver,
@@ -25,6 +30,7 @@ from tests.unit.conciliacion.fabricas import (
     partida_concepto_desconocido,
     partida_discrepancia,
     partida_dividendos,
+    partida_honorarios,
     partida_pension,
     partida_retencion,
     partida_solo_dian,
@@ -195,10 +201,14 @@ def test_los_dividendos_entran_como_gravados_y_avisan():
 
 
 def test_honorarios_resueltos_con_hecho_revientan():
-    """El motor no cubre independientes: silencio acá sería una cédula que desaparece."""
-    partidas = autorresolver(abrir(_exogena(_fila("901222333", "5002", 10_000_000))))
+    """El motor no cubre independientes: silencio acá sería una cédula que desaparece.
+    (Desde la ronda de fixes 1 el automatismo ya NO les pone provisional — este backstop
+    queda para quien les meta un hecho a mano; la salida buena es LLEVAR_A_MANO.)"""
+    [p] = abrir(_exogena(_fila("901222333", "5002", 10_000_000)))
+    resuelta = resolver(p, Decision.USAR_DIAN,
+                        motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
     with pytest.raises(NotImplementedError, match="HONORARIOS"):
-        _a_caso(partidas)
+        _a_caso([resuelta])
 
 
 def test_cerrar_sin_soporte_no_aporta_hecho():
@@ -307,3 +317,40 @@ def test_las_sueltas_sin_nit_del_mismo_documento_se_ensamblan_juntas():
 
 def test_avisos_sin_nada_que_avisar_esta_vacio():
     assert avisos(autorresolver([partida_coincide()])) == []
+
+
+# ─────────── ronda de fixes 1: la salida para conceptos fuera del motor ───────────
+
+
+def test_llevada_a_mano_no_bloquea_el_caso_y_deja_aviso_bloqueante():
+    """El ruling de la ronda 1: la partida fuera del alcance del motor sale de la
+    liquidación por decisión del contador — pero excluir un ingreso es subdeclarar,
+    así que la exclusión JAMÁS es silenciosa (tercero, concepto y cifra en el aviso)
+    ni informativa (bloqueante: nadie presenta ese 210 creyendo que está completo)."""
+    p = resolver(partida_honorarios(monto=10_000_000), Decision.LLEVAR_A_MANO,
+                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    caso = _a_caso([p])
+    assert caso.ingresos_brutos_totales == 0  # no aporta hecho
+    [aviso] = avisos([p])
+    assert aviso.codigo == "INGRESO_LLEVADO_A_MANO"
+    assert aviso.severidad == "bloqueante"
+    assert "ZETA SAS" in aviso.mensaje
+    assert "HONORARIOS" in aviso.mensaje
+    assert "10,000,000" in aviso.mensaje
+
+
+def test_el_aviso_de_llevada_a_mano_dice_las_dos_cifras_si_difieren():
+    """Con las dos versiones en disputa el contador necesita ver ambas: va a sumar a
+    mano y decidir cuál usa es exactamente su trabajo pendiente."""
+    discrepante = Partida(
+        id="901222333:HONORARIOS", nit_tercero="901222333", nombre_tercero="ZETA SAS",
+        concepto=Concepto.HONORARIOS,
+        version_dian=Valor(monto=10_000_000, retencion=None, lado=Lado.DIAN),
+        version_documento=Valor(monto=9_000_000, retencion=None, lado=Lado.DOCUMENTO),
+        estado=EstadoPartida.DISCREPANCIA,
+    )
+    p = resolver(discrepante, Decision.LLEVAR_A_MANO,
+                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    [aviso] = avisos([p])
+    assert "10,000,000" in aviso.mensaje
+    assert "9,000,000" in aviso.mensaje

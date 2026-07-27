@@ -120,3 +120,10 @@ def partida_dividendos(total: int = 14_000_000) -> Partida:
         ),
         estado=EstadoPartida.SOLO_DIAN,
     )
+
+
+def partida_honorarios(monto: int = 10_000_000) -> Partida:
+    """Honorarios reportados por la exógena (5002): concepto que el motor NO liquida."""
+    [p] = abrir(_exogena(_fila("901222333", "5002", monto, nombre="ZETA SAS")))
+    assert p.concepto is Concepto.HONORARIOS
+    return p

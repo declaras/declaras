@@ -37,11 +37,11 @@ from declaras.caso import (
     Rendimiento,
 )
 from declaras.motor import Flag
-from declaras.services.conciliacion.conceptos import Concepto
+from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
 from declaras.services.conciliacion.modelos import Decision, Partida, Resolucion, Valor
 from declaras.services.conciliacion.resolucion import pendientes
 
-# Las decisiones que hacen valer un monto en el caso; las otras dos cierran sin aportar.
+# Las decisiones que hacen valer un monto en el caso; las otras tres cierran sin aportar.
 DECISIONES_CON_HECHO = frozenset(
     {Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO}
 )
@@ -50,10 +50,7 @@ DECISIONES_CON_HECHO = frozenset(
 PENSION_DISTRIBUIDA_UNIFORME = "PENSION_DISTRIBUIDA_UNIFORME"
 DIVIDENDOS_SIN_DESAGREGAR = "DIVIDENDOS_SIN_DESAGREGAR"
 RETENCION_SIN_INGRESO = "RETENCION_SIN_INGRESO"
-
-# El motor no cubre la cédula del trabajador independiente: un hecho de estos conceptos
-# no tiene modelo en el caso y silenciarlo haría desaparecer una cédula completa.
-_SIN_MODELO = frozenset({Concepto.HONORARIOS, Concepto.SERVICIOS, Concepto.OTROS})
+INGRESO_LLEVADO_A_MANO = "INGRESO_LLEVADO_A_MANO"
 
 # Orden de ensamble por tercero. También es la prioridad con que la retención explícita
 # (las filas R132 del tercero) se asigna a UN ingreso: el laboral primero.
@@ -128,7 +125,17 @@ def _ensamblar(partidas: list[Partida]) -> _Ensamble:
     ensamble = _Ensamble()
     grupos: dict[str, list[Partida]] = {}
     for p in partidas:
-        if p.resolucion is None or p.resolucion.decision not in DECISIONES_CON_HECHO:
+        if p.resolucion is None:
+            continue
+        if p.resolucion.decision is Decision.LLEVAR_A_MANO:
+            # Ruling de la ronda de fixes 1: la partida sale de la liquidación para que
+            # el contador la sume a mano — pero excluir un ingreso es subdeclarar, así
+            # que la exclusión JAMÁS es silenciosa (tercero, concepto y cifra) ni
+            # informativa (BLOQUEANTE: la liquidación queda marcada incompleta y nadie
+            # presenta ese 210 creyéndolo completo).
+            ensamble.avisos.append(_aviso_llevada_a_mano(p))
+            continue
+        if p.resolucion.decision not in DECISIONES_CON_HECHO:
             continue
         if p.concepto is None:
             # Defensa contra partidas construidas a mano: la tabla de decisiones ya
@@ -172,12 +179,16 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
         assert p.concepto is not None  # filtrado en _ensamblar
         por_concepto.setdefault(p.concepto, []).append(p)
 
-    sin_modelo = sorted(str(c) for c in por_concepto if c in _SIN_MODELO)
+    sin_modelo = sorted(str(c) for c in por_concepto if c in CONCEPTOS_FUERA_DEL_MOTOR)
     if sin_modelo:
+        # El backstop honesto y ruidoso del brief: un hecho de estos conceptos no tiene
+        # modelo y silenciarlo haría desaparecer una cédula completa. La salida buena
+        # está una capa antes: resolver la partida con LLEVAR_A_MANO (ruling de la
+        # ronda de fixes 1), que excluye con aviso bloqueante en vez de tronar.
         raise NotImplementedError(
             f"El caso tributario todavía no modela estos conceptos: "
             f"{', '.join(sin_modelo)}. El motor no cubre la cédula de independientes; "
-            "esos ingresos se declaran a mano mientras tanto."
+            "la salida es resolver esas partidas con LLEVAR_A_MANO y sumarlas a mano."
         )
 
     # LA RETENCIÓN DEL TERCERO VIVE EN DOS SITIOS (herencia de T4, medida): la partida
@@ -294,6 +305,36 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                 "sin sustento. Revisar de qué ingreso viene."
             ),
         ))
+
+
+def _aviso_llevada_a_mano(p: Partida) -> Flag:
+    """El aviso BLOQUEANTE de un ingreso que el contador va a sumar a mano.
+
+    Dice el tercero, el concepto y LA CIFRA (las dos, si las versiones difieren): un
+    aviso genérico de "hay conceptos fuera de alcance" no le dice al contador qué le
+    toca sumar, y la exclusión volvería a ser efectivamente silenciosa.
+    """
+    nombre = p.nombre_tercero or p.nit_tercero or "un tercero sin identificar"
+    return Flag(
+        codigo=INGRESO_LLEVADO_A_MANO,
+        severidad="bloqueante",
+        mensaje=(
+            f"El ingreso de {nombre} por {p.concepto} quedó POR FUERA de esta "
+            f"liquidación ({_cifras_conocidas(p)}): el motor todavía no cubre ese "
+            "concepto y hay que sumarlo a mano en el 210. Este borrador está "
+            "incompleto mientras ese ingreso no esté incorporado."
+        ),
+    )
+
+
+def _cifras_conocidas(p: Partida) -> str:
+    """La cifra que se conoce de la partida, citando el lado que la afirma."""
+    dian = p.version_dian.monto if p.version_dian is not None else None
+    documento = p.version_documento.monto if p.version_documento is not None else None
+    if dian is not None and documento is not None and dian != documento:
+        return f"{dian:,} pesos según la DIAN, {documento:,} según el documento"
+    cifra = dian if dian is not None else documento
+    return f"{cifra:,} pesos" if cifra is not None else "sin cifra registrada"
 
 
 def _resuelta(p: Partida) -> Resolucion:

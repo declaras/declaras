@@ -19,6 +19,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR
 from declaras.services.conciliacion.cruce import _con_nota
 from declaras.services.conciliacion.modelos import (
     Decision,
@@ -38,23 +39,34 @@ QUIEN_SISTEMA = "sistema"
 # Texto del brief, literal: es lo que el contador lee en la cola.
 NOTA_VALORES_CAMBIARON = "los valores cambiaron desde la resolución anterior"
 
-# Qué decisión es posible sobre qué desenlace del cruce. La tabla del brief, con UNA
-# desviación autorizada por la herencia de T4 (riesgo 2 de la ronda 2): SOLO_DOCUMENTO
-# también admite CERRAR_SIN_SOPORTE. Sin ella, la partida suelta sin NIT que duplica un
-# hecho ya conciliado (exógena sin NIT + 220 con NIT del mismo empleador) no tenía salida
-# que NO aportara hecho: sus dos únicas decisiones metían la misma plata dos veces al caso.
+# Qué decisión es posible sobre qué desenlace del cruce. La tabla del brief, con DOS
+# desviaciones autorizadas. (1) Herencia de T4 (riesgo 2 de la ronda 2): SOLO_DOCUMENTO
+# también admite CERRAR_SIN_SOPORTE — sin ella, la partida suelta sin NIT que duplica un
+# hecho ya conciliado no tenía salida que NO aportara hecho: sus dos únicas decisiones
+# metían la misma plata dos veces al caso. (2) Ruling de la ronda de fixes 1 de T5:
+# LLEVAR_A_MANO sobre todos los estados con concepto — una partida cuyo concepto el motor
+# no liquida (CONCEPTOS_FUERA_DEL_MOTOR) necesita una salida sin hecho para que el
+# contador la sume a mano; con la tabla literal, sus únicas salidas aportaban hecho y
+# a_caso tronaba el caso COMPLETO. El gate por concepto vive en `resolver` (la tabla es
+# por estado; esta decisión es la única condicionada también por el concepto).
 _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
-    EstadoPartida.COINCIDE: frozenset({Decision.USAR_DOCUMENTO, Decision.USAR_DIAN}),
+    EstadoPartida.COINCIDE: frozenset(
+        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.LLEVAR_A_MANO}
+    ),
     EstadoPartida.DISCREPANCIA: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO}
+        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO,
+         Decision.LLEVAR_A_MANO}
     ),
     EstadoPartida.SOLO_DIAN: frozenset(
-        {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO}
+        {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO,
+         Decision.LLEVAR_A_MANO}
     ),
     EstadoPartida.SOLO_DOCUMENTO: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CERRAR_SIN_SOPORTE}
+        {Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CERRAR_SIN_SOPORTE,
+         Decision.LLEVAR_A_MANO}
     ),
-    # Sin concepto no se sabe a qué cédula del 210 iría el valor: no puede aportar hecho.
+    # Sin concepto no se sabe a qué cédula del 210 iría el valor: no puede aportar hecho
+    # (y tampoco "llevarse a mano": no se sabe QUÉ se estaría llevando).
     EstadoPartida.CONCEPTO_DESCONOCIDO: frozenset(
         {Decision.MARCAR_AJENO, Decision.CERRAR_SIN_SOPORTE}
     ),
@@ -83,6 +95,15 @@ def resolver(
             f"La decisión {decision} no aplica a una partida en estado {partida.estado}; "
             f"las posibles son: {posibles}."
         )
+    if decision is Decision.LLEVAR_A_MANO and partida.concepto not in CONCEPTOS_FUERA_DEL_MOTOR:
+        # LLEVAR_A_MANO existe porque al motor le falta el concepto (ruling de la ronda
+        # de fixes 1), NO para sacar de la liquidación un ingreso que sí se liquida:
+        # eso sería subdeclarar con un gate más débil que el resto de la tabla.
+        raise ValueError(
+            f"La decisión LLEVAR_A_MANO es solo para conceptos que el motor no liquida "
+            f"todavía; {partida.concepto} sí tiene modelo en el caso y excluirlo lo "
+            "subdeclararía."
+        )
     return _con_resolucion(
         partida, decision, motivo=motivo, quien=quien, origen=Origen.CONTADOR,
         valor=valor, nota=nota,
@@ -98,10 +119,17 @@ def autorresolver(partidas: list[Partida]) -> list[Partida]:
     con filas ajenas no produce preliminar hasta que una persona las marque — que es
     exactamente lo que debe pasar, porque la alternativa (excluirlas solas) escondería
     plata que sí puede ser del titular ("misma cédula, otro nombre").
+
+    Un concepto FUERA del alcance del motor tampoco se toca (ruling de la ronda de
+    fixes 1): la provisional sobre honorarios garantizaba que `a_caso` tronara con el
+    NotImplementedError Y escondía la partida de la cola (resuelta = no pendiente) — el
+    contador no tenía dónde verla ni cómo sacarla. Queda pendiente, visible, y la salida
+    es suya: LLEVAR_A_MANO (o USAR_OTRO/USAR_DIAN si insiste, que revientan honesto).
     """
     resueltas: list[Partida] = []
     for p in partidas:
-        if p.resolucion is not None or p.reportado_a is not None:
+        if (p.resolucion is not None or p.reportado_a is not None
+                or p.concepto in CONCEPTOS_FUERA_DEL_MOTOR):
             resueltas.append(p)
         elif p.estado is EstadoPartida.COINCIDE:
             resueltas.append(_con_resolucion(

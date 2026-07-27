@@ -10,11 +10,16 @@ necesita persona (y deja el preliminar), `resolver` registra las decisiones del 
 partidas resueltas en el `CasoTributario` que el motor liquida.
 """
 
-from declaras.services.conciliacion.conceptos import Concepto, concepto_de_codigo
+from declaras.services.conciliacion.conceptos import (
+    CONCEPTOS_FUERA_DEL_MOTOR,
+    Concepto,
+    concepto_de_codigo,
+)
 from declaras.services.conciliacion.cruce import TIPO_A_CLAVE, abrir, incorporar
 from declaras.services.conciliacion.mapeo import (
     DECISIONES_CON_HECHO,
     DIVIDENDOS_SIN_DESAGREGAR,
+    INGRESO_LLEVADO_A_MANO,
     PENSION_DISTRIBUIDA_UNIFORME,
     RETENCION_SIN_INGRESO,
     a_caso,
@@ -41,8 +46,10 @@ from declaras.services.conciliacion.resolucion import (
 from declaras.services.conciliacion.respuestas import Respuesta
 
 __all__ = [
+    "CONCEPTOS_FUERA_DEL_MOTOR",
     "DECISIONES_CON_HECHO",
     "DIVIDENDOS_SIN_DESAGREGAR",
+    "INGRESO_LLEVADO_A_MANO",
     "NOTA_VALORES_CAMBIARON",
     "PENSION_DISTRIBUIDA_UNIFORME",
     "QUIEN_SISTEMA",

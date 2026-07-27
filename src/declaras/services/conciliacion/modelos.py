@@ -73,8 +73,14 @@ class Valor(_Modelo):
 class Decision(StrEnum):
     """Lo que se decidió hacer con la partida: de dónde sale la cifra que se declara.
 
-    `MARCAR_AJENO` y `CERRAR_SIN_SOPORTE` NO aportan hecho al caso (su `valor` queda en 0);
-    las otras tres sí. Qué decisión es posible sobre qué estado lo valida `resolver`.
+    `MARCAR_AJENO`, `CERRAR_SIN_SOPORTE` y `LLEVAR_A_MANO` NO aportan hecho al caso (su
+    `valor` queda en 0); las otras tres sí. Qué decisión es posible sobre qué estado lo
+    valida `resolver`. `CERRAR_SIN_SOPORTE` y `LLEVAR_A_MANO` son cosas DISTINTAS:
+    en la primera el soporte no existe (o el hecho ya está contado en otra partida);
+    en la segunda el soporte existe y la cifra se conoce — lo que falta es el MOTOR
+    (concepto en `CONCEPTOS_FUERA_DEL_MOTOR`), el contador suma ese ingreso a mano y la
+    exclusión sale como aviso BLOQUEANTE en el borrador, porque excluir un ingreso es
+    subdeclarar y nadie puede presentar ese 210 creyendo que está completo.
     """
 
     USAR_DIAN = "USAR_DIAN"
@@ -82,6 +88,7 @@ class Decision(StrEnum):
     USAR_OTRO = "USAR_OTRO"
     MARCAR_AJENO = "MARCAR_AJENO"
     CERRAR_SIN_SOPORTE = "CERRAR_SIN_SOPORTE"
+    LLEVAR_A_MANO = "LLEVAR_A_MANO"
 
 
 class Motivo(StrEnum):
@@ -93,6 +100,8 @@ class Motivo(StrEnum):
     NO_ES_MIO = "NO_ES_MIO"
     FALTA_DOCUMENTO = "FALTA_DOCUMENTO"
     DECISION_DEL_CONTADOR = "DECISION_DEL_CONTADOR"
+    # El soporte y la cifra existen; lo que falta es el motor (va con LLEVAR_A_MANO).
+    FUERA_DEL_MOTOR = "FUERA_DEL_MOTOR"
 
 
 class Origen(StrEnum):

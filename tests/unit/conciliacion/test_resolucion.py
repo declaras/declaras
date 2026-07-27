@@ -1,6 +1,7 @@
 import pytest
 
 from declaras.services.conciliacion import (
+    Concepto,
     Decision,
     EstadoPartida,
     Motivo,
@@ -18,6 +19,7 @@ from tests.unit.conciliacion.fabricas import (
     partida_coincide,
     partida_concepto_desconocido,
     partida_discrepancia,
+    partida_honorarios,
     partida_solo_dian,
     partida_solo_documento,
 )
@@ -64,6 +66,8 @@ def test_pendientes_ordena_por_plata_en_juego():
 # (riesgo 2 de la ronda 2): CERRAR_SIN_SOPORTE también aplica a SOLO_DOCUMENTO, porque la
 # partida suelta sin NIT que duplica una ya conciliada tiene que poder cerrarse SIN aportar
 # hecho — con la tabla literal, sus únicas salidas metían la misma plata dos veces al caso.
+# LLEVAR_A_MANO (ronda de fixes 1) no se itera acá: su gate es por CONCEPTO además del
+# estado (solo conceptos fuera del alcance del motor) y tiene sus propios tests abajo.
 _CASOS_TABLA = [
     (partida_coincide, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN}),
     (partida_discrepancia, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO}),
@@ -79,6 +83,8 @@ _CASOS_TABLA = [
 )
 def test_la_tabla_de_decisiones_se_aplica_completa(fabrica, permitidas):
     for decision in Decision:
+        if decision is Decision.LLEVAR_A_MANO:
+            continue  # gate por concepto, no solo por estado: tests dedicados abajo
         argumentos = {"valor": 1_000_000} if decision is Decision.USAR_OTRO else {}
         if decision in permitidas:
             p = resolver(fabrica(), decision, motivo=Motivo.DECISION_DEL_CONTADOR,
@@ -416,4 +422,40 @@ def test_refrescar_nunca_arrastra_una_provisional_del_sistema():
     assert guardadas[0].resolucion is not None
     nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
     [p] = refrescar([nueva_ajena], guardadas)
+    assert p.resolucion is None
+
+
+# ─────────── ronda de fixes 1: la salida para conceptos fuera del motor ───────────
+
+
+def test_llevar_a_mano_es_solo_para_conceptos_que_el_motor_no_cubre():
+    """Sobre un concepto que SÍ se liquida, excluirlo sería subdeclarar con un gate
+    más débil que la tabla: se rechaza tenga el estado que tenga."""
+    with pytest.raises(ValueError, match="LLEVAR_A_MANO"):
+        resolver(partida_coincide(), Decision.LLEVAR_A_MANO,
+                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+
+
+def test_llevar_a_mano_cierra_sin_aportar_hecho():
+    p = resolver(partida_honorarios(), Decision.LLEVAR_A_MANO,
+                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    assert p.resolucion.valor == 0
+    assert p.resolucion.origen is Origen.CONTADOR
+
+
+def test_autorresolver_no_pone_provisional_a_un_concepto_fuera_del_motor():
+    """La provisional USAR_DIAN sobre honorarios garantizaba que a_caso tronara Y
+    escondía la partida de la cola (resuelta = no pendiente): el contador no tenía
+    dónde verla ni cómo sacarla. Fuera del alcance del motor no se autorresuelve."""
+    [p] = autorresolver([partida_honorarios()])
+    assert p.resolucion is None
+    assert pendientes([p]) == [p]  # visible en la cola, como las ajenas
+
+
+def test_autorresolver_tampoco_cierra_un_coincide_fuera_del_motor():
+    """El camino paralelo del guard: un COINCIDE de honorarios (hoy inalcanzable — el
+    cruce no abre documentos de honorarios — pero construible) tampoco se auto-cierra."""
+    disfrazada = partida_coincide().model_copy(
+        update={"concepto": Concepto.HONORARIOS})
+    [p] = autorresolver([disfrazada])
     assert p.resolucion is None
