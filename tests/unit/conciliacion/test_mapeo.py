@@ -431,3 +431,46 @@ def test_la_misma_partida_dos_veces_revienta_en_vez_de_duplicar_la_plata():
         _a_caso([p, p])
     with pytest.raises(ValueError, match="900111222:SALARIOS"):
         avisos([p, p])
+
+
+def test_desplazar_una_retencion_certificada_distinta_deja_aviso():
+    """I4 de la ronda 2: la prioridad de la fuente explícita está bien (ratificada),
+    pero desplazar EN SILENCIO una retención certificada distinta escondía plata — R132
+    de 1M contra 8M certificados por el 220: se declaraba 1M y nadie veía los 7M."""
+    fila = _fila("900111222", "5001", 85_000_000)
+    del fila["retencion"]
+    exogena = _exogena(fila, fila_retencion("900111222", 1_000_000))
+    partidas = autorresolver(incorporar(
+        abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000)))
+    caso = _a_caso(partidas)
+    assert caso.laborales[0].retencion == 1_000_000  # la prioridad no cambia
+    [aviso] = [f for f in avisos(partidas) if f.codigo == "RETENCION_DESPLAZADA"]
+    assert "1,000,000" in aviso.mensaje
+    assert "8,000,000" in aviso.mensaje
+
+
+def test_borrar_la_retencion_con_un_cero_explicito_tambien_avisa():
+    """El pariente del I4: resolver la partida RETENCION con USAR_OTRO valor=0 borra la
+    certificada — un 0 explícito es indistinguible de 'no hay fuente explícita' y los
+    8M desaparecían en silencio."""
+    fila = _fila("900111222", "5001", 85_000_000)
+    del fila["retencion"]
+    exogena = _exogena(fila, fila_retencion("900111222", 8_000_000))
+    partidas = autorresolver(incorporar(
+        abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000)))
+    partidas = [
+        resolver(p, Decision.USAR_OTRO, motivo=Motivo.DECISION_DEL_CONTADOR,
+                 quien="contador@x.co", valor=0)
+        if p.concepto is Concepto.RETENCION else p
+        for p in partidas
+    ]
+    caso = _a_caso(partidas)
+    assert caso.laborales[0].retencion == 0  # la decisión del contador rige
+    assert any(f.codigo == "RETENCION_DESPLAZADA" for f in avisos(partidas))
+
+
+def test_la_retencion_explicita_igual_a_la_certificada_no_avisa():
+    """Desplazar la MISMA cifra no le dice nada al contador: sin aviso (el escenario
+    16M/8M de la herencia, donde las dos fuentes dicen 8M)."""
+    partidas = _partidas_laborales_completas()
+    assert not any(f.codigo == "RETENCION_DESPLAZADA" for f in avisos(partidas))

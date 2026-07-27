@@ -51,6 +51,7 @@ PENSION_DISTRIBUIDA_UNIFORME = "PENSION_DISTRIBUIDA_UNIFORME"
 DIVIDENDOS_SIN_DESAGREGAR = "DIVIDENDOS_SIN_DESAGREGAR"
 RETENCION_SIN_INGRESO = "RETENCION_SIN_INGRESO"
 INGRESO_LLEVADO_A_MANO = "INGRESO_LLEVADO_A_MANO"
+RETENCION_DESPLAZADA = "RETENCION_DESPLAZADA"
 
 # Orden de ensamble por tercero. También es la prioridad con que la retención explícita
 # (las filas R132 del tercero) se asigna a UN ingreso: el laboral primero.
@@ -242,6 +243,25 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
             retencion = _retencion_afirmada(p)
             extras = []
             if retencion_pendiente is not None:
+                if retencion not in (0, retencion_pendiente):
+                    # I4 de la ronda 2: la prioridad de la fuente explícita se mantiene
+                    # (ratificada), pero desplazar EN SILENCIO una retención certificada
+                    # DISTINTA esconde plata — el contador tiene que ver las dos cifras
+                    # y decidir cuál es la real. Cubre también el 0 explícito de
+                    # USAR_OTRO sobre la partida RETENCION, indistinguible de "no hay
+                    # fuente explícita" sin este aviso.
+                    nombre = p.nombre_tercero or p.nit_tercero
+                    ensamble.avisos.append(Flag(
+                        codigo=RETENCION_DESPLAZADA,
+                        mensaje=(
+                            f"La retención declarada para {nombre} salió de la fuente "
+                            f"explícita ({retencion_pendiente:,} pesos, "
+                            f"{', '.join(x.id for x in retenciones)}) y desplazó la "
+                            f"que certifica la otra versión ({retencion:,} pesos): "
+                            "rige una sola fuente — verificar cuál es la real antes "
+                            "de presentar."
+                        ),
+                    ))
                 retencion = retencion_pendiente
                 retencion_pendiente = None
                 extras.append(f"retención de {', '.join(x.id for x in retenciones)}")
