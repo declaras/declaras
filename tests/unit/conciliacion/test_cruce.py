@@ -692,6 +692,34 @@ def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monk
     assert p.nota is None
 
 
+def test_un_tipo_acumulable_sin_nit_no_suma_documentos(monkeypatch):
+    """La agregación acumulable presupone lo ÚNICO que el camino sin NIT no tiene: saber
+    que los documentos son del mismo tercero. Dos escaneos sin NIT del mismo certificado
+    bancario de 40M publicaban 80M —con la nota hablando solo del NIT faltante y
+    version_que_rige=None—: F1 literal por la rama `acumulable`, que se evaluaba antes
+    que la de rivales. Sin NIT manda el ruling de F1: rivales anotados, nunca suma."""
+    from declaras.services.conciliacion import cruce
+
+    clave = cruce._ClaveDocumento(
+        concepto=Concepto.RENDIMIENTOS, campo_nit="banco_nit", campo_nombre="banco_nombre",
+        campos_monto=("rendimientos",), campo_retencion="retencion", acumulable=True,
+    )
+    monkeypatch.setitem(cruce.TIPO_A_CLAVE, "CERT_BANCARIO_TEST", (clave,))
+
+    def cert(sha: str) -> DocumentReading:
+        campos = {"banco_nombre": "BANCO X", "rendimientos": 40_000_000, "retencion": 0}
+        return DocumentReading(
+            doc_type="CERT_BANCARIO_TEST", parser="test", content_sha256=sha * 64,
+            fields=[ExtractedField(name=k, value=v) for k, v in campos.items()],
+        )
+
+    [p] = incorporar(incorporar([], cert("a")), cert("b"))
+    assert p.version_documento.monto == 40_000_000  # nunca 80M
+    assert set(p.versiones_documento) == {"a" * 12, "b" * 12}  # ninguna desaparece
+    assert "a mano" in (p.nota or "")
+    assert p.version_que_rige == "b" * 12
+
+
 def test_los_montos_no_enteros_cierran_por_pesos_no_por_truncamiento():
     """Única mutación que sobrevivió a la ronda 1: int(float(...)) pasaba toda la suite.
     El único punto de redondeo del sistema es dinero.pesos (half-up): 1500.5 sube a 1501,

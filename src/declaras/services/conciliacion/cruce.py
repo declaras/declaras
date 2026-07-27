@@ -68,7 +68,9 @@ class _ClaveDocumento:
     # el sha es identidad de BYTES, no de documento — el mismo certificado re-escaneado o
     # re-exportado llega con otro hash (el repo lo documenta para las descargas del
     # portal), y sumarlo duplicaría salarios y aportes en silencio. En ese caso rige la
-    # última versión, con nota, y el contador decide.
+    # última versión, con nota, y el contador decide. OJO: la agregación solo aplica con
+    # NIT — presupone saber que los documentos son del mismo tercero, que es justo lo que
+    # el camino sin NIT no sabe; ahí siempre manda el ruling de F1 (rivales anotados).
     acumulable: bool = False
 
 
@@ -570,9 +572,12 @@ def _emparejar(
     # excepción es el camino sin NIT: ahí hasta cifras iguales podrían ser dos terceros
     # distintos, así que cualquier segunda versión se anota.
     rivales = len(versiones) > 1 and (sin_nit or _cifras_difieren(versiones))
-    if acumulable:
+    if acumulable and not sin_nit:
         # Documentos distintos que sí se suman (un certificado por CDT): el agregado, que
-        # es lo que la exógena también reporta.
+        # es lo que la exógena también reporta. Sin NIT nunca: la agregación presupone lo
+        # único que ese camino no tiene —saber que los documentos son del MISMO tercero—
+        # y sumar dos escaneos del mismo certificado bancario duplicaría la plata (F1
+        # literal por esta rama, que se evaluaba antes que la de rivales).
         publicada = _agregado(versiones)
         nota_rivales = None
         version_que_rige = None
