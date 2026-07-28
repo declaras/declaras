@@ -23,15 +23,19 @@ El texto técnico va al log, que es donde sirve, y nunca al mensaje ni a `detail
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from declaras.documents.models import DocumentReading, ExtractedField
+from declaras.documents.models import DocumentReading, ExtractedField, ReadingWarning
 from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
-from declaras.extraccion.f220 import (
-    Extraccion220InvalidaError,
-    Motivo220,
-    extraer_220_con_metadatos,
+from declaras.extraccion.cert_arriendo import MotivoArriendo, extraer_arriendo_con_metadatos
+from declaras.extraccion.cert_bancario import MotivoBancario, extraer_bancario_con_metadatos
+from declaras.extraccion.cert_dividendos import (
+    MotivoDividendos,
+    extraer_dividendos_con_metadatos,
 )
+from declaras.extraccion.cert_pension import MotivoPension, extraer_pension_con_metadatos
+from declaras.extraccion.f220 import Motivo220, extraer_220_con_metadatos
 from declaras.observability import get_logger
 
 log = get_logger(__name__)
@@ -72,25 +76,98 @@ PISTAS: dict[Motivo220, str] = {
 # al que nadie le escribió su pista.
 PISTA_GENERICA = "El certificado no quedó legible."
 
+PARSER_PENSION = "cert_pension.llm.v1"
+PARSER_BANCARIO = "cert_bancario.llm.v1"
+PARSER_DIVIDENDOS = "cert_dividendos.llm.v1"
+PARSER_ARRIENDO = "cert_arriendo.llm.v1"
 
-def leer_220(
-    content: bytes, *, anio_esperado: int | None = None, client: Any = None
-) -> DocumentReading:
-    """Lee un certificado de ingresos y retenciones (formulario 220)."""
+# Las tres primeras causas son las de la base y se repiten en los cinco certificados; las de
+# abajo son las propias de cada uno. Cada pista dice qué puede hacer quien subió el archivo:
+# una genérica frente a un certificado de pensión sin detalle mensual manda a mandar otra vez
+# el mismo documento, y el pendiente se repite igual para siempre.
+_PISTA_NO_ES_PDF = "El archivo no es un PDF que se pueda leer."
+_PISTA_SIN_SALIDA = (
+    "No se pudieron leer las cifras del certificado. Si está escaneado o se ve borroso, "
+    "una copia más nítida ayuda."
+)
+_PISTA_OTRO_ANIO = (
+    "El certificado es de otro año gravable: se necesita el del año que se está declarando."
+)
+
+PISTAS_PENSION: dict[MotivoPension, str] = {
+    MotivoPension.NO_ES_PDF: _PISTA_NO_ES_PDF,
+    MotivoPension.SIN_SALIDA: _PISTA_SIN_SALIDA,
+    MotivoPension.OTRO_ANIO: _PISTA_OTRO_ANIO,
+    MotivoPension.MESADAS_INCOMPLETAS: (
+        "El certificado no trae el detalle de los doce meses, y la exención de la pensión se "
+        "calcula mes a mes: hay que pedir el certificado con el desglose mensual."
+    ),
+    MotivoPension.NO_RECONCILIA: (
+        "Las mesadas leídas no suman el total impreso en el certificado, así que hay que "
+        "revisarlo a mano."
+    ),
+}
+
+PISTAS_BANCARIO: dict[MotivoBancario, str] = {
+    MotivoBancario.NO_ES_PDF: _PISTA_NO_ES_PDF,
+    MotivoBancario.SIN_SALIDA: _PISTA_SIN_SALIDA,
+    MotivoBancario.OTRO_ANIO: _PISTA_OTRO_ANIO,
+    MotivoBancario.SIN_CUENTAS: (
+        "El certificado no dice a qué cuentas o productos corresponden las cifras."
+    ),
+}
+
+PISTAS_DIVIDENDOS: dict[MotivoDividendos, str] = {
+    MotivoDividendos.NO_ES_PDF: _PISTA_NO_ES_PDF,
+    MotivoDividendos.SIN_SALIDA: _PISTA_SIN_SALIDA,
+    MotivoDividendos.OTRO_ANIO: _PISTA_OTRO_ANIO,
+    MotivoDividendos.NO_DISCRIMINA: (
+        "El certificado no separa los dividendos gravados de los no gravados, y cada parte "
+        "paga distinto: hay que pedirle a la sociedad el certificado con esa separación."
+    ),
+    MotivoDividendos.NO_RECONCILIA: (
+        "Las cifras leídas no suman el total impreso en el certificado, así que hay que "
+        "revisarlo a mano."
+    ),
+}
+
+PISTAS_ARRIENDO: dict[MotivoArriendo, str] = {
+    MotivoArriendo.NO_ES_PDF: _PISTA_NO_ES_PDF,
+    MotivoArriendo.SIN_SALIDA: _PISTA_SIN_SALIDA,
+    MotivoArriendo.OTRO_ANIO: _PISTA_OTRO_ANIO,
+    MotivoArriendo.CANON_VACIO: (
+        "El certificado no reporta cánones recibidos en el año, así que no hay arriendo que "
+        "declarar con este documento."
+    ),
+}
+
+
+def _traducir[R](
+    leer: Callable[[], R],
+    *,
+    etiqueta: str,
+    parser: str,
+    pistas: Mapping[Any, str],
+) -> R:
+    """Corre un extractor y traduce sus dos formas de falla. Es el cuerpo de la frontera.
+
+    Vive aparte porque son cinco certificados con la misma traducción y una sola diferencia
+    —su tabla de pistas—. Con una copia por lector, el día que se descubra un tercer tipo de
+    falla se arregla en uno y se olvida en los otros cuatro; ya pasó en este proyecto con la
+    rama del lector caído, que existió solo en el 220 durante una tarea entera.
+    """
     try:
-        laboral, extraccion = extraer_220_con_metadatos(
-            content, anio_esperado=anio_esperado, client=client
-        )
+        return leer()
     except ValueError as exc:
         # `ValueError` cubre las dos formas de falla del extractor: sus propios guards (que
         # además dicen cuál falló) y la validación del esquema, cuyo error de pydantic hereda de
         # `ValueError` y no trae motivo. El texto técnico queda en el log, recortado, y no viaja
         # en `details`: `to_payload` los devuelve por la API.
-        motivo = exc.motivo if isinstance(exc, Extraccion220InvalidaError) else None
-        log.warning("documents.cert_220.unreadable", motivo=motivo, detalle=str(exc)[:200])
+        motivo = getattr(exc, "motivo", None)
+        log.warning(f"documents.{etiqueta}.unreadable", motivo=motivo, detalle=str(exc)[:200])
         raise DocumentUnreadableError(
-            PISTAS.get(motivo, PISTA_GENERICA) if motivo else PISTA_GENERICA,
-            parser=PARSER_220,
+            pistas.get(motivo, PISTA_GENERICA) if motivo else PISTA_GENERICA,
+            parser=parser,
         ) from exc
     except Exception as exc:
         # Todo lo demás es el lector, no el documento: sin credencial el SDK ni siquiera falla
@@ -100,11 +177,46 @@ def leer_220(
         # sin lectura y sin alerta, que es el mismo silencio que esta frontera existe para
         # tapar, abierto justo para la falla más probable.
         log.warning(
-            "documents.cert_220.reader_unavailable",
+            f"documents.{etiqueta}.reader_unavailable",
             error=type(exc).__name__,
             detalle=str(exc)[:200],
         )
-        raise DocumentReaderUnavailableError(parser=PARSER_220) from exc
+        raise DocumentReaderUnavailableError(parser=parser) from exc
+
+
+def _lectura(
+    content: bytes,
+    *,
+    doc_type: str,
+    parser: str,
+    campos: dict[str, Any],
+    confianza: float,
+    warnings: list[ReadingWarning] | None = None,
+) -> DocumentReading:
+    """Arma la lectura con el digest completo y la confianza del modelo en cada campo."""
+    return DocumentReading(
+        doc_type=doc_type,
+        parser=parser,
+        # El digest COMPLETO, como los cuatro lectores del portal y como el documento del
+        # expediente: `content_sha256` no puede significar una cosa en una familia y otra en la
+        # otra, o un cruce lectura↔documento por hash falla solo para esta familia. El prefijo
+        # de 12 con el que `Fuente.ref` identifica el documento se saca de acá (`id_documento`).
+        content_sha256=hashlib.sha256(content).hexdigest(),
+        fields=[ExtractedField(name=k, value=v, confidence=confianza) for k, v in campos.items()],
+        warnings=warnings or [],
+    )
+
+
+def leer_220(
+    content: bytes, *, anio_esperado: int | None = None, client: Any = None
+) -> DocumentReading:
+    """Lee un certificado de ingresos y retenciones (formulario 220)."""
+    laboral, extraccion = _traducir(
+        lambda: extraer_220_con_metadatos(content, anio_esperado=anio_esperado, client=client),
+        etiqueta="cert_220",
+        parser=PARSER_220,
+        pistas=PISTAS,
+    )
 
     confianza = laboral.fuente.confianza or 0.0
     campos: dict[str, Any] = {
@@ -122,13 +234,140 @@ def leer_220(
         "aportes_pension": laboral.aportes_pension,
         "retencion": laboral.retencion,
     }
-    return DocumentReading(
+    return _lectura(
+        content,
         doc_type="CERT_INGRESOS_220",
         parser=PARSER_220,
-        # El digest COMPLETO, como los cuatro lectores del portal y como el documento del
-        # expediente: `content_sha256` no puede significar una cosa en una familia y otra en la
-        # otra, o un cruce lectura↔documento por hash falla solo para el 220. El prefijo de 12
-        # con el que `Fuente.ref` identifica el documento se saca de acá (`id_documento`).
-        content_sha256=hashlib.sha256(content).hexdigest(),
-        fields=[ExtractedField(name=k, value=v, confidence=confianza) for k, v in campos.items()],
+        campos=campos,
+        confianza=confianza,
+    )
+
+
+def leer_pension(
+    content: bytes, *, anio_esperado: int | None = None, client: Any = None
+) -> DocumentReading:
+    """Lee un certificado de pensión."""
+    pension, ext = _traducir(
+        lambda: extraer_pension_con_metadatos(
+            content, anio_esperado=anio_esperado, client=client
+        ),
+        etiqueta="cert_pension",
+        parser=PARSER_PENSION,
+        pistas=PISTAS_PENSION,
+    )
+    return _lectura(
+        content,
+        doc_type="CERT_PENSION",
+        parser=PARSER_PENSION,
+        campos={
+            "anio_gravable": ext.anio_gravable,
+            "pagador_nit": pension.pagador_nit,
+            "pagador_nombre": pension.pagador,
+            # El total anual es lo que cruza contra la exógena, que reporta la pensión
+            # agregada por pagador. Las doce mesadas viajan aparte porque son el detalle del
+            # que depende la exención mensual, y ninguna fila de la exógena las tiene.
+            "total_pagado": sum(pension.mesadas),
+            "mesadas": list(pension.mesadas),
+            "retencion": pension.retencion,
+        },
+        confianza=pension.fuente.confianza or 0.0,
+    )
+
+
+def leer_bancario(
+    content: bytes, *, anio_esperado: int | None = None, client: Any = None
+) -> DocumentReading:
+    """Lee un certificado tributario bancario (rendimientos, retención y GMF)."""
+    rendimiento, gmf, ext = _traducir(
+        lambda: extraer_bancario_con_metadatos(
+            content, anio_esperado=anio_esperado, client=client
+        ),
+        etiqueta="cert_bancario",
+        parser=PARSER_BANCARIO,
+        pistas=PISTAS_BANCARIO,
+    )
+    return _lectura(
+        content,
+        doc_type="CERT_BANCARIO",
+        parser=PARSER_BANCARIO,
+        campos={
+            "anio_gravable": ext.anio_gravable,
+            "entidad_nit": rendimiento.entidad_nit,
+            "entidad_nombre": rendimiento.entidad,
+            "rendimientos": rendimiento.valor,
+            "retencion": rendimiento.retencion,
+            # El GMF viaja en la lectura pero NO abre partida: no es ingreso, es un impuesto
+            # pagado que va a los beneficios del caso. Queda acá para que no se pierda el dato
+            # del certificado; llevarlo hasta `Beneficios.gmf_pagado` es del camino de
+            # beneficios, no del cruce de ingresos.
+            "gmf_pagado": gmf.valor if gmf else 0,
+            "numero_de_cuentas": ext.numero_de_cuentas,
+            "saldo_31_dic": ext.saldo_31_dic,
+        },
+        confianza=rendimiento.fuente.confianza or 0.0,
+    )
+
+
+def leer_dividendos(
+    content: bytes, *, anio_esperado: int | None = None, client: Any = None
+) -> DocumentReading:
+    """Lee un certificado de dividendos, que solo es legible si discrimina las dos bolsas."""
+    dividendo, ext = _traducir(
+        lambda: extraer_dividendos_con_metadatos(
+            content, anio_esperado=anio_esperado, client=client
+        ),
+        etiqueta="cert_dividendos",
+        parser=PARSER_DIVIDENDOS,
+        pistas=PISTAS_DIVIDENDOS,
+    )
+    return _lectura(
+        content,
+        doc_type="CERT_DIVIDENDOS",
+        parser=PARSER_DIVIDENDOS,
+        campos={
+            "anio_gravable": ext.anio_gravable,
+            "anio_utilidades": ext.anio_utilidades,
+            "sociedad_nit": dividendo.sociedad_nit,
+            "sociedad_nombre": dividendo.sociedad_nombre,
+            "gravados": dividendo.gravados,
+            "no_gravados": dividendo.no_gravados,
+            "retencion": dividendo.retencion,
+        },
+        confianza=dividendo.fuente.confianza or 0.0,
+    )
+
+
+def leer_arriendo(
+    content: bytes, *, anio_esperado: int | None = None, client: Any = None
+) -> DocumentReading:
+    """Lee un certificado de arrendamiento, con su aviso de revisión si los costos exceden."""
+    arriendo, aviso, ext = _traducir(
+        lambda: extraer_arriendo_con_metadatos(
+            content, anio_esperado=anio_esperado, client=client
+        ),
+        etiqueta="cert_arriendo",
+        parser=PARSER_ARRIENDO,
+        pistas=PISTAS_ARRIENDO,
+    )
+    return _lectura(
+        content,
+        doc_type="CERT_ARRIENDO",
+        parser=PARSER_ARRIENDO,
+        campos={
+            "anio_gravable": ext.anio_gravable,
+            "contraparte_nit": arriendo.contraparte_nit,
+            "contraparte_nombre": arriendo.contraparte_nombre,
+            "inmueble": arriendo.inmueble,
+            "canon_total": arriendo.canon_total,
+            "retencion": arriendo.retencion,
+            "predial": arriendo.costos.predial,
+            "administracion": arriendo.costos.administracion,
+            "comision_inmobiliaria": arriendo.costos.comision_inmobiliaria,
+            "reparaciones": arriendo.costos.reparaciones,
+            "meses": ext.meses,
+        },
+        confianza=arriendo.fuente.confianza or 0.0,
+        # El aviso no cambia ninguna cifra: viaja como warning para que el expediente lo
+        # convierta en un pendiente del contador.
+        warnings=[aviso] if aviso else None,
     )

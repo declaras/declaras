@@ -85,6 +85,10 @@ DETERMINISTIC_READERS: dict[str, Reader] = {
 # (`is_deterministic`) sin mirar el nombre del tipo.
 LLM_READERS: dict[str, LlmReader] = {
     "CERT_INGRESOS_220": certificados.leer_220,
+    "CERT_PENSION": certificados.leer_pension,
+    "CERT_BANCARIO": certificados.leer_bancario,
+    "CERT_DIVIDENDOS": certificados.leer_dividendos,
+    "CERT_ARRIENDO": certificados.leer_arriendo,
 }
 
 

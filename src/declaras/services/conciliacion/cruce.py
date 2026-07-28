@@ -110,6 +110,63 @@ TIPO_A_CLAVE: dict[str, tuple[_ClaveDocumento, ...]] = {
             omitir_en_cero=True,
         ),
     ),
+    # Registrar el lector no alcanza: sin clave, el certificado entra al expediente, se queda
+    # en la bandeja y su petición no se cierra nunca. Cada tipo con lector va con la suya.
+    "CERT_PENSION": (
+        _ClaveDocumento(
+            concepto=Concepto.PENSIONES,
+            campo_nit="pagador_nit",
+            campo_nombre="pagador_nombre",
+            # El total anual, que es lo que la exógena reporta agregado por pagador. Las doce
+            # mesadas son el detalle del que depende la exención mensual y no tienen
+            # contraparte en ninguna fila de la exógena, así que no cruzan: viajan en la
+            # lectura para que el caso las use.
+            campos_monto=("total_pagado",),
+            campo_retencion="retencion",
+        ),
+    ),
+    "CERT_BANCARIO": (
+        _ClaveDocumento(
+            concepto=Concepto.RENDIMIENTOS,
+            campo_nit="entidad_nit",
+            campo_nombre="entidad_nombre",
+            campos_monto=("rendimientos",),
+            campo_retencion="retencion",
+            # Acumulable de verdad: un banco emite un certificado por CDT o por producto, y
+            # dos certificados distintos del mismo banco son dos rendimientos, no el mismo
+            # dos veces. Es el caso para el que existe la bandera.
+            acumulable=True,
+        ),
+    ),
+    "CERT_DIVIDENDOS": (
+        _ClaveDocumento(
+            concepto=Concepto.DIVIDENDOS,
+            campo_nit="sociedad_nit",
+            campo_nombre="sociedad_nombre",
+            # Las dos bolsas suman el total distribuido, que es lo que la exógena reporta.
+            # La separación gravado/no gravado no tiene contraparte allá y viaja en la lectura.
+            campos_monto=("gravados", "no_gravados"),
+            campo_retencion="retencion",
+            # NO acumulable: una sociedad certifica el año una vez, y el sha es identidad de
+            # BYTES, así que el mismo certificado re-escaneado sumaría dividendos en silencio.
+            # Si de verdad hubo dos distribuciones con dos certificados, el segundo queda como
+            # rival anotado y lo decide el contador: subdeclarar es malo, pero subdeclarar
+            # avisando es preferible a duplicar callado.
+        ),
+    ),
+    "CERT_ARRIENDO": (
+        _ClaveDocumento(
+            concepto=Concepto.ARRENDAMIENTOS,
+            campo_nit="contraparte_nit",
+            campo_nombre="contraparte_nombre",
+            campos_monto=("canon_total",),
+            campo_retencion="retencion",
+            # Acumulable: un propietario con dos inmuebles administrados por la misma
+            # inmobiliaria recibe dos certificados de la misma contraparte, y son dos
+            # arriendos. La exógena los reporta agregados bajo el NIT de la inmobiliaria.
+            acumulable=True,
+        ),
+    ),
 }
 
 
