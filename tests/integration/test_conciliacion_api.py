@@ -1233,3 +1233,77 @@ async def test_todo_el_router_exige_llave_de_api(client, metodo, ruta):
     )
     assert respuesta.status_code == 401
     assert respuesta.json()["code"] == "UNAUTHORIZED"
+
+
+@pytest.fixture
+def lector_prepagada(monkeypatch):
+    """Doble del lector de prepagada, con el valor en los bytes como el del 220."""
+
+    def lector(content: bytes, *, anio_esperado: int | None = None, client: object = None):
+        _, nit, nombre, valor = content.decode().split("|")
+        campos = {
+            "anio_gravable": 2025,
+            "tipo_beneficio": "PREPAGADA",
+            "entidad_nit": nit,
+            "entidad_nombre": nombre,
+            "valor": int(valor),
+            "certificada": True,
+        }
+        return DocumentReading(
+            doc_type="CERT_PREPAGADA",
+            parser="doble",
+            content_sha256=hashlib.sha256(content).hexdigest(),
+            fields=[
+                ExtractedField(name=k, value=v, confidence=0.93) for k, v in campos.items()
+            ],
+        )
+
+    monkeypatch.setitem(registry.LLM_READERS, "CERT_PREPAGADA", lector)
+
+
+def _bytes_prepagada(valor: int, nit: str = "900222333") -> bytes:
+    return f"prepagada|{nit}|Aseguradora Demo|{valor}".encode()
+
+
+async def test_un_certificado_de_beneficio_baja_el_impuesto_del_210(client, lector_prepagada):
+    """El eslabón que faltaba: cinco extractores de beneficios producían lecturas y NADA las
+    llevaba al caso, así que la prepagada se leía, se pagaba la llamada al modelo y no se
+    declaraba. Acá se mide en la cifra: el impuesto tiene que BAJAR al subir el certificado.
+    """
+    case_id = await _conciliado(client)
+    await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
+    for partida in await _partidas(client, case_id):
+        if partida["estado"] == "DISCREPANCIA":
+            await client.post(
+                f"/v1/cases/{case_id}/conciliacion/{partida['id']}/resolver",
+                json={
+                    "decision": "USAR_DOCUMENTO",
+                    "motivo": "ERROR_DEL_TERCERO",
+                    "quien": "yo",
+                },
+            )
+    antes = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual"]["impuesto"]
+
+    await _subir(client, case_id, "CERT_PREPAGADA", "prep.pdf", _bytes_prepagada(4_800_000))
+    despues_r = await client.get(f"/v1/cases/{case_id}/liquidacion")
+    assert despues_r.status_code == 200, despues_r.text
+    despues = despues_r.json()["actual"]["impuesto"]
+
+    assert despues < antes, f"la prepagada no bajó el impuesto: {antes} → {despues}"
+
+
+async def test_el_mismo_certificado_de_beneficio_dos_veces_no_dobla_la_deduccion(
+    client, lector_prepagada
+):
+    """Un re-escaneo llega con otro hash, así que el sha no lo detecta. Se cuenta una vez y
+    el borrador lo dice: doblar una deducción en silencio es el error más caro del sistema."""
+    case_id = await _conciliado(client)
+    await _subir(client, case_id, "CERT_PREPAGADA", "a.pdf", _bytes_prepagada(4_800_000))
+    una = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual"]["impuesto"]
+
+    await _subir(client, case_id, "CERT_PREPAGADA", "b.pdf", _bytes_prepagada(4_800_000))
+    dos = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()["actual"]["impuesto"]
+    assert dos == una
+
+    borrador = (await client.get(f"/v1/cases/{case_id}/memoria")).text
+    assert "repetido" in borrador

@@ -91,7 +91,10 @@ def bloqueantes(liquidacion: Liquidacion) -> list[Flag]:
 
 
 def liquidar_conciliado(
-    caso: CasoTributario, partidas: Sequence[Partida], p: ParametrosAnio
+    caso: CasoTributario,
+    partidas: Sequence[Partida],
+    p: ParametrosAnio,
+    avisos_extra: Sequence[Flag] = (),
 ) -> Liquidacion:
     """El 210 de un caso conciliado: optimizado si se puede, con los avisos fusionados.
 
@@ -101,7 +104,10 @@ def liquidar_conciliado(
     el `if`, el optimizador se sigue negando en vez de devolver un óptimo de una base
     incompleta.
     """
-    extra = avisos(list(partidas))
+    # `avisos_extra` son los del camino de BENEFICIOS, que no pasa por partidas: la DIAN no
+    # reporta una medicina prepagada, así que no hay nada que cruzar y sus alertas no pueden
+    # salir del ensamble. Entran por acá porque este es el único canal hacia el borrador.
+    extra = [*avisos(list(partidas)), *avisos_extra]
     # La liquidación con las elecciones por defecto sirve para dos cosas: es la que se
     # publica cuando hay bloqueante, y es la que revela un bloqueante levantado por el
     # MOTOR (hoy no emite ninguno, pero el camino tiene que estar cubierto: la lección de
@@ -122,6 +128,7 @@ def liquidar_y_versionar(
     version: int = 1,
     momento: datetime | None = None,
     base_sin_documentos: bool = False,
+    avisos_extra: Sequence[Flag] = (),
 ) -> LiquidacionVersionada:
     """Liquida y rotula el resultado con su versión y su momento.
 
@@ -132,7 +139,7 @@ def liquidar_y_versionar(
     return LiquidacionVersionada(
         version=version,
         momento=momento if momento is not None else datetime.now(tz=UTC),
-        liquidacion=liquidar_conciliado(caso, partidas, parametros),
+        liquidacion=liquidar_conciliado(caso, partidas, parametros, avisos_extra),
         base_sin_documentos=base_sin_documentos,
     )
 

@@ -19,13 +19,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import ValidationError as PydanticValidationError
 
-from declaras.caso import CasoTributario, Contribuyente
+from declaras.caso import Beneficios, CasoTributario, Contribuyente
 from declaras.documents.models import DocumentReading
 from declaras.domain.case import Case, CaseDetail, CaseDocument, CaseStatus, FlagSeverity
 from declaras.domain.case_ports import CaseRepository
@@ -71,6 +71,7 @@ from declaras.services.conciliacion import (
 # conciliador a propósito, aunque sea privado: es el mismo con que se ordena la cola de
 # pendientes, y una segunda copia haría que la cola del contador y la lista del API se
 # ordenaran distinto sin que nadie lo note.
+from declaras.services.conciliacion.beneficios import beneficios_de
 from declaras.services.conciliacion.resolucion import _plata_en_juego
 
 log = get_logger(__name__)
@@ -174,6 +175,11 @@ class Estado:
     # cuatro caminos que dependen de `caso` —borrador, memoria, cerrar y la vigencia de la
     # liquidación— se niegan del mismo guard, en vez de cada uno por su cuenta.
     corresponde_al_expediente: bool = True
+    # Los avisos del camino de BENEFICIOS, que no pasa por partidas: la DIAN no reporta una
+    # medicina prepagada, así que no hay nada que cruzar y sus alertas no pueden salir del
+    # ensamble. Viajan en el estado porque se calculan donde se calcula el caso —el mismo
+    # sitio único— y de acá los toma quien liquida.
+    avisos_beneficios: list[Flag] = field(default_factory=list)
 
     @property
     def pendientes(self) -> list[Partida]:
@@ -320,13 +326,19 @@ class ConciliacionService:
                 revision=revision,
                 corresponde_al_expediente=False,
             )
-        caso, falta = self._intentar_caso(partidas, detail)
+        # Los beneficios se arman donde se arma el caso: es el mismo sitio único, así que no
+        # hay un camino que produzca un `Estado` con el caso de un lado y sus avisos del otro.
+        beneficios, avisos_beneficios = beneficios_de(
+            d.reading for d in detail.documents if d.reading is not None
+        )
+        caso, falta = self._intentar_caso(partidas, detail, beneficios)
         return Estado(
             partidas=partidas,
             huerfanas=huerfanas,
             caso=caso,
             falta=falta,
             revision=revision,
+            avisos_beneficios=avisos_beneficios,
         )
 
     async def resolver_partida(
@@ -811,6 +823,7 @@ class ConciliacionService:
             estado.partidas,
             p=self._parametros_de(estado.caso.anio_gravable),
             version=len(versiones) + 1,
+            avisos_extra=estado.avisos_beneficios,
         )
         if versiones and versiones[-1].liquidacion == candidata.liquidacion:
             return
@@ -923,7 +936,9 @@ class ConciliacionService:
         if exogena is None:  # pragma: no cover - `_reconstruir` ya se habría negado
             return
         solo_dian = autorresolver(abrir(exogena))
-        caso, _falta = self._intentar_caso(solo_dian, detail)
+        # El preliminar es la foto de la exógena SOLA, así que va sin beneficios: los
+        # certificados del cliente son justamente lo que todavía no llegó.
+        caso, _falta = self._intentar_caso(solo_dian, detail, Beneficios())
         if caso is None:
             return
         await self._repo.agregar_version(
@@ -942,7 +957,10 @@ class ConciliacionService:
         if estado.caso is None:
             return None
         return liquidar_conciliado(
-            estado.caso, estado.partidas, self._parametros_de(estado.caso.anio_gravable)
+            estado.caso,
+            estado.partidas,
+            self._parametros_de(estado.caso.anio_gravable),
+            estado.avisos_beneficios,
         )
 
     async def _de_hoy(self, case_id: UUID) -> tuple[Estado, Liquidacion]:
@@ -964,7 +982,7 @@ class ConciliacionService:
         return estado, liquidacion
 
     def _intentar_caso(
-        self, partidas: Sequence[Partida], detail: CaseDetail
+        self, partidas: Sequence[Partida], detail: CaseDetail, beneficios: Beneficios
     ) -> tuple[CasoTributario | None, str | None]:
         """El caso que el motor liquida, o el motivo por el que todavía no se puede armar.
 
@@ -987,6 +1005,11 @@ class ConciliacionService:
                     list(partidas),
                     contribuyente=self._contribuyente(detail),
                     anio_gravable=detail.case.tax_year,
+                    # Los beneficios NO salen del cruce: la DIAN no sabe que alguien paga
+                    # medicina prepagada, y ahí está su valor. Sin esta línea los cinco
+                    # certificados de beneficio se leen, se paga la llamada al modelo, y no
+                    # se declaran.
+                    beneficios=beneficios,
                 ),
                 None,
             )
