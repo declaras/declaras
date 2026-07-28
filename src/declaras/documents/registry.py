@@ -89,6 +89,10 @@ LLM_READERS: dict[str, LlmReader] = {
     "CERT_BANCARIO": certificados.leer_bancario,
     "CERT_DIVIDENDOS": certificados.leer_dividendos,
     "CERT_ARRIENDO": certificados.leer_arriendo,
+    # Los cinco de beneficios comparten extractor y se registran generados: cada uno lleva su
+    # `doc_type` esperado adentro, así que un certificado del beneficio equivocado falla en vez
+    # de entrar bajo otro tope.
+    **certificados.LECTORES_DE_BENEFICIO,
 }
 
 

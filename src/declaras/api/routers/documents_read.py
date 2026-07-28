@@ -23,6 +23,8 @@ from fastapi.concurrency import run_in_threadpool
 from declaras.api.deps import ApiKeyDep, ContainerDep
 from declaras.api.schemas import DocumentReadingResponse, ReadStoredDocumentRequest
 from declaras.documents.registry import supported_types
+from declaras.documents.sniff import DESCONOCIDO, detectar_tipo
+from declaras.domain.errors import ValidationError
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -43,7 +45,14 @@ async def list_supported_types(_auth: ApiKeyDep) -> list[str]:
 async def read_document(
     container: ContainerDep,
     _auth: ApiKeyDep,
-    doc_type: str = Form(..., description="Tipo de documento, ej. EXOGENA, RUT"),
+    doc_type: str | None = Form(
+        None,
+        description=(
+            "Tipo de documento, ej. EXOGENA, RUT. Opcional: si falta, un modelo lo clasifica. "
+            "Informarlo es preferible — el flujo del producto sabe qué documento pidió, y "
+            "decirlo elimina una fuente de error."
+        ),
+    ),
     file: UploadFile = File(...),
     anio_esperado: int | None = Form(
         None,
@@ -54,6 +63,18 @@ async def read_document(
     ),
 ) -> DocumentReadingResponse:
     content = await file.read()
+    if doc_type is None:
+        # Adivinar cuesta una llamada al modelo y solo se hace cuando nadie dijo qué es. Va al
+        # threadpool igual que la lectura: bloquea decenas de segundos y el event loop es
+        # compartido con el runner de jobs.
+        doc_type = await run_in_threadpool(detectar_tipo, content)
+        if doc_type == DESCONOCIDO:
+            # No se adivina un default: un certificado clasificado mal mete su cifra en el
+            # renglón equivocado del formulario, y preguntar cuesta solo una pregunta.
+            raise ValidationError(
+                "No se pudo identificar qué documento es. Indica el tipo explícitamente.",
+                supported=supported_types(),
+            )
     reading = await run_in_threadpool(
         container.document_reader.read,
         content=content,

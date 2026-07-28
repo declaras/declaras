@@ -275,14 +275,6 @@ SIN_LECTOR_TODAVIA = frozenset({
     # haber pagado 4x1000 sin tener rendimientos que la DIAN reporte, y entonces no hay
     # partida de rendimientos que dispare la petición del bancario.
     "CERT_GMF",
-    # Los cinco de beneficios: sus lectores los crea la tarea siguiente, y a medida que se
-    # registren tienen que SALIR de esta lista. Que estén acá es lo que hace visible que hoy
-    # una petición de prepagada no se cierra sola.
-    "CERT_PREPAGADA",
-    "CERT_INTERESES_VIVIENDA",
-    "CERT_ICETEX",
-    "CERT_AFC_FVP",
-    "CERT_DONACION_ESAL",
 })
 
 

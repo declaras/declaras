@@ -24,12 +24,19 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from declaras.documents.models import DocumentReading, ExtractedField, ReadingWarning
 from declaras.domain.errors import DocumentReaderUnavailableError, DocumentUnreadableError
 from declaras.extraccion.cert_arriendo import MotivoArriendo, extraer_arriendo_con_metadatos
 from declaras.extraccion.cert_bancario import MotivoBancario, extraer_bancario_con_metadatos
+from declaras.extraccion.cert_beneficio import (
+    DOC_TYPE_POR_TIPO,
+    TIPO_POR_DOC_TYPE,
+    MotivoBeneficio,
+    TipoBeneficio,
+    extraer_beneficio_con_metadatos,
+)
 from declaras.extraccion.cert_dividendos import (
     MotivoDividendos,
     extraer_dividendos_con_metadatos,
@@ -80,6 +87,7 @@ PARSER_PENSION = "cert_pension.llm.v1"
 PARSER_BANCARIO = "cert_bancario.llm.v1"
 PARSER_DIVIDENDOS = "cert_dividendos.llm.v1"
 PARSER_ARRIENDO = "cert_arriendo.llm.v1"
+PARSER_BENEFICIO = "cert_beneficio.llm.v1"
 
 # Las tres primeras causas son las de la base y se repiten en los cinco certificados; las de
 # abajo son las propias de cada uno. Cada pista dice qué puede hacer quien subió el archivo:
@@ -371,3 +379,101 @@ def leer_arriendo(
         # convierta en un pendiente del contador.
         warnings=[aviso] if aviso else None,
     )
+
+
+PISTAS_BENEFICIO: dict[MotivoBeneficio, str] = {
+    MotivoBeneficio.NO_ES_PDF: _PISTA_NO_ES_PDF,
+    MotivoBeneficio.SIN_SALIDA: _PISTA_SIN_SALIDA,
+    MotivoBeneficio.OTRO_ANIO: _PISTA_OTRO_ANIO,
+    MotivoBeneficio.TIPO_QUE_NO_COINCIDE: (
+        "El archivo no es el certificado que se pidió: parece ser de otro beneficio. "
+        "Revisa que sea el que corresponde a esta solicitud."
+    ),
+    MotivoBeneficio.SIN_VALOR: (
+        "El certificado no reporta ningún valor pagado en el año, así que no hay beneficio "
+        "que aplicar con este documento."
+    ),
+    MotivoBeneficio.SIN_CERTIFICAR: (
+        "El archivo no es un certificado formal de la entidad. Un extracto o una captura de "
+        "pantalla no sirve de soporte si la DIAN pregunta: hay que pedirle el certificado a "
+        "la entidad."
+    ),
+}
+
+
+def _leer_beneficio(
+    content: bytes,
+    *,
+    doc_type: str,
+    anio_esperado: int | None = None,
+    client: Any = None,
+) -> DocumentReading:
+    """Lee un certificado de beneficio, validando que sea del beneficio que se pidió.
+
+    Los cinco tipos comparten lector porque comparten extractor. El `doc_type` con el que se
+    despachó es el hint: si el documento resulta ser de otro beneficio, la extracción falla en
+    vez de meter la cifra bajo el tope equivocado.
+    """
+    esperado = TIPO_POR_DOC_TYPE[doc_type]
+    tipo, monto, ext = _traducir(
+        lambda: extraer_beneficio_con_metadatos(
+            content, tipo=esperado, anio_esperado=anio_esperado, client=client
+        ),
+        etiqueta="cert_beneficio",
+        parser=PARSER_BENEFICIO,
+        pistas=PISTAS_BENEFICIO,
+    )
+    return _lectura(
+        content,
+        doc_type=DOC_TYPE_POR_TIPO[tipo],
+        parser=PARSER_BENEFICIO,
+        campos={
+            "anio_gravable": ext.anio_gravable,
+            "tipo_beneficio": tipo.value,
+            "entidad_nit": ext.entidad_nit,
+            "entidad_nombre": ext.entidad,
+            "valor": monto.valor,
+            "certificada": ext.certificada,
+        },
+        confianza=monto.fuente.confianza or 0.0,
+    )
+
+
+class LlmReaderDeBeneficio(Protocol):
+    """Firma del lector generado: el `doc_type` esperado va cerrado adentro."""
+
+    def __call__(
+        self, content: bytes, *, anio_esperado: int | None = ..., client: Any = ...
+    ) -> DocumentReading: ...
+
+
+def _lector_de_beneficio(doc_type: str) -> LlmReaderDeBeneficio:
+    """El lector del registry para un beneficio: cierra sobre su `doc_type` esperado."""
+
+    def leer(
+        content: bytes, *, anio_esperado: int | None = None, client: Any = None
+    ) -> DocumentReading:
+        return _leer_beneficio(
+            content, doc_type=doc_type, anio_esperado=anio_esperado, client=client
+        )
+
+    leer.__name__ = f"leer_{doc_type.lower()}"
+    leer.__doc__ = f"Lee un {doc_type}."
+    return leer
+
+
+# Un lector por tipo, todos sobre el mismo extractor. Se arman acá y no a mano para que
+# agregar un beneficio sea una línea en `TipoBeneficio` y su entrada en `DOC_TYPE_POR_TIPO`.
+LECTORES_DE_BENEFICIO = {
+    doc_type: _lector_de_beneficio(doc_type) for doc_type in TIPO_POR_DOC_TYPE
+}
+
+__all__ = [
+    "LECTORES_DE_BENEFICIO",
+    "TipoBeneficio",
+    "leer_220",
+    "leer_arriendo",
+    "leer_bancario",
+    "leer_dividendos",
+    "leer_pension",
+]

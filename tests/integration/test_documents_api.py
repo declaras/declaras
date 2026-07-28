@@ -84,3 +84,40 @@ async def test_requiere_llave_de_api(client):
         headers={"X-API-Key": "invalida"},
     )
     assert response.status_code == 401
+
+
+async def test_sin_tipo_el_documento_se_clasifica_y_se_rutea(client, monkeypatch):
+    """El tipo es opcional: quien manda cuatro PDF juntos sin decir qué es cada uno no
+    tiene que adivinar. El camino normal SÍ informa el tipo — el flujo del producto sabe
+    qué documento pidió — y esto es para el otro caso."""
+    import declaras.api.routers.documents_read as router
+
+    monkeypatch.setattr(router, "detectar_tipo", lambda _content: "EXOGENA")
+    response = await client.post(
+        "/v1/documents/read",
+        files={
+            "file": (
+                "quien_sabe.xlsx",
+                build_exogena_xlsx(id_number="1122334455"),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["doc_type"] == "EXOGENA"
+
+
+async def test_un_documento_que_no_se_puede_clasificar_pide_el_tipo(client, monkeypatch):
+    """No se adivina un default. Clasificar mal mete la cifra en el renglón equivocado del
+    formulario; preguntar cuesta una pregunta."""
+    import declaras.api.routers.documents_read as router
+
+    monkeypatch.setattr(router, "detectar_tipo", lambda _content: router.DESCONOCIDO)
+    response = await client.post(
+        "/v1/documents/read",
+        files={"file": ("misterio.pdf", b"%PDF-1.7 algo", "application/octet-stream")},
+    )
+    assert response.status_code == 422
+    cuerpo = response.json()
+    assert cuerpo["code"] == "VALIDATION_ERROR"
+    assert "EXOGENA" in cuerpo["details"]["supported"]
