@@ -261,3 +261,52 @@ def test_los_cuatro_tipos_saben_cruzarse(doc_type):
 
     assert doc_type in TIPO_A_CLAVE
     assert TIPO_A_CLAVE[doc_type]
+
+
+# ──────────── el contrato entre lo que se pide y lo que se sabe leer ────────────
+
+# Tipos que el catálogo pide y que TODAVÍA nadie sabe leer: el contador los recibe y los lleva
+# a mano. Están enumerados y no tolerados en silencio, que es la diferencia entre una deuda
+# conocida y un documento que entra al expediente y no cierra su petición nunca.
+SIN_LECTOR_TODAVIA = frozenset({
+    # No es un certificado: es la prueba de un dependiente (registro civil, cédula del padre).
+    "SOPORTE_DEPENDIENTE",
+    # El GMF viene dentro del certificado bancario, pero se pide aparte porque alguien puede
+    # haber pagado 4x1000 sin tener rendimientos que la DIAN reporte, y entonces no hay
+    # partida de rendimientos que dispare la petición del bancario.
+    "CERT_GMF",
+    # Los cinco de beneficios: sus lectores los crea la tarea siguiente, y a medida que se
+    # registren tienen que SALIR de esta lista. Que estén acá es lo que hace visible que hoy
+    # una petición de prepagada no se cierra sola.
+    "CERT_PREPAGADA",
+    "CERT_INTERESES_VIVIENDA",
+    "CERT_ICETEX",
+    "CERT_AFC_FVP",
+    "CERT_DONACION_ESAL",
+})
+
+
+def test_todo_documento_que_el_catalogo_pide_se_sabe_leer_o_esta_declarado():
+    """El `tipo_documento` de una petición y la llave del registry son EL MISMO string.
+
+    Si divergen, el cliente manda el archivo correcto, el sistema no lo reconoce y la
+    petición no se cierra nunca — y nadie se entera, porque las dos tablas se leen bien por
+    separado. Ya pasó: el catálogo pedía `CERT_RENDIMIENTOS` y `CERT_ARRENDAMIENTO` mientras
+    los lectores se registraron como `CERT_BANCARIO` y `CERT_ARRIENDO`, y la petición de
+    pensión pedía un 220, que es justo el documento que el lector del 220 rechaza cuando
+    trae pensiones.
+    """
+    from declaras.services.conciliacion.peticiones import (
+        _BENEFICIOS,
+        _CERTIFICADO_POR_CONCEPTO,
+    )
+
+    pedidos = {b.tipo_documento for b in _BENEFICIOS} | {
+        c.tipo_documento for c in _CERTIFICADO_POR_CONCEPTO.values()
+    }
+    sin_lector = pedidos - set(registry.supported_types()) - SIN_LECTOR_TODAVIA
+    assert not sin_lector, (
+        f"El catálogo pide {sorted(sin_lector)} y nadie sabe leerlos: esos documentos entran "
+        "al expediente y su petición no se cierra. Registra el lector o decláralo en "
+        "SIN_LECTOR_TODAVIA."
+    )

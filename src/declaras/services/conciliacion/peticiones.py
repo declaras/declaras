@@ -302,20 +302,24 @@ _CERTIFICADO_POR_CONCEPTO: dict[Concepto, _Certificado] = {
         ),
     ),
     Concepto.PENSIONES: _Certificado(
-        tipo_documento="CERT_INGRESOS_220",
+        # NO es un 220: el lector del 220 RECHAZA un certificado que reporte pensiones
+        # (`Motivo220.TIENE_PENSIONES`), justamente porque la exención pensional es mensual
+        # y registrarla como laboral cambia el impuesto. Pedir un 220 acá mandaba a subir el
+        # único documento que el sistema iba a devolver.
+        tipo_documento="CERT_PENSION",
         razon=(
             "La exención pensional es POR MES, y la exógena solo trae el total del año: "
             "sin el certificado del pagador las mesadas se reparten parejas y un "
             "retroactivo queda mal repartido."
         ),
         copy_sugerido=(
-            "Hola. Para tu declaración de renta necesito el certificado de ingresos y "
-            "retenciones de {tercero} con el detalle de las mesadas del año. La parte "
-            "exenta de la pensión se calcula mes por mes, así que el total anual no basta."
+            "Hola. Para tu declaración de renta necesito el certificado de pensión de "
+            "{tercero} con el detalle de las mesadas del año. La parte exenta de la pensión "
+            "se calcula mes por mes, así que el total anual no basta."
         ),
     ),
     Concepto.RENDIMIENTOS: _Certificado(
-        tipo_documento="CERT_RENDIMIENTOS",
+        tipo_documento="CERT_BANCARIO",
         razon=(
             "El certificado del banco trae la retención practicada y el componente "
             "inflacionario, que la exógena no desagrega."
@@ -327,7 +331,7 @@ _CERTIFICADO_POR_CONCEPTO: dict[Concepto, _Certificado] = {
         ),
     ),
     Concepto.ARRENDAMIENTOS: _Certificado(
-        tipo_documento="CERT_ARRENDAMIENTO",
+        tipo_documento="CERT_ARRIENDO",
         razon=(
             "El canon reportado no dice qué retención se practicó ni qué costos "
             "(predial, administración, comisión) son descontables."
