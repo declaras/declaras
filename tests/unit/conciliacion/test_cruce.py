@@ -935,3 +935,89 @@ def test_incorporar_no_muta_la_lista_de_entrada():
     incorporar(partidas, _cert_220("900111222", 85_000_000))
     assert partidas[0].estado == EstadoPartida.SOLO_DIAN
     assert partidas[0].version_documento is None
+
+
+# ─────────── lo que no es una decision no entra a la cola ───────────
+#
+# La exogena trae tres clases de fila y solo una es una decision de declaracion. Antes las tres
+# abrian partida: en un caso real eran 26 renglones en la cola del contador, de los cuales 18 no
+# se declaran en ninguna casilla del 210.
+
+
+def _fila_libre(nit, detalle, monto, uso, nombre="ACME SAS"):
+    """Una fila como la escribe la exogena de verdad: sin codigo de concepto, con el veredicto
+    de la DIAN en la columna "Uso declaracion Sugerida"."""
+    import re
+
+    return {
+        "reporter_nit": nit,
+        "reporter_name": nombre,
+        "reported_id_number": "1234567",
+        "reported_name": "PRUEBA",
+        "concept": detalle,
+        "concept_code": None,
+        "amount": monto,
+        "retencion": 0,
+        "suggested_use": uso,
+        "form_lines": sorted({int(n) for n in re.findall(r"\bR(\d{1,3})\b", uso)}),
+    }
+
+
+def test_una_fila_que_solo_cuenta_para_un_tope_no_abre_partida():
+    """Los movimientos en cuentas no van a ninguna casilla del 210: la DIAN los usa solo para
+    el "Tope 4", que sirve para saber si la persona esta obligada a declarar. Ese tope ya se
+    calcula y se muestra aparte, asi que la fila no tiene ninguna decision pendiente.
+
+    Medido con un contribuyente real: $77.134.824 de movimientos que le pedian al contador
+    "decidir" que hacer con ellos.
+    """
+    partidas = abrir(
+        _exogena(
+            _fila_libre(
+                "890903938",
+                "Valor total de los movimientos en cuentas corrientes y de ahorros",
+                77_134_824,
+                "Tope 4: Consignaciones e inversiones",
+            ),
+            _fila("900111222", "5001", 50_000_000),
+        )
+    )
+    assert [p.concepto for p in partidas] == [Concepto.SALARIOS]
+
+
+def test_un_saldo_al_31_de_diciembre_nace_como_patrimonio_no_como_ingreso():
+    """La DIAN manda el saldo de las cuentas a "R29 Patrimonio Bruto". Es lo que la persona
+    TIENE, no lo que se GANO: clasificarlo como ingreso declararia como renta un saldo."""
+    [p] = abrir(
+        _exogena(
+            _fila_libre(
+                "890903938",
+                "Saldo cuentas bancarias (Titular Principal)",
+                1_998_635,
+                "Tope 2: Patrimonio | R29 Patrimonio Bruto",
+            )
+        )
+    )
+    assert p.concepto is Concepto.PATRIMONIO
+
+
+def test_una_fila_con_renglon_de_ingreso_y_de_patrimonio_a_la_vez_es_ingreso():
+    """Las cesantias abonadas van a R29 (son un saldo) Y a R32 (son ingreso laboral del año).
+    Manda el renglon de ingreso: si se clasificara como patrimonio, el ingreso desaparece."""
+    [p] = abrir(
+        _exogena(
+            _fila_libre(
+                "800170043",
+                "Valor total de las cesantías abonadas en el periodo",
+                2_284_722,
+                "Tope 1: Ingresos brutos | R29 Patrimonio Bruto | R32 Ingresos brutos",
+            )
+        )
+    )
+    assert p.concepto is not Concepto.PATRIMONIO
+
+
+def test_una_deuda_nace_como_deuda():
+    """R30 resta del patrimonio. No es ni ingreso ni activo."""
+    [p] = abrir(_exogena(_fila_libre("900111222", "Cuentas por pagar", 2_329_746, "R30 Deudas")))
+    assert p.concepto is Concepto.DEUDA

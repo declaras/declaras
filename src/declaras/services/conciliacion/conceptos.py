@@ -25,6 +25,16 @@ class Concepto(StrEnum):
     APORTES_PENSION = "APORTES_PENSION"
     RETENCION = "RETENCION"
     OTROS = "OTROS"
+    # Lo que la DIAN manda a R29 (patrimonio bruto) o R30 (deudas). NO es renta: es un saldo al
+    # 31 de diciembre. Clasificarlo como ingreso declararia como renta la plata que uno tiene.
+    PATRIMONIO = "PATRIMONIO"
+    DEUDA = "DEUDA"
+    # Filas que no van a NINGUN renglon del 210 y solo sirven para determinar si la persona esta
+    # obligada a declarar (los consumos con tarjeta, los movimientos en cuentas). No son una
+    # decision: su unica funcion ya la cumplen los cinco topes, que se calculan y se muestran
+    # aparte. Pedirle a alguien que decida que hacer con "77 millones de movimientos en cuentas"
+    # es pedirle una decision que no existe.
+    SOLO_PARA_TOPE = "SOLO_PARA_TOPE"
 
 
 # Tabla INCREMENTAL: solo los códigos verificados contra reportes reales de la exógena y el
@@ -42,6 +52,24 @@ _CODIGO_A_CONCEPTO: dict[str, Concepto] = {
     "5005": Concepto.ARRENDAMIENTOS,
     "5010": Concepto.RENDIMIENTOS,
     "5016": Concepto.OTROS,
+    # ── verificados contra un reporte real, citando lo que la DIAN dice de cada uno ──
+    #
+    # "Pagos por salarios" → "Tope 1: Ingresos brutos | R32 Ingresos brutos por rentas de
+    # trabajo (art. 103 E.T.)". El mismo renglón que el 5001. Sin este mapeo el salario del
+    # contribuyente nace CONCEPTO_DESCONOCIDO y el impuesto sale en cero: medido, $63.925.000
+    # de ingreso laboral invisibles.
+    "2276": Concepto.SALARIOS,
+    # "Activos Proveedores" / "Activos aportes parafiscales, salud, pensión y cesantías" /
+    # "Activos laborales reales consolidados" → todos "Tope 2: Patrimonio | R29 Patrimonio
+    # Bruto". Son saldos al 31 de diciembre, no renta del año.
+    "2201": Concepto.PATRIMONIO,
+    "2214": Concepto.PATRIMONIO,
+    "2215": Concepto.PATRIMONIO,
+    # "Cuentas por pagar de clientes" → "R30 Deudas". Resta del patrimonio.
+    "1315": Concepto.DEUDA,
+    # "Total consumos o gastos con tarjeta Crédito o Débito" → "Tope 3: Consumos TC", y ningún
+    # renglón del 210. Solo sirve para saber si está obligado a declarar.
+    "1023": Concepto.SOLO_PARA_TOPE,
 }
 
 

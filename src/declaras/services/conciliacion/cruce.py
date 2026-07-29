@@ -43,6 +43,11 @@ _NOTA_AJENAS = (
 # R132 del formulario 210: "Retenciones año gravable a declarar". Es el renglón con que la
 # columna "Uso declaración Sugerida" marca las filas que son retención practicada, no ingreso.
 _RENGLON_RETENCIONES = 132
+# Los renglones patrimoniales del 210: lo que la persona TIENE al 31 de diciembre, no lo que se
+# gano en el año. R29 patrimonio bruto, R30 deudas, R31 patrimonio liquido (que es la resta).
+_RENGLON_PATRIMONIO = 29
+_RENGLON_DEUDAS = 30
+_RENGLONES_PATRIMONIALES = frozenset({29, 30, 31})
 _RENGLON_RE = re.compile(r"\bR(\d{1,3})\b")
 
 
@@ -239,6 +244,14 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         codigo = str(valores.get("concept_code") or "").strip()
         concepto, nota_clasificacion = _concepto_de_fila(valores, codigo)
 
+        # Una fila que no va a ninguna casilla del 210 no abre partida. Su única función es
+        # determinar si la persona está obligada a declarar, y eso ya lo calculan los cinco
+        # topes, que se muestran aparte. Abrirla la ponía en la cola como una decisión que no
+        # existe: no hay ninguna respuesta posible a "qué hacemos con los movimientos de tu
+        # cuenta de ahorros", porque no se declaran en ningún renglón.
+        if concepto is Concepto.SOLO_PARA_TOPE:
+            continue
+
         # Una fila que el tercero no le reportó al titular es un hecho DISTINTO, no una
         # discrepancia de montos: se agrupa aparte para no contaminar la suma de lo que sí
         # es del titular, y nunca aportará hecho.
@@ -304,7 +317,29 @@ def _concepto_de_fila(
         if renglones == {_RENGLON_RETENCIONES}:
             return Concepto.RETENCION, None
         return None, _NOTA_RETENCION_AMBIGUA
-    return concepto_de_codigo(codigo), None
+
+    del_codigo = concepto_de_codigo(codigo)
+    if del_codigo is not None:
+        return del_codigo, None
+
+    # Sin código mapeado, el veredicto de la DIAN alcanza para clasificar por NATURALEZA, que es
+    # lo que decide si la fila es una decisión o no. Tres clases, y solo la primera es trabajo:
+    #
+    #   va a un renglón de ingreso    hay que decidir qué cifra rige y si es del titular
+    #   va solo a R29/R30             es un saldo al 31 de diciembre: se declara, no se decide
+    #   no va a ningún renglón        solo determina si está obligado a declarar
+    #
+    # Sin esto las tres abrían partida por igual: en un caso real, 26 renglones en la cola del
+    # contador de los cuales 18 no se declaran en ninguna casilla del 210.
+    if not renglones:
+        return Concepto.SOLO_PARA_TOPE, None
+    if renglones <= _RENGLONES_PATRIMONIALES:
+        # Una fila que toca los dos (el reporte de saldos bancarios manda a R29 y R30 a la vez)
+        # es un activo: el saldo de una cuenta suma al patrimonio, y R30 aparece porque el mismo
+        # formato de reporte cubre los sobregiros.
+        es_solo_deuda = renglones == {_RENGLON_DEUDAS}
+        return (Concepto.DEUDA if es_solo_deuda else Concepto.PATRIMONIO), None
+    return None, None
 
 
 def _renglones(valores: dict[str, object]) -> set[int]:
