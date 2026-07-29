@@ -35,9 +35,9 @@ def test_porcentaje_exacto_en_la_frontera():
     como cobertura de la frontera ,50 por si cambia la tarifa del YAML.
     """
     assert porcentaje(89_844_110, 0.35) == 31_445_439  # exacto 31.445.438,50 → sube
-    assert porcentaje(90, 0.35) == 32                  # exacto 31,50 → sube
-    assert porcentaje(50, 0.19) == 10                  # exacto 9,50 → sube
-    assert porcentaje(2, 0.25) == 1                    # exacto 0,50 → sube
+    assert porcentaje(90, 0.35) == 32  # exacto 31,50 → sube
+    assert porcentaje(50, 0.19) == 10  # exacto 9,50 → sube
+    assert porcentaje(2, 0.25) == 1  # exacto 0,50 → sube
     # Casos sin frontera: coincide con la aritmética obvia.
     assert porcentaje(10_000_000, 0.35) == 3_500_000
     assert porcentaje(25_719_090, 0.19) == 4_886_627
@@ -56,8 +56,8 @@ def test_carga_ag2025():
 def test_tabla_241():
     p = cargar(2025)
     assert impuesto_tabla_241(0, p) == 0
-    assert impuesto_tabla_241(54_280_910, p) == 0            # exacto en 1.090 UVT
-    assert impuesto_tabla_241(62_154_472, p) == 1_495_977    # tramo 19% (constante 0)
+    assert impuesto_tabla_241(54_280_910, p) == 0  # exacto en 1.090 UVT
+    assert impuesto_tabla_241(62_154_472, p) == 1_495_977  # tramo 19% (constante 0)
     assert impuesto_tabla_241(125_212_000, p) == 17_131_720  # tramo 28% + 116 UVT
     assert impuesto_tabla_241(118_978_944, p) == 15_386_464
 

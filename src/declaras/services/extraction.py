@@ -11,7 +11,7 @@ Reglas que se hacen cumplir aca y no en los adaptadores:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from declaras.config import Settings
 from declaras.domain.errors import (
@@ -78,19 +78,34 @@ class ExtractionService:
     # ─────────────────────────── casos de uso ───────────────────────────
 
     async def enqueue(self, request: ExtractionRequest, credentials: DianCredentials) -> Job:
-        """Crea el job y guarda la clave en memoria. Falla rapido si no hay intentos."""
+        """Guarda la clave y crea el job ya completo. Falla rapido si no hay intentos.
+
+        EL ORDEN IMPORTA Y NO ES OBVIO: el insert del job lo deja en cola, y desde ese
+        instante cualquier worker puede reclamarlo. Si la clave todavia no esta en la boveda,
+        el worker falla con "sesion expirada" en vez de intentar el login, y ese camino no
+        cuenta el intento fallido contra el bloqueo de la cuenta.
+        """
         await self._guard.assert_can_attempt(request.taxpayer.subject_key)
-        job = await self._jobs.create(
-            kind=JobKind.DIAN_EXTRACTION, request=request.model_dump(mode="json")
-        )
+
         # El plan se publica al encolar, no al empezar a trabajar: los pasos se conocen desde
         # que se hace la peticion, y asi la pantalla los pinta completos desde el primer
-        # instante en vez de irlos haciendo aparecer.
+        # instante en vez de irlos haciendo aparecer. Va en el mismo insert para que el job no
+        # exista a medias.
         pasos = _plan_de_trabajo(request)
-        await self._publicar(job.id, pasos)
-        job = job.model_copy(update={"progress": pasos})
+        job_id = uuid4()
+        await self._vault.put(job_id, credentials)
+        try:
+            job = await self._jobs.create(
+                kind=JobKind.DIAN_EXTRACTION,
+                request=request.model_dump(mode="json"),
+                job_id=job_id,
+                progress=[paso.model_dump(mode="json") for paso in pasos],
+            )
+        except Exception:
+            # Sin job que la consuma, la clave no puede quedarse en memoria.
+            await self._vault.discard(job_id)
+            raise
 
-        await self._vault.put(job.id, credentials)
         log.info(
             "extraction.enqueued",
             job_id=str(job.id),

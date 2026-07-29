@@ -39,7 +39,8 @@ def _verificar_pareja(liq: Liquidacion, caso: CasoTributario) -> None:
     if liq.anio_gravable != caso.anio_gravable:
         raise ValueError(
             f"La liquidación es del año gravable {liq.anio_gravable} pero el caso es "
-            f"del {caso.anio_gravable}: no son la misma declaración.")
+            f"del {caso.anio_gravable}: no son la misma declaración."
+        )
 
 
 def casillas(liq: Liquidacion) -> list[dict]:
@@ -47,10 +48,17 @@ def casillas(liq: Liquidacion) -> list[dict]:
     for codigo in ORDEN_CASILLAS:
         if codigo in liq.nodos:
             n = liq.nodos[codigo]
-            filas.append({"codigo": n.codigo, "etiqueta": n.etiqueta,
-                          "valor": n.valor, "valor_texto": _valor_texto(n),
-                          "formula": n.formula, "insumos": n.insumos,
-                          "regla": n.regla})
+            filas.append(
+                {
+                    "codigo": n.codigo,
+                    "etiqueta": n.etiqueta,
+                    "valor": n.valor,
+                    "valor_texto": _valor_texto(n),
+                    "formula": n.formula,
+                    "insumos": n.insumos,
+                    "regla": n.regla,
+                }
+            )
     return filas
 
 
@@ -78,6 +86,5 @@ def memoria_markdown(liq: Liquidacion, caso: CasoTributario) -> str:
     if liq.flags:
         lineas += ["## Alertas", ""]
         for fl in liq.flags:
-            lineas.append(
-                f"- **[{fl.severidad}] {fl.codigo}**: {_md_texto(fl.mensaje)}")
+            lineas.append(f"- **[{fl.severidad}] {fl.codigo}**: {_md_texto(fl.mensaje)}")
     return "\n".join(lineas)

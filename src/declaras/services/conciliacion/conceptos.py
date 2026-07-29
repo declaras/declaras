@@ -51,9 +51,7 @@ _CODIGO_A_CONCEPTO: dict[str, Concepto] = {
 # provisional: garantizaría que a_caso truene y escondería la partida de la cola) y
 # `a_caso` (un hecho de estos conceptos revienta). Cuando el motor cubra independientes,
 # sacar el concepto de acá enciende su mapeo y apaga la salida manual en el mismo commit.
-CONCEPTOS_FUERA_DEL_MOTOR = frozenset(
-    {Concepto.HONORARIOS, Concepto.SERVICIOS, Concepto.OTROS}
-)
+CONCEPTOS_FUERA_DEL_MOTOR = frozenset({Concepto.HONORARIOS, Concepto.SERVICIOS, Concepto.OTROS})
 
 
 def concepto_de_codigo(code: str) -> Concepto | None:

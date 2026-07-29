@@ -53,9 +53,7 @@ def test_cada_beneficio_mapea_su_valor_su_anio_y_su_confianza(tipo):
 def test_sin_hint_el_modelo_clasifica_y_lo_reporta():
     """La petición no siempre sabe qué mandó el cliente: sin hint, el tipo lo dice el
     documento y quien llama se entera de cuál fue."""
-    leido, monto = extraer_beneficio(
-        PDF, client=ClienteFalso(_extraccion(TipoBeneficio.ICETEX))
-    )
+    leido, monto = extraer_beneficio(PDF, client=ClienteFalso(_extraccion(TipoBeneficio.ICETEX)))
     assert leido is TipoBeneficio.ICETEX
     assert monto.valor == VALORES[TipoBeneficio.ICETEX]
 
@@ -77,9 +75,7 @@ def test_un_certificado_en_cero_no_se_acepta():
     """Registrar 0 dejaría la petición cerrada con el beneficio perdido, que es peor que
     volver a pedirlo: lo más probable es que el modelo no encontró la cifra."""
     with pytest.raises(ValueError) as exc:
-        extraer_beneficio(
-            PDF, client=ClienteFalso(_extraccion(TipoBeneficio.PREPAGADA, valor=0))
-        )
+        extraer_beneficio(PDF, client=ClienteFalso(_extraccion(TipoBeneficio.PREPAGADA, valor=0)))
     assert exc.value.motivo is MotivoBeneficio.SIN_VALOR
 
 

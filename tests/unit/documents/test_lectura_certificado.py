@@ -25,11 +25,20 @@ from tests.unit.documents.dobles import ClienteFalso, ClienteQueRevienta
 from tests.unit.documents.test_mensajes_visibles import _revisar_texto_de_usuario
 
 EXTRACCION = Extraccion220(
-    empleador_nit="900123456", empleador_nombre="ACME SAS",
-    salarios=85_000_000, cesantias_e_intereses=0, prima=0, bonificaciones=0,
-    total_ingresos_brutos=85_000_000, pensiones_de_jubilacion=0,
-    aportes_salud=3_400_000, aportes_pension=3_400_000, retencion=8_000_000,
-    anio_gravable=2025, numero_de_certificados=1, confianza=0.97,
+    empleador_nit="900123456",
+    empleador_nombre="ACME SAS",
+    salarios=85_000_000,
+    cesantias_e_intereses=0,
+    prima=0,
+    bonificaciones=0,
+    total_ingresos_brutos=85_000_000,
+    pensiones_de_jubilacion=0,
+    aportes_salud=3_400_000,
+    aportes_pension=3_400_000,
+    retencion=8_000_000,
+    anio_gravable=2025,
+    numero_de_certificados=1,
+    confianza=0.97,
 )
 
 

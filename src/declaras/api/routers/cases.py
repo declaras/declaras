@@ -256,9 +256,7 @@ async def upload_client_document(
             for s in subidos
         ]
     return UploadDocumentsResponse(
-        **CaseDetailResponse.from_domain(
-            detail, download_url_builder=_download_url
-        ).model_dump(),
+        **CaseDetailResponse.from_domain(detail, download_url_builder=_download_url).model_dump(),
         resultados=[ArchivoIncorporadoResponse.from_resultado(r) for r in resultados],
     )
 

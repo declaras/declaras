@@ -81,8 +81,7 @@ def test_los_topes_de_obligacion_del_yaml_y_de_tax_no_pueden_divergir():
     p = cargar(2025)
     assert p.tope_obligacion_ingresos_uvt == THRESHOLD_LIMITS_IN_UVT[ThresholdCode.INGRESOS]
     assert p.tope_obligacion_patrimonio_uvt == THRESHOLD_LIMITS_IN_UVT[ThresholdCode.PATRIMONIO]
-    for code in (ThresholdCode.MOVIMIENTOS, ThresholdCode.COMPRAS,
-                 ThresholdCode.CONSUMO_TARJETA):
+    for code in (ThresholdCode.MOVIMIENTOS, ThresholdCode.COMPRAS, ThresholdCode.CONSUMO_TARJETA):
         assert p.tope_obligacion_consignaciones_uvt == THRESHOLD_LIMITS_IN_UVT[code], code
 
 

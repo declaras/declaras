@@ -199,9 +199,7 @@ def test_el_220_mira_si_el_pdf_trae_varios_certificados_antes_que_el_anio():
     `anio_gravable` no es de nadie — rechazar por "es de otro año" mandaría a buscar un archivo
     que no existe en vez de a partir el que sí se tiene.
     """
-    ext = EXTRACCION_220.model_copy(
-        update={"numero_de_certificados": 2, "anio_gravable": 2024}
-    )
+    ext = EXTRACCION_220.model_copy(update={"numero_de_certificados": 2, "anio_gravable": 2024})
     with pytest.raises(Extraccion220InvalidaError) as exc:
         extraer_220(PDF, anio_esperado=2025, client=ClienteFalso(ext))
     assert exc.value.motivo is Motivo220.VARIOS_CERTIFICADOS

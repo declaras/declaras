@@ -77,9 +77,7 @@ def test_respuesta_negativa_apaga_la_peticion_para_siempre():
 
 def test_se_ordenan_por_ahorro_y_se_corta_por_umbral():
     ps = derivar_peticiones(PARTIDAS_VARIAS, [], CASO)
-    assert [p.ahorro_estimado for p in ps] == sorted(
-        (p.ahorro_estimado for p in ps), reverse=True
-    )
+    assert [p.ahorro_estimado for p in ps] == sorted((p.ahorro_estimado for p in ps), reverse=True)
     assert all(p.ahorro_estimado >= UMBRAL_AHORRO or p.ahorro_estimado == 0 for p in ps)
     assert len(ps) <= MAXIMO_PETICIONES
 
@@ -100,9 +98,7 @@ def test_el_beneficio_que_ya_esta_en_el_caso_no_se_vuelve_a_pedir():
     caso = CASO.model_copy(
         update={
             "beneficios": Beneficios(
-                medicina_prepagada=MontoDeclarado(
-                    valor=4_000_000, fuente=Fuente.manual("captura")
-                )
+                medicina_prepagada=MontoDeclarado(valor=4_000_000, fuente=Fuente.manual("captura"))
             )
         }
     )
@@ -212,8 +208,10 @@ def test_con_un_bloqueante_vivo_el_ahorro_no_se_promete_pero_la_lista_sale():
     incompleta. Ahora el optimizador se niega y el ahorro sale como no estimable — pero la
     lista NO se cae, porque es justo lo que el contador necesita para salir del bloqueo."""
     llevada = resolver(
-        partida_honorarios(), Decision.LLEVAR_A_MANO,
-        motivo=Motivo.FUERA_DEL_MOTOR, quien="contador",
+        partida_honorarios(),
+        Decision.LLEVAR_A_MANO,
+        motivo=Motivo.FUERA_DEL_MOTOR,
+        quien="contador",
     )
     ps = derivar_peticiones([*PARTIDAS_VARIAS, llevada], [], _caso_con_el_laboral())
     assert ps, "la lista sigue saliendo"

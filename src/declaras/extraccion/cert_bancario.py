@@ -84,9 +84,7 @@ def extraer_bancario(
     El GMF sale aparte porque no es ingreso: entra a los beneficios del caso
     (`Beneficios.gmf_pagado`), donde la ley deja deducir la mitad.
     """
-    return extraer_bancario_con_metadatos(
-        pdf_bytes, anio_esperado=anio_esperado, client=client
-    )[:2]
+    return extraer_bancario_con_metadatos(pdf_bytes, anio_esperado=anio_esperado, client=client)[:2]
 
 
 def extraer_bancario_con_metadatos(

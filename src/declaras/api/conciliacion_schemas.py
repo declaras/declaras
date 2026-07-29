@@ -197,9 +197,7 @@ class ConciliacionResumenResponse(BaseModel):
             total=len(estado.partidas),
             pendientes=len(estado.pendientes),
             por_estado=estado.por_estado,
-            resoluciones_sin_partida=[
-                PartidaResponse.from_partida(p) for p in estado.huerfanas
-            ],
+            resoluciones_sin_partida=[PartidaResponse.from_partida(p) for p in estado.huerfanas],
             falta_para_liquidar=estado.falta,
         )
 
@@ -217,9 +215,7 @@ class ConciliacionEstadoResponse(BaseModel):
         return cls(
             partidas=[PartidaResponse.from_partida(p) for p in estado.ordenadas],
             pendientes=[p.id for p in estado.pendientes],
-            resoluciones_sin_partida=[
-                PartidaResponse.from_partida(p) for p in estado.huerfanas
-            ],
+            resoluciones_sin_partida=[PartidaResponse.from_partida(p) for p in estado.huerfanas],
             falta_para_liquidar=estado.falta,
         )
 

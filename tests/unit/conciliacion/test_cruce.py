@@ -14,7 +14,9 @@ from declaras.services.conciliacion import (
 
 def _exogena(*filas: dict) -> DocumentReading:
     return DocumentReading(
-        doc_type="EXOGENA", parser="test", content_sha256="a" * 64,
+        doc_type="EXOGENA",
+        parser="test",
+        content_sha256="a" * 64,
         fields=[ExtractedField(name="id_number", value="1234567")],
         rows=[ExtractedRow(values=f, source=f"A{i}") for i, f in enumerate(filas, 20)],
     )
@@ -22,27 +24,38 @@ def _exogena(*filas: dict) -> DocumentReading:
 
 def _fila(nit, codigo, monto, retencion=0, reportado_a="1234567", nombre="ACME SAS"):
     return {
-        "reporter_nit": nit, "reporter_name": nombre,
-        "reported_id_number": reportado_a, "reported_name": "PRUEBA",
-        "concept": f"X (Concepto: {codigo})", "concept_code": codigo,
-        "amount": monto, "retencion": retencion,
+        "reporter_nit": nit,
+        "reporter_name": nombre,
+        "reported_id_number": reportado_a,
+        "reported_name": "PRUEBA",
+        "concept": f"X (Concepto: {codigo})",
+        "concept_code": codigo,
+        "amount": monto,
+        "retencion": retencion,
         "suggested_use": "Tope 1: Ingresos brutos | R32 Ingresos brutos",
     }
 
 
 def _cert_220(nit, salarios, retencion=0):
-    campos = {"empleador_nit": nit, "empleador_nombre": "ACME SAS",
-              "salarios": salarios, "retencion": retencion}
+    campos = {
+        "empleador_nit": nit,
+        "empleador_nombre": "ACME SAS",
+        "salarios": salarios,
+        "retencion": retencion,
+    }
     return DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="b" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="b" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
 
 
 def test_abrir_deja_todo_en_solo_dian():
     """Fase 1: solo hay DIAN. Nada puede estar conciliado todavía."""
-    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000),
-                              _fila("890903938", "5010", 8_000_000)))
+    partidas = abrir(
+        _exogena(_fila("900111222", "5001", 87_400_000), _fila("890903938", "5010", 8_000_000))
+    )
     assert {p.estado for p in partidas} == {EstadoPartida.SOLO_DIAN}
     assert {p.concepto for p in partidas} == {Concepto.SALARIOS, Concepto.RENDIMIENTOS}
 
@@ -75,8 +88,9 @@ def test_discrepancia_solo_en_la_retencion():
 
 
 def test_dos_codigos_del_mismo_concepto_son_una_partida():
-    partidas = abrir(_exogena(_fila("901222333", "5002", 10_000_000),
-                              _fila("901222333", "5003", 4_000_000)))
+    partidas = abrir(
+        _exogena(_fila("901222333", "5002", 10_000_000), _fila("901222333", "5003", 4_000_000))
+    )
     assert len(partidas) == 1
     assert partidas[0].version_dian.monto == 14_000_000
     assert sorted(partidas[0].codigos_crudos) == ["5002", "5003"]
@@ -120,11 +134,19 @@ def test_id_de_partida_es_estable_y_por_concepto():
 def test_el_lado_documento_del_220_suma_todos_los_pagos_laborales():
     """El 5001 de la exógena agrega salarios, prima y cesantías; comparar contra
     solo `salarios` marcaría discrepancia falsa a cualquiera que recibió prima."""
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
-              "salarios": 80_000_000, "cesantias_e_intereses": 3_000_000,
-              "prima": 4_000_000, "bonificaciones": 400_000, "retencion": 0}
+    campos = {
+        "empleador_nit": "900111222",
+        "empleador_nombre": "ACME SAS",
+        "salarios": 80_000_000,
+        "cesantias_e_intereses": 3_000_000,
+        "prima": 4_000_000,
+        "bonificaciones": 400_000,
+        "retencion": 0,
+    }
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="e" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="e" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
@@ -137,12 +159,13 @@ def test_documento_sin_nit_nace_suelto_y_con_nota():
     """Una lectura sin NIT no tiene llave: no se adivina a qué tercero pertenece."""
     campos = {"empleador_nombre": "ACME SAS", "salarios": 85_000_000, "retencion": 0}
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="c" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="c" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     resultado = incorporar(abrir(_exogena(_fila("900111222", "5001", 85_000_000))), doc)
-    assert [p.estado for p in resultado] == [EstadoPartida.SOLO_DIAN,
-                                             EstadoPartida.SOLO_DOCUMENTO]
+    assert [p.estado for p in resultado] == [EstadoPartida.SOLO_DIAN, EstadoPartida.SOLO_DOCUMENTO]
     assert "no se pudo cruzar" in (resultado[1].nota or "")
 
 
@@ -190,8 +213,12 @@ def test_titular_y_ajena_del_mismo_tercero_tienen_ids_distintos():
     """Dos partidas con el mismo id son indistinguibles para cualquier indexado
     (resoluciones, refrescar, Fuente.conciliacion): una de las dos desaparece según
     el orden del XLSX. El id deriva del mismo discriminante completo que la llave."""
-    partidas = abrir(_exogena(_fila("900111222", "5001", 50_000_000),
-                              _fila("900111222", "5001", 9_000_000, reportado_a="99999")))
+    partidas = abrir(
+        _exogena(
+            _fila("900111222", "5001", 50_000_000),
+            _fila("900111222", "5001", 9_000_000, reportado_a="99999"),
+        )
+    )
     assert len(partidas) == 2
     assert len({p.id for p in partidas}) == 2
     por_destino = {p.reportado_a: p for p in partidas}
@@ -202,8 +229,12 @@ def test_titular_y_ajena_del_mismo_tercero_tienen_ids_distintos():
 def test_ajenas_a_personas_distintas_no_se_suman():
     """9M reportados a una cédula y 7M a otra son plata de dos personas distintas:
     no pueden quedar bajo una sola partida (ni una sola resolución)."""
-    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999"),
-                              _fila("901999888", "5001", 7_000_000, reportado_a="88888")))
+    partidas = abrir(
+        _exogena(
+            _fila("901999888", "5001", 9_000_000, reportado_a="99999"),
+            _fila("901999888", "5001", 7_000_000, reportado_a="88888"),
+        )
+    )
     assert len(partidas) == 2
     assert sorted(p.version_dian.monto for p in partidas) == [7_000_000, 9_000_000]
     assert len({p.id for p in partidas}) == 2
@@ -234,8 +265,10 @@ def test_un_texto_igual_a_un_concepto_no_se_cuela_en_la_partida_mapeada():
     disfrazada["concept_code"] = None
     partidas = abrir(_exogena(_fila("900111222", "5001", 50_000_000), disfrazada))
     assert len(partidas) == 2
-    assert {p.estado for p in partidas} == {EstadoPartida.SOLO_DIAN,
-                                            EstadoPartida.CONCEPTO_DESCONOCIDO}
+    assert {p.estado for p in partidas} == {
+        EstadoPartida.SOLO_DIAN,
+        EstadoPartida.CONCEPTO_DESCONOCIDO,
+    }
     assert sorted(p.version_dian.monto for p in partidas) == [41_000_000, 50_000_000]
     assert len({p.id for p in partidas}) == 2
 
@@ -278,8 +311,12 @@ def test_con_dos_gemelas_ajenas_el_certificado_no_elige_por_orden():
     """Con dos gemelas ajenas, pegarse a la primera del XLSX sería salida dependiente
     del orden. El certificado nace aparte, anotado, las ajenas quedan intactas y TODAS
     conservan la marca de que llegó un certificado que podría corresponderles."""
-    partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999"),
-                              _fila("901999888", "5001", 7_000_000, reportado_a="88888")))
+    partidas = abrir(
+        _exogena(
+            _fila("901999888", "5001", 9_000_000, reportado_a="99999"),
+            _fila("901999888", "5001", 7_000_000, reportado_a="88888"),
+        )
+    )
     resultado = incorporar(partidas, _cert_220("901999888", 9_000_000))
     invertido = incorporar(list(reversed(partidas)), _cert_220("901999888", 9_000_000))
     assert len(resultado) == 3
@@ -287,8 +324,9 @@ def test_con_dos_gemelas_ajenas_el_certificado_no_elige_por_orden():
     assert nueva.version_documento.monto == 9_000_000
     assert "a mano" in (nueva.nota or "")
     assert all(p.version_documento is None for p in resultado if p.reportado_a is not None)
-    assert all(p.documentos_por_cruzar == ["b" * 12]
-               for p in resultado if p.reportado_a is not None)
+    assert all(
+        p.documentos_por_cruzar == ["b" * 12] for p in resultado if p.reportado_a is not None
+    )
     [nueva_inv] = [p for p in invertido if p.estado == EstadoPartida.SOLO_DOCUMENTO]
     assert nueva_inv == nueva  # el desenlace no depende del orden del XLSX
 
@@ -341,8 +379,11 @@ def test_con_una_ajena_el_220_completo_no_pierde_el_salario():
     partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
     resultado = incorporar(partidas, _cert_220_completo("a", nit="901999888"))
     por_concepto = {p.concepto: p for p in resultado if p.reportado_a is None}
-    assert set(por_concepto) == {Concepto.SALARIOS, Concepto.APORTES_SALUD,
-                                 Concepto.APORTES_PENSION}
+    assert set(por_concepto) == {
+        Concepto.SALARIOS,
+        Concepto.APORTES_SALUD,
+        Concepto.APORTES_PENSION,
+    }
     assert por_concepto[Concepto.SALARIOS].estado == EstadoPartida.SOLO_DOCUMENTO
     assert por_concepto[Concepto.SALARIOS].version_documento.monto == 85_000_000
 
@@ -366,10 +407,18 @@ def test_las_marcas_estructurales_sobreviven_el_viaje_de_ida_y_vuelta():
     ninguna marca estructural: `reportado_a`, `versiones_documento` (con su ORDEN),
     `version_que_rige` y `documentos_por_cruzar`. T5 persiste y refresca sobre ellas."""
     partidas = abrir(_exogena(_fila("901999888", "5001", 9_000_000, reportado_a="99999")))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "a", nit="901999888", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "b", nit="901999888", salarios=87_000_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas,
+        _cert_220_completo(
+            "a", nit="901999888", salarios=85_000_000, aportes_salud=0, aportes_pension=0
+        ),
+    )
+    partidas = incorporar(
+        partidas,
+        _cert_220_completo(
+            "b", nit="901999888", salarios=87_000_000, aportes_salud=0, aportes_pension=0
+        ),
+    )
     ajena = next(p for p in partidas if p.reportado_a is not None)
     propia = next(p for p in partidas if p.reportado_a is None)
     assert ajena.documentos_por_cruzar == ["a" * 12, "b" * 12]
@@ -379,10 +428,12 @@ def test_las_marcas_estructurales_sobreviven_el_viaje_de_ida_y_vuelta():
         assert revivida == p
         assert list(revivida.versiones_documento) == list(p.versiones_documento)
         reescrita = revivida.model_copy(update={"nota": "reescrita por refrescar"})
-        assert (reescrita.reportado_a, reescrita.version_que_rige,
-                reescrita.documentos_por_cruzar, reescrita.versiones_documento) == (
-            p.reportado_a, p.version_que_rige,
-            p.documentos_por_cruzar, p.versiones_documento)
+        assert (
+            reescrita.reportado_a,
+            reescrita.version_que_rige,
+            reescrita.documentos_por_cruzar,
+            reescrita.versiones_documento,
+        ) == (p.reportado_a, p.version_que_rige, p.documentos_por_cruzar, p.versiones_documento)
 
 
 def test_nit_con_puntos_y_dv_cruza_con_el_nit_limpio():
@@ -403,7 +454,7 @@ def test_nit_entregado_como_numero_por_openpyxl_se_normaliza():
 
 
 def test_la_identificacion_reportada_se_compara_normalizada():
-    """"1.234.567" y "1234567" son la misma cédula: no es una fila ajena."""
+    """ "1.234.567" y "1234567" son la misma cédula: no es una fila ajena."""
     [p] = abrir(_exogena(_fila("900111222", "5001", 5_000_000, reportado_a="1.234.567")))
     assert p.reportado_a is None
     assert p.estado == EstadoPartida.SOLO_DIAN
@@ -415,17 +466,27 @@ def test_el_220_aporta_tambien_los_aportes_obligatorios():
     (~2M de impuesto de más). El 220 del empleador es la fuente autoritativa; en la
     exógena la EPS/AFP reporta con su PROPIO NIT, así que esas filas no cruzan por el NIT
     del empleador y corroboran bajo sus propias partidas."""
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
-              "salarios": 85_000_000, "retencion": 8_000_000,
-              "aportes_salud": 3_400_000, "aportes_pension": 3_600_000}
+    campos = {
+        "empleador_nit": "900111222",
+        "empleador_nombre": "ACME SAS",
+        "salarios": 85_000_000,
+        "retencion": 8_000_000,
+        "aportes_salud": 3_400_000,
+        "aportes_pension": 3_600_000,
+    }
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="f" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="f" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     partidas = incorporar(abrir(_exogena()), doc)
     por_concepto = {p.concepto: p for p in partidas}
-    assert set(por_concepto) == {Concepto.SALARIOS, Concepto.APORTES_SALUD,
-                                 Concepto.APORTES_PENSION}
+    assert set(por_concepto) == {
+        Concepto.SALARIOS,
+        Concepto.APORTES_SALUD,
+        Concepto.APORTES_PENSION,
+    }
     assert por_concepto[Concepto.APORTES_SALUD].version_documento.monto == 3_400_000
     assert por_concepto[Concepto.APORTES_PENSION].version_documento.monto == 3_600_000
     assert por_concepto[Concepto.APORTES_SALUD].estado == EstadoPartida.SOLO_DOCUMENTO
@@ -434,11 +495,18 @@ def test_el_220_aporta_tambien_los_aportes_obligatorios():
 
 def test_aportes_presentes_pero_en_cero_no_abren_partida():
     """En 0 no hay hecho que perder ni pregunta que hacerle al contador."""
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
-              "salarios": 85_000_000, "retencion": 0,
-              "aportes_salud": 0, "aportes_pension": 0}
+    campos = {
+        "empleador_nit": "900111222",
+        "empleador_nombre": "ACME SAS",
+        "salarios": 85_000_000,
+        "retencion": 0,
+        "aportes_salud": 0,
+        "aportes_pension": 0,
+    }
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="f" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="f" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     partidas = incorporar(abrir(_exogena()), doc)
@@ -461,7 +529,9 @@ def test_reincorporar_un_documento_sin_nit_no_duplica_la_plata():
     el reenvío empareja por id en vez de anexar."""
     campos = {"empleador_nombre": "ACME SAS", "salarios": 85_000_000, "retencion": 0}
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="c" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="c" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     resultado = incorporar(incorporar([], doc), doc)
@@ -501,9 +571,9 @@ def test_mezcla_sin_nit_y_luego_con_nit_no_confirma_la_suelta_en_silencio():
     como si fueran dos hechos independientes.)"""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
     partidas = incorporar(
-        partidas, _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(
-        partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
+        partidas, _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0)
+    )
+    partidas = incorporar(partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
     assert len(partidas) == 2
     conciliada = next(p for p in partidas if p.id == "900111222:SALARIOS")
     assert conciliada.estado == EstadoPartida.COINCIDE
@@ -512,16 +582,30 @@ def test_mezcla_sin_nit_y_luego_con_nit_no_confirma_la_suelta_en_silencio():
     assert "no se pudo cruzar" in (suelta.nota or "")
 
 
-def _cert_220_completo(sha: str, *, nit="900111222", nombre="ACME SAS", salarios=85_000_000,
-                       retencion=0, aportes_salud=3_400_000,
-                       aportes_pension=3_600_000) -> DocumentReading:
-    campos = {"empleador_nit": nit, "empleador_nombre": nombre,
-              "salarios": salarios, "retencion": retencion,
-              "aportes_salud": aportes_salud, "aportes_pension": aportes_pension}
+def _cert_220_completo(
+    sha: str,
+    *,
+    nit="900111222",
+    nombre="ACME SAS",
+    salarios=85_000_000,
+    retencion=0,
+    aportes_salud=3_400_000,
+    aportes_pension=3_600_000,
+) -> DocumentReading:
+    campos = {
+        "empleador_nit": nit,
+        "empleador_nombre": nombre,
+        "salarios": salarios,
+        "retencion": retencion,
+        "aportes_salud": aportes_salud,
+        "aportes_pension": aportes_pension,
+    }
     if not nit:
         del campos["empleador_nit"]  # como un OCR que no encontró el NIT
     return DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256=sha * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
 
@@ -550,10 +634,8 @@ def test_versiones_con_las_mismas_cifras_no_son_rivales():
     conservadas. (Solo aplica con NIT: sin NIT hasta cifras iguales podrían ser dos
     empleadores, y ahí sí se anota — ver el test de los dos escaneos sin NIT.)"""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    partidas = incorporar(
-        partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(
-        partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
     [p] = partidas
     assert p.estado == EstadoPartida.COINCIDE
     assert p.nota is None
@@ -563,10 +645,12 @@ def test_versiones_con_las_mismas_cifras_no_son_rivales():
 
 def test_entre_versiones_rivales_rige_la_ultima():
     partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "a", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "b", salarios=87_400_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
+    )
+    partidas = incorporar(
+        partidas, _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
+    )
     [salarios] = [p for p in partidas if p.concepto is Concepto.SALARIOS]
     assert salarios.version_documento.monto == 87_400_000
     assert salarios.estado == EstadoPartida.COINCIDE  # la que rige es la que la DIAN corrobora
@@ -579,17 +663,17 @@ def test_la_huella_de_rivales_es_estructural_y_dice_cual_rigio():
     "hubo rivales y rigió este" no puede vivir en la nota —texto libre que refrescar de T5
     sobrescribe—: es la huella de auditoría de por qué se declaró esa cifra."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "a", salarios=85_000_000, aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "b", salarios=87_400_000, aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("a", salarios=85_000_000, aportes_salud=0, aportes_pension=0)
+    )
+    partidas = incorporar(
+        partidas, _cert_220_completo("b", salarios=87_400_000, aportes_salud=0, aportes_pension=0)
+    )
     [p] = [x for x in partidas if x.concepto is Concepto.SALARIOS]
     assert p.estado == EstadoPartida.COINCIDE
     assert p.version_que_rige == "b" * 12
     assert set(p.versiones_documento) == {"a" * 12, "b" * 12}
-    reescrita = p.model_copy(
-        update={"nota": "los valores cambiaron desde la resolución anterior"}
-    )
+    reescrita = p.model_copy(update={"nota": "los valores cambiaron desde la resolución anterior"})
     assert reescrita.version_que_rige == "b" * 12  # sobrevive al refrescar de T5
 
 
@@ -605,10 +689,8 @@ def test_la_cifra_publicada_siempre_dice_que_documento_la_respalda():
     assert p.version_que_rige == "b" * 12
     # Cifras iguales en bytes distintos: sin rivalidad (F4), pero el respaldo no se pierde.
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    partidas = incorporar(
-        partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(
-        partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo("a", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(partidas, _cert_220_completo("b", aportes_salud=0, aportes_pension=0))
     [q] = partidas
     assert q.nota is None
     assert q.version_que_rige == "b" * 12
@@ -660,8 +742,9 @@ def test_nuevo_contra_reenvio_se_distingue_por_membresia_no_por_orden():
     assert p.version_que_rige == "b" * 12  # la última NUEVA, no la última procesada
     # El reorden que JSONB aplica al persistir no cambia la semántica: el reenvío del
     # documento viejo sigue siendo no-op y el respaldo sigue identificado.
-    reordenada = p.model_copy(update={"versiones_documento": dict(
-        sorted(p.versiones_documento.items(), reverse=True))})
+    reordenada = p.model_copy(
+        update={"versiones_documento": dict(sorted(p.versiones_documento.items(), reverse=True))}
+    )
     [otra] = incorporar([reordenada], viejo)
     assert otra == reordenada
     assert otra.version_documento.monto == 87_400_000
@@ -694,16 +777,26 @@ def test_un_tipo_acumulable_suma_documentos_distintos_sin_importar_el_orden(monk
     from declaras.services.conciliacion import cruce
 
     clave = cruce._ClaveDocumento(
-        concepto=Concepto.RENDIMIENTOS, campo_nit="banco_nit", campo_nombre="banco_nombre",
-        campos_monto=("rendimientos",), campo_retencion="retencion", acumulable=True,
+        concepto=Concepto.RENDIMIENTOS,
+        campo_nit="banco_nit",
+        campo_nombre="banco_nombre",
+        campos_monto=("rendimientos",),
+        campo_retencion="retencion",
+        acumulable=True,
     )
     monkeypatch.setitem(cruce.TIPO_A_CLAVE, "CERT_BANCARIO_TEST", (clave,))
 
     def cert(sha: str, monto: int) -> DocumentReading:
-        campos = {"banco_nit": "890903938", "banco_nombre": "BANCO X",
-                  "rendimientos": monto, "retencion": 0}
+        campos = {
+            "banco_nit": "890903938",
+            "banco_nombre": "BANCO X",
+            "rendimientos": monto,
+            "retencion": 0,
+        }
         return DocumentReading(
-            doc_type="CERT_BANCARIO_TEST", parser="test", content_sha256=sha * 64,
+            doc_type="CERT_BANCARIO_TEST",
+            parser="test",
+            content_sha256=sha * 64,
             fields=[ExtractedField(name=k, value=v) for k, v in campos.items()],
         )
 
@@ -726,10 +819,12 @@ def test_sin_nit_cada_version_lleva_su_nombre_y_la_partida_muestra_el_publicado(
     último ('ACME S.A.S. — 30.000.000' cuando el certificado de ACME dice 50M, y BETA
     LTDA no aparecía en ninguna parte). El nombre viaja POR VERSIÓN (`Valor.tercero`) y
     la partida se presenta con el de la versión publicada."""
-    a = _cert_220_completo("a", nit="", nombre="ACME S.A.S.", salarios=50_000_000,
-                           aportes_salud=0, aportes_pension=0)
-    b = _cert_220_completo("b", nit="", nombre="BETA LTDA", salarios=30_000_000,
-                           aportes_salud=0, aportes_pension=0)
+    a = _cert_220_completo(
+        "a", nit="", nombre="ACME S.A.S.", salarios=50_000_000, aportes_salud=0, aportes_pension=0
+    )
+    b = _cert_220_completo(
+        "b", nit="", nombre="BETA LTDA", salarios=30_000_000, aportes_salud=0, aportes_pension=0
+    )
     [p] = incorporar(incorporar([], a), b)
     assert p.versiones_documento["a" * 12].tercero == "ACME S.A.S."
     assert p.versiones_documento["b" * 12].tercero == "BETA LTDA"
@@ -746,15 +841,21 @@ def test_un_tipo_acumulable_sin_nit_no_suma_documentos(monkeypatch):
     from declaras.services.conciliacion import cruce
 
     clave = cruce._ClaveDocumento(
-        concepto=Concepto.RENDIMIENTOS, campo_nit="banco_nit", campo_nombre="banco_nombre",
-        campos_monto=("rendimientos",), campo_retencion="retencion", acumulable=True,
+        concepto=Concepto.RENDIMIENTOS,
+        campo_nit="banco_nit",
+        campo_nombre="banco_nombre",
+        campos_monto=("rendimientos",),
+        campo_retencion="retencion",
+        acumulable=True,
     )
     monkeypatch.setitem(cruce.TIPO_A_CLAVE, "CERT_BANCARIO_TEST", (clave,))
 
     def cert(sha: str) -> DocumentReading:
         campos = {"banco_nombre": "BANCO X", "rendimientos": 40_000_000, "retencion": 0}
         return DocumentReading(
-            doc_type="CERT_BANCARIO_TEST", parser="test", content_sha256=sha * 64,
+            doc_type="CERT_BANCARIO_TEST",
+            parser="test",
+            content_sha256=sha * 64,
             fields=[ExtractedField(name=k, value=v) for k, v in campos.items()],
         )
 
@@ -778,10 +879,17 @@ def test_los_montos_no_enteros_cierran_por_pesos_no_por_truncamiento():
 def test_con_campos_repetidos_gana_el_primero_como_en_field():
     """`DocumentReading.field()` devuelve el PRIMER campo con ese nombre; el conciliador
     tiene que leer el mismo, o el NIT saldría de un campo y el monto de otro."""
-    campos = [("empleador_nit", "900111222"), ("empleador_nombre", "ACME SAS"),
-              ("salarios", 85_000_000), ("salarios", 1_000_000), ("retencion", 0)]
+    campos = [
+        ("empleador_nit", "900111222"),
+        ("empleador_nombre", "ACME SAS"),
+        ("salarios", 85_000_000),
+        ("salarios", 1_000_000),
+        ("retencion", 0),
+    ]
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="9" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="9" * 64,
         fields=[ExtractedField(name=k, value=v) for k, v in campos],
     )
     [p] = incorporar([], doc)

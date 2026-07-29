@@ -130,9 +130,7 @@ def extraer_beneficio_con_metadatos(
             client=client,
         )
     except ExtraccionInvalidaError as exc:
-        raise ExtraccionBeneficioInvalidaError(
-            MotivoBeneficio(exc.motivo), str(exc)
-        ) from exc
+        raise ExtraccionBeneficioInvalidaError(MotivoBeneficio(exc.motivo), str(exc)) from exc
 
     if tipo is not None and ext.tipo is not tipo:
         # Gana el documento. El caso probable no es que el modelo se equivoque de clase —son
@@ -140,8 +138,7 @@ def extraer_beneficio_con_metadatos(
         # equivocada, y aceptar el hint metería el certificado en la casilla de otro tope.
         raise ExtraccionBeneficioInvalidaError(
             MotivoBeneficio.TIPO_QUE_NO_COINCIDE,
-            f"Se esperaba un certificado de {tipo.value} y el documento es de "
-            f"{ext.tipo.value}.",
+            f"Se esperaba un certificado de {tipo.value} y el documento es de {ext.tipo.value}.",
         )
 
     if ext.valor <= 0:
@@ -165,9 +162,7 @@ def extraer_beneficio_con_metadatos(
 
     monto = MontoDeclarado(
         valor=ext.valor,
-        fuente=Fuente.documento(
-            f"cert_{ext.tipo.value.lower()}", doc_id, confianza=ext.confianza
-        ),
+        fuente=Fuente.documento(f"cert_{ext.tipo.value.lower()}", doc_id, confianza=ext.confianza),
     )
     return ext.tipo, monto, ext
 

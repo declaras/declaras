@@ -219,8 +219,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "renta exenta hasta el 30% del ingreso; el certificado lo emite la entidad."
         ),
         pregunta_previa=(
-            "¿Hiciste aportes voluntarios a una cuenta AFC o a un fondo de pensiones "
-            "voluntarias?"
+            "¿Hiciste aportes voluntarios a una cuenta AFC o a un fondo de pensiones voluntarias?"
         ),
         copy_sugerido=(
             "Hola. Para tu declaración de renta: si hiciste aportes a una cuenta AFC o a "
@@ -365,9 +364,10 @@ _CERTIFICADO_POR_CONCEPTO: dict[Concepto, _Certificado] = {
 #   HONORARIOS/SERVICIOS/OTROS  el motor no los liquida (CONCEPTOS_FUERA_DEL_MOTOR): el
 #                        certificado no los haría entrar al 210, y la salida de esas
 #                        partidas es LLEVAR_A_MANO en la cola de pendientes.
-_SIN_CERTIFICADO: frozenset[Concepto] = frozenset(
-    {Concepto.RETENCION, Concepto.APORTES_SALUD, Concepto.APORTES_PENSION}
-) | CONCEPTOS_FUERA_DEL_MOTOR
+_SIN_CERTIFICADO: frozenset[Concepto] = (
+    frozenset({Concepto.RETENCION, Concepto.APORTES_SALUD, Concepto.APORTES_PENSION})
+    | CONCEPTOS_FUERA_DEL_MOTOR
+)
 
 
 @dataclass
@@ -472,9 +472,7 @@ def _de_partidas(
                 tipo_documento=certificado.tipo_documento,
                 tercero={"nit": partida.nit_tercero, "nombre": partida.nombre_tercero},
                 razon=certificado.razon,
-                ahorro_estimado=_ahorro(
-                    caso, _hipotesis_de_partida(caso, partida), p, del_cruce
-                ),
+                ahorro_estimado=_ahorro(caso, _hipotesis_de_partida(caso, partida), p, del_cruce),
                 # Medido, no techo: los aportes obligatorios son un porcentaje de LEY
                 # sobre el pago que la exógena ya reportó.
                 ahorro_es_techo=False,

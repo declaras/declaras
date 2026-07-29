@@ -231,3 +231,27 @@ async def test_si_la_clave_esta_mal_se_ve_en_que_paso_se_cayo(client):
     assert pasos["login"] == "FAILED"
     assert pasos["RUT"] == "PENDING", "no se intento nada despues de no poder entrar"
     assert final["error"]["code"] == "DIAN_INVALID_CREDENTIALS"
+
+
+async def test_la_clave_esta_guardada_antes_de_que_el_job_sea_reclamable(client, container):
+    """Es la carrera que hizo inestable la prueba de los intentos agotados.
+
+    El insert del job lo deja en cola, y desde ese instante cualquier worker puede reclamarlo.
+    Si la clave todavia no esta en la boveda, el worker falla con "sesion expirada" en vez de
+    intentar el login, y ese camino no cuenta el intento contra el bloqueo de la cuenta: el
+    usuario se queda con intentos que en realidad ya gasto.
+
+    Se comprueba desde la respuesta de encolado, que es lo unico que existe en ese instante: si
+    trae el plan completo, el job no se creo a medias.
+    """
+    created = await client.post(BASE, json=payload("clave-bad"))
+    job_id = created.json()["job_id"]
+
+    assert len(created.json()["progress"]) == 6, "el job nace con su plan, no lo completa despues"
+    from uuid import UUID
+
+    assert await container.vault.get(UUID(job_id)) is not None, "la clave ya tiene que estar"
+
+    final = await wait_for_status(client, job_id, "FAILED")
+    # Y falla por lo que de verdad paso, no por credenciales ausentes.
+    assert final["error"]["code"] == "DIAN_INVALID_CREDENTIALS"

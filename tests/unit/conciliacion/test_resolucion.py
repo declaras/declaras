@@ -41,27 +41,37 @@ def test_autorresuelve_solo_las_coincidentes():
 
 
 def test_resolver_discrepancia_a_favor_del_documento():
-    p = resolver(partida_discrepancia(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_DOCUMENTO,
+        motivo=Motivo.ERROR_DEL_TERCERO,
+        quien="contador@x.co",
+    )
     assert p.resolucion.valor == 85_000_000
     assert p.resolucion.decision is Decision.USAR_DOCUMENTO
 
 
 def test_no_se_puede_usar_documento_que_no_existe():
     with pytest.raises(ValueError, match="SOLO_DIAN"):
-        resolver(partida_solo_dian(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="x")
+        resolver(
+            partida_solo_dian(), Decision.USAR_DOCUMENTO, motivo=Motivo.ERROR_DEL_TERCERO, quien="x"
+        )
 
 
 def test_usar_otro_exige_valor():
     with pytest.raises(ValueError, match="valor"):
-        resolver(partida_discrepancia(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="x")
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_OTRO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="x",
+        )
 
 
 def test_pendientes_ordena_por_plata_en_juego():
-    ps = pendientes([partida_discrepancia(diferencia=100),
-                     partida_discrepancia(diferencia=9_000_000)])
+    ps = pendientes(
+        [partida_discrepancia(diferencia=100), partida_discrepancia(diferencia=9_000_000)]
+    )
     assert ps[0].diferencia_monto == 9_000_000
 
 
@@ -77,8 +87,10 @@ _CASOS_TABLA = [
     (partida_coincide, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN}),
     (partida_discrepancia, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO}),
     (partida_solo_dian, {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO}),
-    (partida_solo_documento,
-     {Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CERRAR_SIN_SOPORTE}),
+    (
+        partida_solo_documento,
+        {Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CERRAR_SIN_SOPORTE},
+    ),
     (partida_concepto_desconocido, {Decision.MARCAR_AJENO, Decision.CERRAR_SIN_SOPORTE}),
 ]
 
@@ -92,19 +104,30 @@ def test_la_tabla_de_decisiones_se_aplica_completa(fabrica, permitidas):
             continue  # gate por concepto, no solo por estado: tests dedicados abajo
         argumentos = {"valor": 1_000_000} if decision is Decision.USAR_OTRO else {}
         if decision in permitidas:
-            p = resolver(fabrica(), decision, motivo=Motivo.DECISION_DEL_CONTADOR,
-                         quien="contador@x.co", **argumentos)
+            p = resolver(
+                fabrica(),
+                decision,
+                motivo=Motivo.DECISION_DEL_CONTADOR,
+                quien="contador@x.co",
+                **argumentos,
+            )
             assert p.resolucion is not None
         else:
             with pytest.raises(ValueError, match=str(fabrica().estado)):
-                resolver(fabrica(), decision, motivo=Motivo.DECISION_DEL_CONTADOR,
-                         quien="contador@x.co", **argumentos)
+                resolver(
+                    fabrica(),
+                    decision,
+                    motivo=Motivo.DECISION_DEL_CONTADOR,
+                    quien="contador@x.co",
+                    **argumentos,
+                )
 
 
 def test_resolver_no_muta_la_partida_original():
     original = partida_discrepancia()
-    resuelta = resolver(original, Decision.USAR_DIAN,
-                        motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    resuelta = resolver(
+        original, Decision.USAR_DIAN, motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co"
+    )
     assert original.resolucion is None
     assert resuelta.resolucion is not None
     assert resuelta.resolucion.origen is Origen.CONTADOR
@@ -112,61 +135,95 @@ def test_resolver_no_muta_la_partida_original():
 
 def test_resolver_conserva_el_estado_del_cruce():
     """La resolución se ADJUNTA; el estado sigue contando qué desenlace tuvo el cruce."""
-    p = resolver(partida_discrepancia(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_DOCUMENTO,
+        motivo=Motivo.ERROR_DEL_TERCERO,
+        quien="contador@x.co",
+    )
     assert p.estado is EstadoPartida.DISCREPANCIA
 
 
 def test_usar_dian_toma_el_valor_de_la_version_dian():
-    p = resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_DIAN,
+        motivo=Motivo.ERROR_DEL_CERTIFICADO,
+        quien="contador@x.co",
+    )
     assert p.resolucion.valor == 87_400_000
 
 
 def test_usar_otro_guarda_el_valor_dado():
-    p = resolver(partida_discrepancia(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co",
-                 valor=86_000_000, nota="promedio de los extractos")
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_OTRO,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+        valor=86_000_000,
+        nota="promedio de los extractos",
+    )
     assert p.resolucion.valor == 86_000_000
     assert p.resolucion.nota == "promedio de los extractos"
 
 
 def test_usar_otro_no_acepta_valor_negativo():
     with pytest.raises(ValueError, match="negativo"):
-        resolver(partida_discrepancia(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="x", valor=-1)
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_OTRO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="x",
+            valor=-1,
+        )
 
 
 def test_el_valor_explicito_solo_acompania_a_usar_otro():
     """Un valor que se ignora en silencio es una decisión del contador que se pierde."""
     with pytest.raises(ValueError, match="USAR_OTRO"):
-        resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="x", valor=86_000_000)
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DIAN,
+            motivo=Motivo.ERROR_DEL_CERTIFICADO,
+            quien="x",
+            valor=86_000_000,
+        )
 
 
 def test_marcar_ajeno_y_cerrar_sin_soporte_no_llevan_valor():
-    p = resolver(partida_solo_dian(), Decision.MARCAR_AJENO,
-                 motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
+    p = resolver(
+        partida_solo_dian(), Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO, quien="contador@x.co"
+    )
     assert p.resolucion.valor == 0
-    q = resolver(partida_concepto_desconocido(), Decision.CERRAR_SIN_SOPORTE,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    q = resolver(
+        partida_concepto_desconocido(),
+        Decision.CERRAR_SIN_SOPORTE,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+    )
     assert q.resolucion.valor == 0
 
 
 def test_resolver_de_nuevo_reemplaza_la_resolucion():
     """El contador puede corregirse: la resolución nueva pisa la anterior."""
-    primera = resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                       motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="a@x.co")
-    segunda = resolver(primera, Decision.USAR_DOCUMENTO,
-                       motivo=Motivo.ERROR_DEL_TERCERO, quien="b@x.co")
+    primera = resolver(
+        partida_discrepancia(),
+        Decision.USAR_DIAN,
+        motivo=Motivo.ERROR_DEL_CERTIFICADO,
+        quien="a@x.co",
+    )
+    segunda = resolver(
+        primera, Decision.USAR_DOCUMENTO, motivo=Motivo.ERROR_DEL_TERCERO, quien="b@x.co"
+    )
     assert segunda.resolucion.decision is Decision.USAR_DOCUMENTO
     assert segunda.resolucion.quien == "b@x.co"
 
 
 def test_la_huella_es_un_digest_completo():
     """Misma convención que `content_sha256` (T3): 64 hex, el corto se deriva después."""
-    p = resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="x")
+    p = resolver(
+        partida_discrepancia(), Decision.USAR_DIAN, motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="x"
+    )
     assert len(p.resolucion.huella) == 64
     assert set(p.resolucion.huella) <= set("0123456789abcdef")
 
@@ -175,8 +232,9 @@ def test_las_marcas_estructurales_sobreviven_la_resolucion():
     """`reportado_a`, `versiones_documento`, `version_que_rige` y `documentos_por_cruzar`
     tienen que salir intactos de `resolver` y del viaje dump→validate con resolución."""
     base = partida_solo_documento()
-    p = resolver(base, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                 quien="contador@x.co")
+    p = resolver(
+        base, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+    )
     assert p.versiones_documento == base.versiones_documento
     assert p.version_que_rige == base.version_que_rige
     assert p.reportado_a == base.reportado_a
@@ -252,18 +310,27 @@ def test_un_motivo_que_afirma_algo_del_otro_lado_se_valida_contra_el_estado():
     discrepancia = partida_discrepancia()
     assert discrepancia.version_dian is not None
     with pytest.raises(ValueError, match="SIN_CONTRAPARTE_DIAN"):
-        resolver(discrepancia, Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.SIN_CONTRAPARTE_DIAN, quien="contador@x.co")
+        resolver(
+            discrepancia,
+            Decision.USAR_DOCUMENTO,
+            motivo=Motivo.SIN_CONTRAPARTE_DIAN,
+            quien="contador@x.co",
+        )
     with pytest.raises(ValueError, match="COINCIDEN"):
-        resolver(discrepancia, Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.COINCIDEN, quien="contador@x.co")
+        resolver(
+            discrepancia, Decision.USAR_DOCUMENTO, motivo=Motivo.COINCIDEN, quien="contador@x.co"
+        )
 
 
 def test_los_motivos_de_error_siguen_libres_sobre_una_partida_de_un_solo_lado():
-    """"El tercero reportó mal" es justamente lo que explica que la DIAN no tenga el hecho:
+    """ "El tercero reportó mal" es justamente lo que explica que la DIAN no tenga el hecho:
     acotarlos rompería el uso idiomático con que se aceptan los aportes de un 220."""
-    p = resolver(partida_solo_documento(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")
+    p = resolver(
+        partida_solo_documento(),
+        Decision.USAR_DOCUMENTO,
+        motivo=Motivo.ERROR_DEL_TERCERO,
+        quien="contador@x.co",
+    )
     assert p.resolucion is not None
 
 
@@ -271,9 +338,7 @@ def test_el_tercer_automatismo_no_es_aceptar_todo_lo_del_220():
     """La discrepancia de salarios sigue siendo del contador: ahí SÍ hay dos versiones que
     comparar, y esa es exactamente la decisión que necesita criterio humano."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000)))
-    resueltas = autorresolver(
-        incorporar(partidas, _cert_220_completo("a"), tolerancia_pesos=0)
-    )
+    resueltas = autorresolver(incorporar(partidas, _cert_220_completo("a"), tolerancia_pesos=0))
     por_concepto = {p.concepto: p for p in resueltas}
     assert por_concepto[Concepto.SALARIOS].estado is EstadoPartida.DISCREPANCIA
     assert por_concepto[Concepto.SALARIOS].resolucion is None
@@ -297,8 +362,12 @@ def test_la_provisional_de_los_aportes_se_cae_si_cambian_las_cifras():
 
 def test_autorresolver_respeta_las_resoluciones_existentes():
     """Una decisión del contador no se pisa por volver a correr el automatismo."""
-    del_contador = resolver(partida_coincide(), Decision.USAR_DIAN,
-                            motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    del_contador = resolver(
+        partida_coincide(),
+        Decision.USAR_DIAN,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+    )
     [p] = autorresolver([del_contador])
     assert p.resolucion == del_contador.resolucion
 
@@ -313,8 +382,7 @@ def test_autorresolver_no_muta_la_lista_de_entrada():
 
 
 def test_pendientes_excluye_las_resueltas():
-    resueltas = autorresolver([partida_coincide(), partida_solo_dian(),
-                               partida_discrepancia()])
+    resueltas = autorresolver([partida_coincide(), partida_solo_dian(), partida_discrepancia()])
     quedan = pendientes(resueltas)
     assert [p.estado for p in quedan] == [EstadoPartida.DISCREPANCIA]
 
@@ -322,10 +390,8 @@ def test_pendientes_excluye_las_resueltas():
 def test_pendientes_no_hunde_la_discrepancia_de_retencion():
     """Una discrepancia SOLO en la retención tiene la plata en juego de su retención:
     ordenar solo por `diferencia_monto` la mandaba al final de la cola."""
-    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000,
-                                    retencion=8_000_000)))
-    [por_retencion] = incorporar(partidas, _cert_220("900111222", 85_000_000,
-                                                     retencion=6_000_000))
+    partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000, retencion=8_000_000)))
+    [por_retencion] = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=6_000_000))
     ps = pendientes([partida_discrepancia(diferencia=100), por_retencion])
     assert ps[0] is por_retencion
 
@@ -333,8 +399,9 @@ def test_pendientes_no_hunde_la_discrepancia_de_retencion():
 def test_pendientes_pesa_una_sola_version_por_su_monto():
     """En una partida de un solo lado TODO el monto está en juego, no la diferencia (0):
     una suelta de 85M no puede quedar debajo de una discrepancia de 100 pesos."""
-    ps = pendientes([partida_discrepancia(diferencia=100), partida_solo_documento(),
-                     partida_ajena()])
+    ps = pendientes(
+        [partida_discrepancia(diferencia=100), partida_solo_documento(), partida_ajena()]
+    )
     assert ps[0].estado is EstadoPartida.SOLO_DOCUMENTO  # 85M en juego
     assert ps[1].reportado_a is not None  # la ajena pesa por sus 9M de la DIAN
     assert ps[2].diferencia_monto == 100
@@ -347,10 +414,16 @@ def _cert_220_bis(sha: str, salarios: int = 85_000_000):
     """Otro escaneo/exportación del 220: mismo empleador, otro hash de bytes."""
     from declaras.documents.models import DocumentReading, ExtractedField
 
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
-              "salarios": salarios, "retencion": 0}
+    campos = {
+        "empleador_nit": "900111222",
+        "empleador_nombre": "ACME SAS",
+        "salarios": salarios,
+        "retencion": 0,
+    }
     return DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256=sha * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256=sha * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
 
@@ -369,10 +442,19 @@ def test_refrescar_reemplaza_siempre_la_provisional_del_sistema():
 
 
 def test_refrescar_preserva_la_decision_del_contador_si_la_huella_coincide():
-    guardadas = [resolver(partida_discrepancia(), Decision.USAR_DOCUMENTO,
-                          motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
-    nuevas = incorporar(abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
-                        _cert_220("900111222", 85_000_000), tolerancia_pesos=0)
+    guardadas = [
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DOCUMENTO,
+            motivo=Motivo.ERROR_DEL_TERCERO,
+            quien="contador@x.co",
+        )
+    ]
+    nuevas = incorporar(
+        abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
+        _cert_220("900111222", 85_000_000),
+        tolerancia_pesos=0,
+    )
     [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion == guardadas[0].resolucion  # quien, cuando y nota intactos
 
@@ -380,12 +462,19 @@ def test_refrescar_preserva_la_decision_del_contador_si_la_huella_coincide():
 def test_refrescar_preserva_aunque_la_dian_republique_con_la_fila_corrida():
     """Una republicación que solo mueve la fila (celda A20→A21) no cambia los valores:
     invalidar ahí sería trabajo inventado y la nota diría mentiras."""
-    guardadas = [resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                          motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")]
-    republicada = _exogena(_fila("890903938", "5010", 1_000_000),  # fila insertada arriba
-                           _fila("900111222", "5001", 87_400_000))
-    nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000),
-                        tolerancia_pesos=0)
+    guardadas = [
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DIAN,
+            motivo=Motivo.ERROR_DEL_CERTIFICADO,
+            quien="contador@x.co",
+        )
+    ]
+    republicada = _exogena(
+        _fila("890903938", "5010", 1_000_000),  # fila insertada arriba
+        _fila("900111222", "5001", 87_400_000),
+    )
+    nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000), tolerancia_pesos=0)
     actualizadas, _ = refrescar(nuevas, guardadas)
     objetivo = next(p for p in actualizadas if p.id == "900111222:SALARIOS")
     assert objetivo.version_dian.celda == "A21"  # la fila sí se corrió
@@ -395,11 +484,16 @@ def test_refrescar_preserva_aunque_la_dian_republique_con_la_fila_corrida():
 def test_refrescar_invalida_si_los_valores_cambiaron():
     from declaras.services.conciliacion import NOTA_VALORES_CAMBIARON
 
-    guardadas = [resolver(partida_discrepancia(), Decision.USAR_DOCUMENTO,
-                          motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
+    guardadas = [
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DOCUMENTO,
+            motivo=Motivo.ERROR_DEL_TERCERO,
+            quien="contador@x.co",
+        )
+    ]
     republicada = _exogena(_fila("900111222", "5001", 90_000_000))  # la DIAN corrigió
-    nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000),
-                        tolerancia_pesos=0)
+    nuevas = incorporar(abrir(republicada), _cert_220("900111222", 85_000_000), tolerancia_pesos=0)
     [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion is None  # pendiente de nuevo: DISCREPANCIA no se autorresuelve
     assert NOTA_VALORES_CAMBIARON in (p.nota or "")
@@ -411,8 +505,9 @@ def test_refrescar_suma_la_nota_sin_pisar_la_del_cruce():
     from declaras.services.conciliacion import NOTA_VALORES_CAMBIARON
 
     ajena = partida_ajena()
-    guardadas = [resolver(ajena, Decision.MARCAR_AJENO,
-                          motivo=Motivo.NO_ES_MIO, quien="contador@x.co")]
+    guardadas = [
+        resolver(ajena, Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
+    ]
     republicada = _exogena(_fila("901999888", "5001", 12_000_000, reportado_a="99999"))
     [p], _ = refrescar(abrir(republicada), guardadas)
     assert p.resolucion is None
@@ -426,8 +521,9 @@ def test_refrescar_no_arrastra_la_resolucion_a_un_id_que_cambio():
     nace pendiente — nunca resuelta por arrastre."""
     fila_vieja = _fila("", "5001", 10_000_000, nombre="ACME S.A.S.")
     [vieja] = abrir(_exogena(fila_vieja))
-    guardadas = [resolver(vieja, Decision.MARCAR_AJENO,
-                          motivo=Motivo.NO_ES_MIO, quien="contador@x.co")]
+    guardadas = [
+        resolver(vieja, Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
+    ]
     fila_nueva = _fila("", "5001", 10_000_000, nombre="ACME SAS")
     [p], _ = refrescar(abrir(_exogena(fila_nueva)), guardadas)
     assert p.id != vieja.id
@@ -445,8 +541,14 @@ def test_refrescar_sin_nit_una_version_nueva_invalida_aunque_las_cifras_coincida
     doc_c = _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0)
     doc_d = _cert_220_completo("d", nit="", aportes_salud=0, aportes_pension=0)
     [suelta] = incorporar([], doc_c)
-    guardadas = [resolver(suelta, Decision.USAR_DOCUMENTO,
-                          motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")]
+    guardadas = [
+        resolver(
+            suelta,
+            Decision.USAR_DOCUMENTO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="contador@x.co",
+        )
+    ]
     nuevas = incorporar(incorporar([], doc_c), doc_d)
     [p], _ = refrescar(nuevas, guardadas)
     assert p.resolucion is None
@@ -458,8 +560,11 @@ def test_refrescar_con_nit_bytes_nuevos_con_cifras_iguales_no_invalidan():
     inventa trabajo al contador ni tumba su decisión."""
     exogena = _exogena(_fila("900111222", "5001", 87_400_000))
     base = incorporar(abrir(exogena), _cert_220_bis("b"), tolerancia_pesos=0)
-    guardadas = [resolver(base[0], Decision.USAR_DOCUMENTO,
-                          motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
+    guardadas = [
+        resolver(
+            base[0], Decision.USAR_DOCUMENTO, motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co"
+        )
+    ]
     nuevas = incorporar(base, _cert_220_bis("e"), tolerancia_pesos=0)  # re-exportado
     [p], _ = refrescar(nuevas, guardadas)
     assert set(p.versiones_documento) == {"b" * 12, "e" * 12}
@@ -507,13 +612,21 @@ def test_llevar_a_mano_es_solo_para_conceptos_que_el_motor_no_cubre():
     """Sobre un concepto que SÍ se liquida, excluirlo sería subdeclarar con un gate
     más débil que la tabla: se rechaza tenga el estado que tenga."""
     with pytest.raises(ValueError, match="LLEVAR_A_MANO"):
-        resolver(partida_coincide(), Decision.LLEVAR_A_MANO,
-                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+        resolver(
+            partida_coincide(),
+            Decision.LLEVAR_A_MANO,
+            motivo=Motivo.FUERA_DEL_MOTOR,
+            quien="contador@x.co",
+        )
 
 
 def test_llevar_a_mano_cierra_sin_aportar_hecho():
-    p = resolver(partida_honorarios(), Decision.LLEVAR_A_MANO,
-                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    p = resolver(
+        partida_honorarios(),
+        Decision.LLEVAR_A_MANO,
+        motivo=Motivo.FUERA_DEL_MOTOR,
+        quien="contador@x.co",
+    )
     assert p.resolucion.valor == 0
     assert p.resolucion.origen is Origen.CONTADOR
 
@@ -530,8 +643,7 @@ def test_autorresolver_no_pone_provisional_a_un_concepto_fuera_del_motor():
 def test_autorresolver_tampoco_cierra_un_coincide_fuera_del_motor():
     """El camino paralelo del guard: un COINCIDE de honorarios (hoy inalcanzable — el
     cruce no abre documentos de honorarios — pero construible) tampoco se auto-cierra."""
-    disfrazada = partida_coincide().model_copy(
-        update={"concepto": Concepto.HONORARIOS})
+    disfrazada = partida_coincide().model_copy(update={"concepto": Concepto.HONORARIOS})
     [p] = autorresolver([disfrazada])
     assert p.resolucion is None
 
@@ -547,8 +659,7 @@ def test_incorporar_despues_de_la_provisional_no_esconde_la_discrepancia():
     discrepancia — la razón de existir del producto — jamás llegaba al contador."""
     partidas = autorresolver(abrir(_exogena(_fila("900111222", "5001", 87_400_000))))
     assert partidas[0].resolucion is not None  # la provisional del preliminar
-    partidas = incorporar(partidas, _cert_220("900111222", 85_000_000,
-                                              retencion=8_000_000))
+    partidas = incorporar(partidas, _cert_220("900111222", 85_000_000, retencion=8_000_000))
     assert partidas[0].estado is EstadoPartida.DISCREPANCIA
     resueltas = autorresolver(partidas)
     assert resueltas[0].resolucion is None  # la provisional rancia se descarta
@@ -582,13 +693,20 @@ def test_refrescar_le_quita_la_resolucion_pegada_a_una_nueva_invalidada():
     dejaba la resolución rancia pegada: resuelta con el valor viejo y fuera de la cola."""
     from declaras.services.conciliacion import NOTA_VALORES_CAMBIARON
 
-    base = incorporar(abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
-                      _cert_220_bis("a"), tolerancia_pesos=0)
-    guardadas = [resolver(base[0], Decision.USAR_DOCUMENTO,
-                          motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")]
+    base = incorporar(
+        abrir(_exogena(_fila("900111222", "5001", 87_400_000))),
+        _cert_220_bis("a"),
+        tolerancia_pesos=0,
+    )
+    guardadas = [
+        resolver(
+            base[0], Decision.USAR_DOCUMENTO, motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co"
+        )
+    ]
     # llega un rival con OTRAS cifras por el camino incremental: la resolución viaja pegada
-    incrementales = incorporar(guardadas, _cert_220_bis("b", salarios=86_000_000),
-                               tolerancia_pesos=0)
+    incrementales = incorporar(
+        guardadas, _cert_220_bis("b", salarios=86_000_000), tolerancia_pesos=0
+    )
     assert incrementales[0].resolucion is not None  # el arrastre que C1 documenta
     [p], _ = refrescar(incrementales, guardadas)
     assert p.resolucion is None  # pendiente de verdad, no "resuelta con nota"
@@ -603,8 +721,11 @@ def test_una_decision_del_contador_no_sobrevive_a_una_partida_que_se_volvio_ajen
     contribuyente."""
     exogena = _exogena(_fila("901999888", "5001", 9_000_000))
     [titular] = abrir(exogena)
-    guardadas = [resolver(titular, Decision.USAR_DIAN,
-                          motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")]
+    guardadas = [
+        resolver(
+            titular, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )
+    ]
     nueva_ajena = abrir(exogena)[0].model_copy(update={"reportado_a": "99999"})
     [p], _ = refrescar([nueva_ajena], guardadas)
     assert p.resolucion is None  # pendiente: la decisión era sobre una partida del titular
@@ -619,16 +740,20 @@ def test_refrescar_devuelve_las_partidas_cuyo_id_desaparecio():
     exogena = _exogena(_fila("900111222", "5001", 85_000_000))
     guardadas = incorporar(abrir(exogena), _cert_220_completo("a"))
     guardadas = [
-        p if p.resolucion is not None
-        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                      quien="contador@x.co")
+        p
+        if p.resolucion is not None
+        else resolver(
+            p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )
         for p in autorresolver(guardadas)
     ]
     # la re-consulta trae SOLO la exógena: los aportes del 220 no están en `nuevas`
     partidas, huerfanas = refrescar(abrir(exogena), guardadas)
     assert [p.id for p in partidas] == ["900111222:SALARIOS"]
     assert sorted(p.id for p in huerfanas) == [
-        "900111222:APORTES_PENSION", "900111222:APORTES_SALUD"]
+        "900111222:APORTES_PENSION",
+        "900111222:APORTES_SALUD",
+    ]
     assert all(p.resolucion is not None for p in huerfanas)  # con su decisión intacta
 
 
@@ -637,19 +762,35 @@ def test_el_motivo_tiene_que_corresponder_a_la_decision():
     'USAR_DIAN (NO_ES_MIO)' en la Fuente de un hecho declarado es un contrasentido que
     nadie puede interpretar después."""
     with pytest.raises(ValueError, match="NO_ES_MIO"):
-        resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                 motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DIAN,
+            motivo=Motivo.NO_ES_MIO,
+            quien="contador@x.co",
+        )
     with pytest.raises(ValueError, match="COINCIDEN"):
-        resolver(partida_solo_dian(), Decision.MARCAR_AJENO,
-                 motivo=Motivo.COINCIDEN, quien="contador@x.co")
+        resolver(
+            partida_solo_dian(),
+            Decision.MARCAR_AJENO,
+            motivo=Motivo.COINCIDEN,
+            quien="contador@x.co",
+        )
     with pytest.raises(ValueError, match="FUERA_DEL_MOTOR"):
-        resolver(partida_discrepancia(), Decision.USAR_DIAN,
-                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_DIAN,
+            motivo=Motivo.FUERA_DEL_MOTOR,
+            quien="contador@x.co",
+        )
 
 
 def test_llevar_a_mano_exige_su_motivo():
     """El ruling de la ronda 1 pidió que el nombre Y el motivo digan qué pasó: la única
     pareja válida es LLEVAR_A_MANO + FUERA_DEL_MOTOR."""
     with pytest.raises(ValueError, match="FUERA_DEL_MOTOR"):
-        resolver(partida_honorarios(), Decision.LLEVAR_A_MANO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+        resolver(
+            partida_honorarios(),
+            Decision.LLEVAR_A_MANO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="contador@x.co",
+        )

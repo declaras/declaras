@@ -85,9 +85,7 @@ def extraer_arriendo(
     client: Any = None,
 ) -> Arriendo:
     """Extrae un certificado de arrendamiento y devuelve el hecho con proveniencia."""
-    return extraer_arriendo_con_metadatos(
-        pdf_bytes, anio_esperado=anio_esperado, client=client
-    )[0]
+    return extraer_arriendo_con_metadatos(pdf_bytes, anio_esperado=anio_esperado, client=client)[0]
 
 
 def extraer_arriendo_con_metadatos(

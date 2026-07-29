@@ -45,8 +45,18 @@ PENSION = ExtraccionPension(
     # Doce valores DISTINTOS: si el extractor promediara el total o repitiera una mesada,
     # la lista dejaría de ser reconocible. Diciembre lleva la mesada 13 sumada.
     mesadas=[
-        4_000_000, 4_100_000, 4_200_000, 4_300_000, 4_400_000, 4_500_000,
-        4_600_000, 4_700_000, 4_800_000, 4_900_000, 5_000_000, 9_000_000,
+        4_000_000,
+        4_100_000,
+        4_200_000,
+        4_300_000,
+        4_400_000,
+        4_500_000,
+        4_600_000,
+        4_700_000,
+        4_800_000,
+        4_900_000,
+        5_000_000,
+        9_000_000,
     ],
     total_pagado=58_500_000,
     retencion=1_234_567,
@@ -169,9 +179,7 @@ def test_dividendos_sin_discriminar_falla_en_vez_de_adivinar():
     """Los gravados llevan la tarifa del artículo 240 más el 242; los no gravados solo la
     tabla. Partir el total a ojo cambia el impuesto, así que sin la discriminación no se
     liquida: se pide el certificado completo."""
-    sin = DIVIDENDOS.model_copy(
-        update={"discrimina": False, "gravados": 0, "no_gravados": 0}
-    )
+    sin = DIVIDENDOS.model_copy(update={"discrimina": False, "gravados": 0, "no_gravados": 0})
     with pytest.raises(ValueError, match="discrimina") as exc:
         extraer_dividendos(PDF, client=ClienteFalso(sin))
     assert exc.value.motivo is MotivoDividendos.NO_DISCRIMINA
@@ -203,9 +211,7 @@ ARRIENDO = ExtraccionArriendo(
 
 
 def test_arriendo_mapea_cada_costo_a_su_casilla():
-    a, _, _ = extraer_arriendo_con_metadatos(
-        PDF, anio_esperado=2025, client=ClienteFalso(ARRIENDO)
-    )
+    a, _, _ = extraer_arriendo_con_metadatos(PDF, anio_esperado=2025, client=ClienteFalso(ARRIENDO))
     assert a.inmueble == "Apto 501 Calle 100 #15-20"
     assert a.contraparte_nombre == "Inmobiliaria Demo SAS"
     assert a.contraparte_nit == "900555666"
@@ -268,14 +274,16 @@ def test_los_cuatro_tipos_saben_cruzarse(doc_type):
 # Tipos que el catálogo pide y que TODAVÍA nadie sabe leer: el contador los recibe y los lleva
 # a mano. Están enumerados y no tolerados en silencio, que es la diferencia entre una deuda
 # conocida y un documento que entra al expediente y no cierra su petición nunca.
-SIN_LECTOR_TODAVIA = frozenset({
-    # No es un certificado: es la prueba de un dependiente (registro civil, cédula del padre).
-    "SOPORTE_DEPENDIENTE",
-    # El GMF viene dentro del certificado bancario, pero se pide aparte porque alguien puede
-    # haber pagado 4x1000 sin tener rendimientos que la DIAN reporte, y entonces no hay
-    # partida de rendimientos que dispare la petición del bancario.
-    "CERT_GMF",
-})
+SIN_LECTOR_TODAVIA = frozenset(
+    {
+        # No es un certificado: es la prueba de un dependiente (registro civil, cédula del padre).
+        "SOPORTE_DEPENDIENTE",
+        # El GMF viene dentro del certificado bancario, pero se pide aparte porque alguien puede
+        # haber pagado 4x1000 sin tener rendimientos que la DIAN reporte, y entonces no hay
+        # partida de rendimientos que dispare la petición del bancario.
+        "CERT_GMF",
+    }
+)
 
 
 def test_todo_documento_que_el_catalogo_pide_se_sabe_leer_o_esta_declarado():

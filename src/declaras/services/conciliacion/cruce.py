@@ -28,8 +28,7 @@ from declaras.services.conciliacion.modelos import EstadoPartida, Lado, Partida,
 # hace por spec), y una marca que viva ahí desaparece con la primera reescritura.
 NOTA_OTRA_IDENTIFICACION = "reportado a otra identificación"
 NOTA_OTRO_NOMBRE = (
-    "reportado al número del titular pero a nombre de otra persona; "
-    "hay que confirmar si es suyo"
+    "reportado al número del titular pero a nombre de otra persona; hay que confirmar si es suyo"
 )
 
 _NOTA_SIN_NIT = "el documento no trae el NIT del tercero, así que no se pudo cruzar con la exógena"
@@ -393,9 +392,7 @@ def _reportado_a(titular: str, valores: dict[str, object]) -> tuple[str | None, 
 
 def _partida_dian(grupo: _Grupo) -> Partida:
     estado = (
-        EstadoPartida.CONCEPTO_DESCONOCIDO
-        if grupo.concepto is None
-        else EstadoPartida.SOLO_DIAN
+        EstadoPartida.CONCEPTO_DESCONOCIDO if grupo.concepto is None else EstadoPartida.SOLO_DIAN
     )
     return Partida(
         id=grupo.id,
@@ -481,7 +478,11 @@ def _incorporar_clave(
         if indice is not None:
             actualizadas = list(partidas)
             actualizadas[indice] = _emparejar(
-                partidas[indice], sha, version, tolerancia_pesos, clave.acumulable,
+                partidas[indice],
+                sha,
+                version,
+                tolerancia_pesos,
+                clave.acumulable,
                 sin_nit=True,
             )
             return actualizadas
@@ -733,10 +734,7 @@ def _nota_rivales(n: int, *, sin_nit: bool) -> str:
             f"llegaron {n} documentos sin NIT del mismo tipo; pueden ser el mismo "
             "certificado repetido o terceros distintos: hay que cruzarlos a mano"
         )
-    return (
-        f"llegaron {n} certificados distintos del mismo empleador; "
-        "hay que decidir cuál rige"
-    )
+    return f"llegaron {n} certificados distintos del mismo empleador; hay que decidir cuál rige"
 
 
 _NOTA_RIVALES_RE = re.compile(

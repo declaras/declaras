@@ -97,7 +97,26 @@ class DocumentStore(Protocol):
 class JobRepository(Protocol):
     """Persistencia del ciclo de vida de los jobs."""
 
-    async def create(self, *, kind: JobKind, request: dict[str, Any]) -> Job: ...
+    async def create(
+        self,
+        *,
+        kind: JobKind,
+        request: dict[str, Any],
+        job_id: UUID | None = None,
+        progress: list[dict[str, Any]] | None = None,
+    ) -> Job:
+        """Crea el job ya completo y listo para que un worker lo reclame.
+
+        Acepta el id por adelantado porque hay trabajo que debe quedar hecho ANTES de que el
+        job sea reclamable, y ese trabajo necesita el id: la clave de la DIAN vive en una
+        boveda llaveada por job, y un worker que reclame un job cuya clave todavia no esta
+        guardada falla por credenciales ausentes, que no es el error real.
+
+        El avance inicial entra en el mismo insert por la misma razon: una segunda escritura
+        despues del insert es una ventana en la que el job ya es reclamable y aun no esta
+        completo.
+        """
+        ...
 
     async def get(self, job_id: UUID) -> Job | None: ...
 

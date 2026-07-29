@@ -256,9 +256,7 @@ def leer_pension(
 ) -> DocumentReading:
     """Lee un certificado de pensión."""
     pension, ext = _traducir(
-        lambda: extraer_pension_con_metadatos(
-            content, anio_esperado=anio_esperado, client=client
-        ),
+        lambda: extraer_pension_con_metadatos(content, anio_esperado=anio_esperado, client=client),
         etiqueta="cert_pension",
         parser=PARSER_PENSION,
         pistas=PISTAS_PENSION,
@@ -287,9 +285,7 @@ def leer_bancario(
 ) -> DocumentReading:
     """Lee un certificado tributario bancario (rendimientos, retención y GMF)."""
     rendimiento, gmf, ext = _traducir(
-        lambda: extraer_bancario_con_metadatos(
-            content, anio_esperado=anio_esperado, client=client
-        ),
+        lambda: extraer_bancario_con_metadatos(content, anio_esperado=anio_esperado, client=client),
         etiqueta="cert_bancario",
         parser=PARSER_BANCARIO,
         pistas=PISTAS_BANCARIO,
@@ -350,9 +346,7 @@ def leer_arriendo(
 ) -> DocumentReading:
     """Lee un certificado de arrendamiento, con su aviso de revisión si los costos exceden."""
     arriendo, aviso, ext = _traducir(
-        lambda: extraer_arriendo_con_metadatos(
-            content, anio_esperado=anio_esperado, client=client
-        ),
+        lambda: extraer_arriendo_con_metadatos(content, anio_esperado=anio_esperado, client=client),
         etiqueta="cert_arriendo",
         parser=PARSER_ARRIENDO,
         pistas=PISTAS_ARRIENDO,
@@ -464,9 +458,7 @@ def _lector_de_beneficio(doc_type: str) -> LlmReaderDeBeneficio:
 
 # Un lector por tipo, todos sobre el mismo extractor. Se arman acá y no a mano para que
 # agregar un beneficio sea una línea en `TipoBeneficio` y su entrada en `DOC_TYPE_POR_TIPO`.
-LECTORES_DE_BENEFICIO = {
-    doc_type: _lector_de_beneficio(doc_type) for doc_type in TIPO_POR_DOC_TYPE
-}
+LECTORES_DE_BENEFICIO = {doc_type: _lector_de_beneficio(doc_type) for doc_type in TIPO_POR_DOC_TYPE}
 
 __all__ = [
     "LECTORES_DE_BENEFICIO",

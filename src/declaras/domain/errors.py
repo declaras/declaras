@@ -313,9 +313,7 @@ class LiquidacionNoDisponibleError(DeclarasError):
 
     code = "LIQUIDACION_NO_DISPONIBLE"
     http_status = 409
-    default_message = (
-        "Todavía no se puede calcular la declaración: quedan renglones sin decidir."
-    )
+    default_message = "Todavía no se puede calcular la declaración: quedan renglones sin decidir."
 
 
 class LiquidacionBloqueadaError(DeclarasError):
@@ -328,9 +326,7 @@ class LiquidacionBloqueadaError(DeclarasError):
 
     code = "LIQUIDACION_BLOQUEADA"
     http_status = 409
-    default_message = (
-        "Esta declaración tiene alertas que hay que atender antes de darla por lista."
-    )
+    default_message = "Esta declaración tiene alertas que hay que atender antes de darla por lista."
 
 
 class AnioSinParametrosError(DeclarasError):

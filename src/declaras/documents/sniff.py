@@ -63,9 +63,7 @@ class _Clasificacion(BaseModel):
 
 
 def _prompt(tipos: list[str]) -> str:
-    lineas = "\n".join(
-        f"- {t}: {_DESCRIPCIONES[t]}" for t in tipos if t in _DESCRIPCIONES
-    )
+    lineas = "\n".join(f"- {t}: {_DESCRIPCIONES[t]}" for t in tipos if t in _DESCRIPCIONES)
     return f"""Clasifica este PDF en uno de los siguientes tipos de documento, para una
 declaración de renta colombiana:
 
@@ -104,8 +102,6 @@ def detectar_tipo(pdf_bytes: bytes, client: Any = None) -> str:
         log.info("documents.sniff.desconocido", respondido=ext.doc_type)
         return DESCONOCIDO
     if ext.confianza < CONFIANZA_MINIMA:
-        log.info(
-            "documents.sniff.confianza_baja", respondido=ext.doc_type, confianza=ext.confianza
-        )
+        log.info("documents.sniff.confianza_baja", respondido=ext.doc_type, confianza=ext.confianza)
         return DESCONOCIDO
     return ext.doc_type

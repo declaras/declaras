@@ -89,9 +89,11 @@ def _partidas_laborales_completas():
     partidas = autorresolver(partidas)
     # Los aportes del 220 nacen SOLO_DOCUMENTO: los decide una persona.
     return [
-        p if p.resolucion is not None
-        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                      quien="contador@x.co")
+        p
+        if p.resolucion is not None
+        else resolver(
+            p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )
         for p in partidas
     ]
 
@@ -118,8 +120,9 @@ def test_la_retencion_del_mismo_tercero_no_se_suma_de_las_dos_fuentes():
 def test_sin_partida_de_retencion_rige_la_version_escogida():
     fila = _fila("900111222", "5001", 85_000_000)
     del fila["retencion"]
-    partidas = incorporar(abrir(_exogena(fila)),
-                          _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    partidas = incorporar(
+        abrir(_exogena(fila)), _cert_220("900111222", 85_000_000, retencion=8_000_000)
+    )
     caso = _a_caso(autorresolver(partidas))
     assert caso.laborales[0].retencion == 8_000_000  # la del 220, que es lo que se usó
 
@@ -134,9 +137,11 @@ def test_la_retencion_explicita_no_se_reparte_a_las_gemelas():
     partidas = incorporar(abrir(exogena), _cert_220("900111222", 85_000_000))
     partidas = autorresolver(partidas)
     partidas = [
-        p if p.resolucion is not None
-        else resolver(p, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR,
-                      quien="contador@x.co")  # el contador reclama la ajena: sí es del titular
+        p
+        if p.resolucion is not None
+        else resolver(
+            p, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )  # el contador reclama la ajena: sí es del titular
         for p in partidas
     ]
     caso = _a_caso(partidas)
@@ -178,9 +183,10 @@ def test_el_reparto_de_la_pension_no_pierde_ni_inventa_pesos():
 
 
 def test_rendimientos_y_arriendos_mapean_con_su_retencion():
-    exogena = _exogena(_fila("890903938", "5010", 8_000_000, retencion=560_000,
-                             nombre="BANCO Y"),
-                       _fila("901333555", "5005", 36_000_000, nombre="INMOBILIARIA Z"))
+    exogena = _exogena(
+        _fila("890903938", "5010", 8_000_000, retencion=560_000, nombre="BANCO Y"),
+        _fila("901333555", "5005", 36_000_000, nombre="INMOBILIARIA Z"),
+    )
     caso = _a_caso(autorresolver(abrir(exogena)))
     [rend] = caso.rendimientos
     assert (rend.entidad, rend.valor, rend.retencion) == ("BANCO Y", 8_000_000, 560_000)
@@ -205,15 +211,20 @@ def test_honorarios_resueltos_con_hecho_revientan():
     (Desde la ronda de fixes 1 el automatismo ya NO les pone provisional — este backstop
     queda para quien les meta un hecho a mano; la salida buena es LLEVAR_A_MANO.)"""
     [p] = abrir(_exogena(_fila("901222333", "5002", 10_000_000)))
-    resuelta = resolver(p, Decision.USAR_DIAN,
-                        motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    resuelta = resolver(
+        p, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+    )
     with pytest.raises(NotImplementedError, match="HONORARIOS"):
         _a_caso([resuelta])
 
 
 def test_cerrar_sin_soporte_no_aporta_hecho():
-    p = resolver(partida_concepto_desconocido(), Decision.CERRAR_SIN_SOPORTE,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    p = resolver(
+        partida_concepto_desconocido(),
+        Decision.CERRAR_SIN_SOPORTE,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+    )
     caso = _a_caso([p])
     assert caso.ingresos_brutos_totales == 0
 
@@ -230,8 +241,9 @@ def test_un_hecho_sin_concepto_revienta():
     """Defensa contra partidas construidas a mano: la tabla de decisiones ya impide
     resolver una CONCEPTO_DESCONOCIDO con hecho, pero `Partida` no valida coherencia."""
     base = partida_concepto_desconocido()
-    resuelta = resolver(partida_solo_dian(), Decision.USAR_DIAN,
-                        motivo=Motivo.DECISION_DEL_CONTADOR, quien="x")
+    resuelta = resolver(
+        partida_solo_dian(), Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="x"
+    )
     incoherente = base.model_copy(update={"resolucion": resuelta.resolucion})
     with pytest.raises(ValueError, match="concepto"):
         _a_caso([incoherente])
@@ -255,25 +267,38 @@ def test_aportes_resueltos_sin_ingreso_laboral_revientan():
     completos) no se construye en silencio: es una contradicción entre resoluciones."""
     from declaras.documents.models import DocumentReading, ExtractedField
 
-    campos = {"empleador_nit": "900111222", "empleador_nombre": "ACME SAS",
-              "aportes_salud": 3_400_000}
+    campos = {
+        "empleador_nit": "900111222",
+        "empleador_nombre": "ACME SAS",
+        "aportes_salud": 3_400_000,
+    }
     doc = DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="a" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="a" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
     [p] = incorporar([], doc)
-    resuelta = resolver(p, Decision.USAR_DOCUMENTO,
-                        motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    resuelta = resolver(
+        p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+    )
     with pytest.raises(ValueError, match="aportes"):
         _a_caso([resuelta])
 
 
 def test_beneficios_patrimonio_y_creditos_entran_como_llegan():
-    beneficios = Beneficios(medicina_prepagada=MontoDeclarado(
-        valor=6_000_000, fuente=Fuente.manual("contador@x.co")))
+    beneficios = Beneficios(
+        medicina_prepagada=MontoDeclarado(valor=6_000_000, fuente=Fuente.manual("contador@x.co"))
+    )
     creditos = Creditos(anticipo_pagado=1_000_000)
-    caso = a_caso([], contribuyente=CONTRIB, anio_gravable=2025,
-                  beneficios=beneficios, patrimonio=Patrimonio(), creditos=creditos)
+    caso = a_caso(
+        [],
+        contribuyente=CONTRIB,
+        anio_gravable=2025,
+        beneficios=beneficios,
+        patrimonio=Patrimonio(),
+        creditos=creditos,
+    )
     assert caso.beneficios == beneficios
     assert caso.creditos.anticipo_pagado == 1_000_000
     assert caso.anio_gravable == 2025
@@ -290,9 +315,13 @@ def test_la_fuente_arrastra_la_procedencia_de_la_version_escogida():
 
 
 def test_usar_otro_entra_con_el_valor_del_contador_y_sin_procedencia_prestada():
-    p = resolver(partida_discrepancia(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co",
-                 valor=86_000_000)
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_OTRO,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+        valor=86_000_000,
+    )
     caso = _a_caso([p])
     lab = caso.laborales[0]
     assert lab.salarios == 86_000_000
@@ -307,13 +336,19 @@ def test_las_sueltas_sin_nit_del_mismo_documento_se_ensamblan_juntas():
     """El 220 sin NIT abre tres partidas sueltas (salarios + los dos aportes): son el
     mismo certificado y arman UN laboral, no un laboral sin aportes más aportes perdidos."""
     partidas = incorporar([], _cert_220_completo("c", nit=""))
-    partidas = [resolver(p, Decision.USAR_DOCUMENTO,
-                         motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
-                for p in partidas]
+    partidas = [
+        resolver(
+            p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )
+        for p in partidas
+    ]
     caso = _a_caso(partidas)
     [lab] = caso.laborales
-    assert (lab.salarios, lab.aportes_salud, lab.aportes_pension) == \
-        (85_000_000, 3_400_000, 3_600_000)
+    assert (lab.salarios, lab.aportes_salud, lab.aportes_pension) == (
+        85_000_000,
+        3_400_000,
+        3_600_000,
+    )
     assert lab.empleador_nit == ""
 
 
@@ -329,8 +364,12 @@ def test_llevada_a_mano_no_bloquea_el_caso_y_deja_aviso_bloqueante():
     liquidación por decisión del contador — pero excluir un ingreso es subdeclarar,
     así que la exclusión JAMÁS es silenciosa (tercero, concepto y cifra en el aviso)
     ni informativa (bloqueante: nadie presenta ese 210 creyendo que está completo)."""
-    p = resolver(partida_honorarios(monto=10_000_000), Decision.LLEVAR_A_MANO,
-                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    p = resolver(
+        partida_honorarios(monto=10_000_000),
+        Decision.LLEVAR_A_MANO,
+        motivo=Motivo.FUERA_DEL_MOTOR,
+        quien="contador@x.co",
+    )
     caso = _a_caso([p])
     assert caso.ingresos_brutos_totales == 0  # no aporta hecho
     [aviso] = avisos([p])
@@ -345,14 +384,17 @@ def test_el_aviso_de_llevada_a_mano_dice_las_dos_cifras_si_difieren():
     """Con las dos versiones en disputa el contador necesita ver ambas: va a sumar a
     mano y decidir cuál usa es exactamente su trabajo pendiente."""
     discrepante = Partida(
-        id="901222333:HONORARIOS", nit_tercero="901222333", nombre_tercero="ZETA SAS",
+        id="901222333:HONORARIOS",
+        nit_tercero="901222333",
+        nombre_tercero="ZETA SAS",
         concepto=Concepto.HONORARIOS,
         version_dian=Valor(monto=10_000_000, retencion=None, lado=Lado.DIAN),
         version_documento=Valor(monto=9_000_000, retencion=None, lado=Lado.DOCUMENTO),
         estado=EstadoPartida.DISCREPANCIA,
     )
-    p = resolver(discrepante, Decision.LLEVAR_A_MANO,
-                 motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co")
+    p = resolver(
+        discrepante, Decision.LLEVAR_A_MANO, motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co"
+    )
     [aviso] = avisos([p])
     assert "10,000,000" in aviso.mensaje
     assert "9,000,000" in aviso.mensaje
@@ -366,9 +408,11 @@ def _partida_usar_dian_con_retencion_solo_en_el_220():
     afirma), 220 con retención certificada, empleador SIN fila R132."""
     fila = _fila("900111222", "5001", 87_400_000)
     del fila["retencion"]
-    partidas = incorporar(abrir(_exogena(fila)),
-                          _cert_220("900111222", 85_000_000, retencion=8_000_000),
-                          tolerancia_pesos=0)
+    partidas = incorporar(
+        abrir(_exogena(fila)),
+        _cert_220("900111222", 85_000_000, retencion=8_000_000),
+        tolerancia_pesos=0,
+    )
     return partidas[0]
 
 
@@ -378,17 +422,25 @@ def test_usar_dian_no_tira_la_retencion_que_solo_el_220_certifica():
     con ERROR_DEL_CERTIFICADO — el uso natural del motivo — declaraba retención 0: None
     NO es 0 (la invariante de T4 con nombre y apellido), y la única afirmación que
     existe es la del 220. Sigue rigiendo UNA fuente, no una suma."""
-    p = resolver(_partida_usar_dian_con_retencion_solo_en_el_220(), Decision.USAR_DIAN,
-                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    p = resolver(
+        _partida_usar_dian_con_retencion_solo_en_el_220(),
+        Decision.USAR_DIAN,
+        motivo=Motivo.ERROR_DEL_CERTIFICADO,
+        quien="contador@x.co",
+    )
     caso = _a_caso([p])
     assert caso.laborales[0].salarios == 87_400_000  # la decisión del contador, intacta
     assert caso.laborales[0].retencion == 8_000_000  # la única afirmación que existe
 
 
 def test_usar_otro_tampoco_tira_la_retencion_afirmada():
-    p = resolver(_partida_usar_dian_con_retencion_solo_en_el_220(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co",
-                 valor=86_000_000)
+    p = resolver(
+        _partida_usar_dian_con_retencion_solo_en_el_220(),
+        Decision.USAR_OTRO,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+        valor=86_000_000,
+    )
     caso = _a_caso([p])
     assert caso.laborales[0].retencion == 8_000_000
 
@@ -397,11 +449,14 @@ def test_la_retencion_afirmada_en_cero_por_la_version_escogida_sigue_siendo_cero
     """El otro lado de la invariante: un 0 AFIRMADO por la versión escogida es una
     afirmación, no una ausencia — no se va a buscar la de la otra versión."""
     fila = _fila("900111222", "5001", 87_400_000, retencion=0)  # la DIAN afirma 0
-    partidas = incorporar(abrir(_exogena(fila)),
-                          _cert_220("900111222", 85_000_000, retencion=8_000_000),
-                          tolerancia_pesos=0)
-    p = resolver(partidas[0], Decision.USAR_DIAN,
-                 motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co")
+    partidas = incorporar(
+        abrir(_exogena(fila)),
+        _cert_220("900111222", 85_000_000, retencion=8_000_000),
+        tolerancia_pesos=0,
+    )
+    p = resolver(
+        partidas[0], Decision.USAR_DIAN, motivo=Motivo.ERROR_DEL_CERTIFICADO, quien="contador@x.co"
+    )
     assert _a_caso([p]).laborales[0].retencion == 0
 
 
@@ -412,10 +467,14 @@ def test_un_concepto_que_nadie_ensambla_revienta_en_vez_de_desaparecer(monkeypat
     excepción y sin aviso). El repro del revisor: quitar ARRENDAMIENTOS de la tupla."""
     from declaras.services.conciliacion import mapeo
 
-    monkeypatch.setattr(mapeo, "_ORDEN_INGRESOS", tuple(
-        c for c in mapeo._ORDEN_INGRESOS if c is not Concepto.ARRENDAMIENTOS))
-    partidas = autorresolver(abrir(_exogena(
-        _fila("901333555", "5005", 20_000_000, nombre="INMOBILIARIA Z"))))
+    monkeypatch.setattr(
+        mapeo,
+        "_ORDEN_INGRESOS",
+        tuple(c for c in mapeo._ORDEN_INGRESOS if c is not Concepto.ARRENDAMIENTOS),
+    )
+    partidas = autorresolver(
+        abrir(_exogena(_fila("901333555", "5005", 20_000_000, nombre="INMOBILIARIA Z")))
+    )
     with pytest.raises(NotImplementedError, match="ARRENDAMIENTOS"):
         _a_caso(partidas)
     with pytest.raises(NotImplementedError, match="ARRENDAMIENTOS"):
@@ -440,8 +499,9 @@ def test_desplazar_una_retencion_certificada_distinta_deja_aviso():
     fila = _fila("900111222", "5001", 85_000_000)
     del fila["retencion"]
     exogena = _exogena(fila, fila_retencion("900111222", 1_000_000))
-    partidas = autorresolver(incorporar(
-        abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000)))
+    partidas = autorresolver(
+        incorporar(abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    )
     caso = _a_caso(partidas)
     assert caso.laborales[0].retencion == 1_000_000  # la prioridad no cambia
     [aviso] = [f for f in avisos(partidas) if f.codigo == "RETENCION_DESPLAZADA"]
@@ -456,12 +516,19 @@ def test_borrar_la_retencion_con_un_cero_explicito_tambien_avisa():
     fila = _fila("900111222", "5001", 85_000_000)
     del fila["retencion"]
     exogena = _exogena(fila, fila_retencion("900111222", 8_000_000))
-    partidas = autorresolver(incorporar(
-        abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000)))
+    partidas = autorresolver(
+        incorporar(abrir(exogena), _cert_220("900111222", 85_000_000, retencion=8_000_000))
+    )
     partidas = [
-        resolver(p, Decision.USAR_OTRO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                 quien="contador@x.co", valor=0)
-        if p.concepto is Concepto.RETENCION else p
+        resolver(
+            p,
+            Decision.USAR_OTRO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="contador@x.co",
+            valor=0,
+        )
+        if p.concepto is Concepto.RETENCION
+        else p
         for p in partidas
     ]
     caso = _a_caso(partidas)
@@ -484,15 +551,17 @@ def test_la_suelta_sin_nit_resuelta_junto_a_la_conciliada_avisa_doble_conteo():
     resueltas juntas: mismo concepto + misma cifra + mismo nombre, una con NIT y otra
     sin, deja aviso."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "c", nit="", aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "d", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0)
+    )
+    partidas = incorporar(partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
     partidas = autorresolver(partidas)
     partidas = [
-        p if p.resolucion is not None
-        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                      quien="contador@x.co")  # el error humano que el aviso ataja
+        p
+        if p.resolucion is not None
+        else resolver(
+            p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )  # el error humano que el aviso ataja
         for p in partidas
     ]
     [aviso] = [f for f in avisos(partidas) if f.codigo == "POSIBLE_DOBLE_CONTEO"]
@@ -504,15 +573,18 @@ def test_la_suelta_sin_nit_resuelta_junto_a_la_conciliada_avisa_doble_conteo():
 def test_cifras_distintas_no_disparan_el_aviso_de_doble_conteo():
     """La heurística es barata a propósito: con cifras distintas no afirma nada."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "c", nit="", salarios=60_000_000, aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "d", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas,
+        _cert_220_completo("c", nit="", salarios=60_000_000, aportes_salud=0, aportes_pension=0),
+    )
+    partidas = incorporar(partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
     partidas = autorresolver(partidas)
     partidas = [
-        p if p.resolucion is not None
-        else resolver(p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR,
-                      quien="contador@x.co")
+        p
+        if p.resolucion is not None
+        else resolver(
+            p, Decision.USAR_DOCUMENTO, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+        )
         for p in partidas
     ]
     assert not any(f.codigo == "POSIBLE_DOBLE_CONTEO" for f in avisos(partidas))
@@ -522,15 +594,20 @@ def test_la_suelta_cerrada_sin_soporte_no_dispara_el_aviso():
     """La salida documentada (CERRAR_SIN_SOPORTE sobre la suelta) apaga la heurística:
     la suelta ya no aporta hecho y no hay doble conteo que avisar."""
     partidas = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "c", nit="", aportes_salud=0, aportes_pension=0))
-    partidas = incorporar(partidas, _cert_220_completo(
-        "d", aportes_salud=0, aportes_pension=0))
+    partidas = incorporar(
+        partidas, _cert_220_completo("c", nit="", aportes_salud=0, aportes_pension=0)
+    )
+    partidas = incorporar(partidas, _cert_220_completo("d", aportes_salud=0, aportes_pension=0))
     partidas = autorresolver(partidas)
     partidas = [
-        p if p.resolucion is not None
-        else resolver(p, Decision.CERRAR_SIN_SOPORTE,
-                      motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+        p
+        if p.resolucion is not None
+        else resolver(
+            p,
+            Decision.CERRAR_SIN_SOPORTE,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="contador@x.co",
+        )
         for p in partidas
     ]
     assert not any(f.codigo == "POSIBLE_DOBLE_CONTEO" for f in avisos(partidas))
@@ -543,8 +620,7 @@ def test_marcar_ajeno_no_excluye_en_silencio():
     informativo con partida, tercero, concepto, cifra y motivo; bloqueante queda solo
     para LLEVAR_A_MANO, donde la plata sí es del contribuyente."""
     [p] = abrir(_exogena(_fila("900111222", "5001", 85_000_000)))
-    resuelta = resolver(p, Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO,
-                        quien="contador@x.co")
+    resuelta = resolver(p, Decision.MARCAR_AJENO, motivo=Motivo.NO_ES_MIO, quien="contador@x.co")
     caso = _a_caso([resuelta])
     assert caso.ingresos_brutos_totales == 0
     [aviso] = avisos([resuelta])
@@ -558,8 +634,12 @@ def test_marcar_ajeno_no_excluye_en_silencio():
 
 
 def test_cerrar_sin_soporte_tambien_enumera_lo_excluido():
-    p = resolver(partida_concepto_desconocido(), Decision.CERRAR_SIN_SOPORTE,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+    p = resolver(
+        partida_concepto_desconocido(),
+        Decision.CERRAR_SIN_SOPORTE,
+        motivo=Motivo.DECISION_DEL_CONTADOR,
+        quien="contador@x.co",
+    )
     [aviso] = avisos([p])
     assert aviso.codigo == "INGRESO_EXCLUIDO"
     assert aviso.severidad == "info"

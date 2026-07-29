@@ -2,8 +2,16 @@ import pytest
 from pydantic import ValidationError
 
 from declaras.caso import (
-    Arriendo, CasoTributario, Contribuyente, Creditos, Fuente, IngresoLaboral, IngresoPension,
-    MontoDeclarado, Patrimonio, Rendimiento,
+    Arriendo,
+    CasoTributario,
+    Contribuyente,
+    Creditos,
+    Fuente,
+    IngresoLaboral,
+    IngresoPension,
+    MontoDeclarado,
+    Patrimonio,
+    Rendimiento,
 )
 
 FX = Fuente.fixture("test")
@@ -11,9 +19,13 @@ FX = Fuente.fixture("test")
 
 def _laboral(**kw):
     base = dict(
-        empleador_nit="900123456", empleador_nombre="ACME SAS",
-        salarios=120_000_000, aportes_salud=4_800_000,
-        aportes_pension=4_800_000, retencion=8_000_000, fuente=FX,
+        empleador_nit="900123456",
+        empleador_nombre="ACME SAS",
+        salarios=120_000_000,
+        aportes_salud=4_800_000,
+        aportes_pension=4_800_000,
+        retencion=8_000_000,
+        fuente=FX,
     )
     base.update(kw)
     return IngresoLaboral(**base)

@@ -54,9 +54,7 @@ async def _subir_un_220(expediente, lector, monkeypatch):
 
 
 def _lectura_valida() -> DocumentReading:
-    return DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="falso", content_sha256="abc"
-    )
+    return DocumentReading(doc_type="CERT_INGRESOS_220", parser="falso", content_sha256="abc")
 
 
 async def test_el_expediente_le_pasa_al_lector_el_anio_del_caso(expediente, monkeypatch):
@@ -105,5 +103,3 @@ async def test_la_lectura_no_corre_en_el_hilo_del_event_loop(expediente, monkeyp
 
     await _subir_un_220(expediente, lector, monkeypatch)
     assert hilos and hilos[0] != threading.get_ident()
-
-

@@ -88,9 +88,9 @@ def extraer_dividendos(
     client: Any = None,
 ) -> Dividendo:
     """Extrae un certificado de dividendos y devuelve el hecho con proveniencia."""
-    return extraer_dividendos_con_metadatos(
-        pdf_bytes, anio_esperado=anio_esperado, client=client
-    )[0]
+    return extraer_dividendos_con_metadatos(pdf_bytes, anio_esperado=anio_esperado, client=client)[
+        0
+    ]
 
 
 def extraer_dividendos_con_metadatos(
@@ -108,9 +108,7 @@ def extraer_dividendos_con_metadatos(
             client=client,
         )
     except ExtraccionInvalidaError as exc:
-        raise ExtraccionDividendosInvalidaError(
-            MotivoDividendos(exc.motivo), str(exc)
-        ) from exc
+        raise ExtraccionDividendosInvalidaError(MotivoDividendos(exc.motivo), str(exc)) from exc
 
     if not ext.discrimina:
         # Va antes de reconciliar: sin separación los dos campos están en 0 y reconciliar

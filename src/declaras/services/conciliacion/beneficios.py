@@ -115,9 +115,7 @@ class _Aporte:
         if self.casilla == "aportes_afc_fvp":
             # El tipo AFC vs FVP cambia el tope, y el certificado no siempre lo distingue con
             # esas palabras. Se asume AFC, que es el más común, y el motor aplica su tope.
-            return AporteAfc(
-                entidad=self.entidad, tipo="AFC", valor=self.valor, fuente=self.fuente
-            )
+            return AporteAfc(entidad=self.entidad, tipo="AFC", valor=self.valor, fuente=self.fuente)
         return Donacion(
             entidad=self.entidad,
             valor=self.valor,

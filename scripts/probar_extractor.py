@@ -3,6 +3,7 @@
 Uso: uv run python scripts/probar_extractor.py ruta/al/220.pdf [anio_esperado]
 Requiere ANTHROPIC_API_KEY o perfil de `ant auth login`.
 """
+
 import sys
 from pathlib import Path
 

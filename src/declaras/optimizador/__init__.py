@@ -23,12 +23,12 @@ class ResultadoOptimizacion(BaseModel):
 def _combos(caso: CasoTributario) -> list[Elecciones]:
     if not caso.beneficios.dependientes:
         return [Elecciones(usar_387=False, usar_72uvt=False)]
-    return [Elecciones(usar_387=a, usar_72uvt=b)
-            for a in (False, True) for b in (False, True)]
+    return [Elecciones(usar_387=a, usar_72uvt=b) for a in (False, True) for b in (False, True)]
 
 
-def optimizar(caso: CasoTributario, p: ParametrosAnio, *,
-              flags_previos: Sequence[Flag] = ()) -> ResultadoOptimizacion:
+def optimizar(
+    caso: CasoTributario, p: ParametrosAnio, *, flags_previos: Sequence[Flag] = ()
+) -> ResultadoOptimizacion:
     """Enumera las elecciones legales, evalúa el motor y elige la de menor impuesto.
 
     Desempate determinista: menos elecciones activas, luego orden de la tupla.
@@ -46,15 +46,16 @@ def optimizar(caso: CasoTributario, p: ParametrosAnio, *,
     solo una dejaría la otra abierta.
     """
     evaluados = [(liquidar(caso, p, e), e) for e in _combos(caso)]
-    _exigir_sin_bloqueantes([*flags_previos,
-                             *(f for liq, _ in evaluados for f in liq.flags)])
+    _exigir_sin_bloqueantes([*flags_previos, *(f for liq, _ in evaluados for f in liq.flags)])
     liq, e = min(
         evaluados,
-        key=lambda par: (par[0].valor("IMPUESTO_NETO"), par[1].activas,
-                         (par[1].usar_387, par[1].usar_72uvt)),
+        key=lambda par: (
+            par[0].valor("IMPUESTO_NETO"),
+            par[1].activas,
+            (par[1].usar_387, par[1].usar_72uvt),
+        ),
     )
-    return ResultadoOptimizacion(liquidacion=liq, elecciones=e,
-                                 evaluadas=len(evaluados))
+    return ResultadoOptimizacion(liquidacion=liq, elecciones=e, evaluadas=len(evaluados))
 
 
 def _exigir_sin_bloqueantes(flags: Sequence[Flag]) -> None:
@@ -68,9 +69,13 @@ def _exigir_sin_bloqueantes(flags: Sequence[Flag]) -> None:
         )
 
 
-def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
-                    p: ParametrosAnio, *,
-                    flags_previos: Sequence[Flag] = ()) -> int:
+def ahorro_marginal(
+    caso_base: CasoTributario,
+    caso_con_hecho: CasoTributario,
+    p: ParametrosAnio,
+    *,
+    flags_previos: Sequence[Flag] = (),
+) -> int:
     """Cuánto impuesto ahorra un hecho: base del 'cada pregunta lleva su ahorro'.
 
     Los ahorros marginales NO son aditivos: para mostrar ahorro por pregunta
@@ -82,10 +87,11 @@ def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
     devolvía un ahorro calculado sobre una base incompleta, que es exactamente
     la promesa que el bloqueo existe para no hacer.
     """
-    if (caso_base.contribuyente.num_doc != caso_con_hecho.contribuyente.num_doc
-            or caso_base.anio_gravable != caso_con_hecho.anio_gravable):
+    if (
+        caso_base.contribuyente.num_doc != caso_con_hecho.contribuyente.num_doc
+        or caso_base.anio_gravable != caso_con_hecho.anio_gravable
+    ):
         raise ValueError("ahorro_marginal compara dos versiones del MISMO caso")
-    return (optimizar(caso_base, p,
-                      flags_previos=flags_previos).liquidacion.valor("IMPUESTO_NETO")
-            - optimizar(caso_con_hecho, p,
-                        flags_previos=flags_previos).liquidacion.valor("IMPUESTO_NETO"))
+    return optimizar(caso_base, p, flags_previos=flags_previos).liquidacion.valor(
+        "IMPUESTO_NETO"
+    ) - optimizar(caso_con_hecho, p, flags_previos=flags_previos).liquidacion.valor("IMPUESTO_NETO")

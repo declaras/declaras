@@ -46,18 +46,39 @@ class Traza:
         self.nodos: dict[str, Nodo] = {}
         self.flags: list[Flag] = []
 
-    def nodo(self, codigo: str, etiqueta: str, valor: int, formula: str,
-             insumos=(), regla: str | None = None) -> int:
+    def nodo(
+        self,
+        codigo: str,
+        etiqueta: str,
+        valor: int,
+        formula: str,
+        insumos=(),
+        regla: str | None = None,
+    ) -> int:
         if codigo in self.nodos:
             raise ValueError(f"Código de nodo duplicado: {codigo}")
-        self.nodos[codigo] = Nodo(codigo=codigo, etiqueta=etiqueta, valor=valor,
-                                  formula=formula, insumos=list(insumos), regla=regla)
+        self.nodos[codigo] = Nodo(
+            codigo=codigo,
+            etiqueta=etiqueta,
+            valor=valor,
+            formula=formula,
+            insumos=list(insumos),
+            regla=regla,
+        )
         return self.nodos[codigo].valor
 
-    def flag(self, codigo: str, mensaje: str,
-             severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia") -> None:
+    def flag(
+        self,
+        codigo: str,
+        mensaje: str,
+        severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia",
+    ) -> None:
         self.flags.append(Flag(codigo=codigo, mensaje=mensaje, severidad=severidad))
 
     def a_liquidacion(self, anio: int, elecciones: Elecciones) -> Liquidacion:
-        return Liquidacion(anio_gravable=anio, elecciones=elecciones,
-                           nodos=dict(self.nodos), flags=list(self.flags))
+        return Liquidacion(
+            anio_gravable=anio,
+            elecciones=elecciones,
+            nodos=dict(self.nodos),
+            flags=list(self.flags),
+        )

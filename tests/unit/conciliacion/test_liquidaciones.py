@@ -72,8 +72,10 @@ def _caso(salario: int = 120_000_000, *, con_dependiente: bool = True) -> CasoTr
 
 def _llevada_a_mano():
     return resolver(
-        partida_honorarios(), Decision.LLEVAR_A_MANO,
-        motivo=Motivo.FUERA_DEL_MOTOR, quien="contador",
+        partida_honorarios(),
+        Decision.LLEVAR_A_MANO,
+        motivo=Motivo.FUERA_DEL_MOTOR,
+        quien="contador",
     )
 
 
@@ -196,9 +198,9 @@ def test_la_ganancia_es_lo_que_bajo_el_impuesto():
     con_aportes = _caso().model_copy(
         update={
             "laborales": [
-                _caso().laborales[0].model_copy(
-                    update={"aportes_salud": 4_800_000, "aportes_pension": 4_800_000}
-                )
+                _caso()
+                .laborales[0]
+                .model_copy(update={"aportes_salud": 4_800_000, "aportes_pension": 4_800_000})
             ]
         }
     )

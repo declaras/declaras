@@ -180,8 +180,14 @@ En `parametros/__init__.py` agregar la tabla (tomada de `tax/uvt.py`) y la funci
 # Valor de la UVT por año gravable, en pesos. Conviven dos en cualquier momento: la del
 # año que se declara (para sus topes) y la del año en curso (sanciones, planeación).
 UVT_POR_ANIO: dict[int, int] = {
-    2019: 34_270, 2020: 35_607, 2021: 36_308, 2022: 38_004,
-    2023: 42_412, 2024: 47_065, 2025: 49_799, 2026: 52_374,
+    2019: 34_270,
+    2020: 35_607,
+    2021: 36_308,
+    2022: 38_004,
+    2023: 42_412,
+    2024: 47_065,
+    2025: 49_799,
+    2026: 52_374,
 }
 
 
@@ -190,8 +196,7 @@ def uvt_de(anio: int) -> int:
     valor = UVT_POR_ANIO.get(anio)
     if valor is None:
         raise ValueError(
-            f"No hay UVT registrada para el año {anio}; disponibles: "
-            f"{sorted(UVT_POR_ANIO)}"
+            f"No hay UVT registrada para el año {anio}; disponibles: {sorted(UVT_POR_ANIO)}"
         )
     return valor
 ```
@@ -254,11 +259,20 @@ from declaras.extraccion.f220 import Extraccion220
 from tests.unit.documents.dobles import ClienteFalso  # reusar el doble existente
 
 EXTRACCION = Extraccion220(
-    empleador_nit="900123456", empleador_nombre="ACME SAS",
-    salarios=85_000_000, cesantias_e_intereses=0, prima=0, bonificaciones=0,
-    total_ingresos_brutos=85_000_000, pensiones_de_jubilacion=0,
-    aportes_salud=3_400_000, aportes_pension=3_400_000, retencion=8_000_000,
-    anio_gravable=2025, numero_de_certificados=1, confianza=0.97,
+    empleador_nit="900123456",
+    empleador_nombre="ACME SAS",
+    salarios=85_000_000,
+    cesantias_e_intereses=0,
+    prima=0,
+    bonificaciones=0,
+    total_ingresos_brutos=85_000_000,
+    pensiones_de_jubilacion=0,
+    aportes_salud=3_400_000,
+    aportes_pension=3_400_000,
+    retencion=8_000_000,
+    anio_gravable=2025,
+    numero_de_certificados=1,
+    confianza=0.97,
 )
 
 
@@ -297,6 +311,7 @@ A diferencia de los documentos del portal (columnas fijas, parser determinístic
 emisor arma su certificado como quiere: se leen con un modelo y por eso cada campo viaja
 con la confianza que el modelo declaró.
 """
+
 from declaras.documents.models import DocumentReading, ExtractedField
 from declaras.extraccion.f220 import extraer_220, id_documento
 
@@ -377,7 +392,9 @@ from declaras.services.conciliacion import Concepto, EstadoPartida, Lado, abrir,
 
 def _exogena(*filas: dict) -> DocumentReading:
     return DocumentReading(
-        doc_type="EXOGENA", parser="test", content_sha256="a" * 64,
+        doc_type="EXOGENA",
+        parser="test",
+        content_sha256="a" * 64,
         fields=[ExtractedField(name="id_number", value="1234567")],
         rows=[ExtractedRow(values=f, source=f"A{i}") for i, f in enumerate(filas, 20)],
     )
@@ -385,27 +402,38 @@ def _exogena(*filas: dict) -> DocumentReading:
 
 def _fila(nit, codigo, monto, retencion=0, reportado_a="1234567", nombre="ACME SAS"):
     return {
-        "reporter_nit": nit, "reporter_name": nombre,
-        "reported_id_number": reportado_a, "reported_name": "PRUEBA",
-        "concept": f"X (Concepto: {codigo})", "concept_code": codigo,
-        "amount": monto, "retencion": retencion,
+        "reporter_nit": nit,
+        "reporter_name": nombre,
+        "reported_id_number": reportado_a,
+        "reported_name": "PRUEBA",
+        "concept": f"X (Concepto: {codigo})",
+        "concept_code": codigo,
+        "amount": monto,
+        "retencion": retencion,
         "suggested_use": "Tope 1: Ingresos brutos | R32 Ingresos brutos",
     }
 
 
 def _cert_220(nit, salarios, retencion=0):
-    campos = {"empleador_nit": nit, "empleador_nombre": "ACME SAS",
-              "salarios": salarios, "retencion": retencion}
+    campos = {
+        "empleador_nit": nit,
+        "empleador_nombre": "ACME SAS",
+        "salarios": salarios,
+        "retencion": retencion,
+    }
     return DocumentReading(
-        doc_type="CERT_INGRESOS_220", parser="test", content_sha256="b" * 64,
+        doc_type="CERT_INGRESOS_220",
+        parser="test",
+        content_sha256="b" * 64,
         fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
     )
 
 
 def test_abrir_deja_todo_en_solo_dian():
     """Fase 1: solo hay DIAN. Nada puede estar conciliado todavía."""
-    partidas = abrir(_exogena(_fila("900111222", "5001", 87_400_000),
-                              _fila("890903938", "5010", 8_000_000)))
+    partidas = abrir(
+        _exogena(_fila("900111222", "5001", 87_400_000), _fila("890903938", "5010", 8_000_000))
+    )
     assert {p.estado for p in partidas} == {EstadoPartida.SOLO_DIAN}
     assert {p.concepto for p in partidas} == {Concepto.SALARIOS, Concepto.RENDIMIENTOS}
 
@@ -438,8 +466,9 @@ def test_discrepancia_solo_en_la_retencion():
 
 
 def test_dos_codigos_del_mismo_concepto_son_una_partida():
-    partidas = abrir(_exogena(_fila("901222333", "5002", 10_000_000),
-                              _fila("901222333", "5003", 4_000_000)))
+    partidas = abrir(
+        _exogena(_fila("901222333", "5002", 10_000_000), _fila("901222333", "5003", 4_000_000))
+    )
     assert len(partidas) == 1
     assert partidas[0].version_dian.monto == 14_000_000
     assert sorted(partidas[0].codigos_crudos) == ["5002", "5003"]
@@ -563,9 +592,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 import pytest
 
 from declaras.services.conciliacion import (
-    Decision, EstadoPartida, Motivo, autorresolver, pendientes, resolver,
+    Decision,
+    EstadoPartida,
+    Motivo,
+    autorresolver,
+    pendientes,
+    resolver,
 )
-from tests.unit.conciliacion.fabricas import partida_discrepancia, partida_coincide, partida_solo_dian
+from tests.unit.conciliacion.fabricas import (
+    partida_discrepancia,
+    partida_coincide,
+    partida_solo_dian,
+)
 
 
 def test_autorresuelve_solo_las_coincidentes():
@@ -576,27 +614,37 @@ def test_autorresuelve_solo_las_coincidentes():
 
 
 def test_resolver_discrepancia_a_favor_del_documento():
-    p = resolver(partida_discrepancia(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="contador@x.co")
+    p = resolver(
+        partida_discrepancia(),
+        Decision.USAR_DOCUMENTO,
+        motivo=Motivo.ERROR_DEL_TERCERO,
+        quien="contador@x.co",
+    )
     assert p.resolucion.valor == 85_000_000
     assert p.resolucion.decision is Decision.USAR_DOCUMENTO
 
 
 def test_no_se_puede_usar_documento_que_no_existe():
     with pytest.raises(ValueError, match="SOLO_DIAN"):
-        resolver(partida_solo_dian(), Decision.USAR_DOCUMENTO,
-                 motivo=Motivo.ERROR_DEL_TERCERO, quien="x")
+        resolver(
+            partida_solo_dian(), Decision.USAR_DOCUMENTO, motivo=Motivo.ERROR_DEL_TERCERO, quien="x"
+        )
 
 
 def test_usar_otro_exige_valor():
     with pytest.raises(ValueError, match="valor"):
-        resolver(partida_discrepancia(), Decision.USAR_OTRO,
-                 motivo=Motivo.DECISION_DEL_CONTADOR, quien="x")
+        resolver(
+            partida_discrepancia(),
+            Decision.USAR_OTRO,
+            motivo=Motivo.DECISION_DEL_CONTADOR,
+            quien="x",
+        )
 
 
 def test_pendientes_ordena_por_plata_en_juego():
-    ps = pendientes([partida_discrepancia(diferencia=100),
-                     partida_discrepancia(diferencia=9_000_000)])
+    ps = pendientes(
+        [partida_discrepancia(diferencia=100), partida_discrepancia(diferencia=9_000_000)]
+    )
     assert ps[0].diferencia_monto == 9_000_000
 ```
 
@@ -606,7 +654,11 @@ import pytest
 
 from declaras.caso import Contribuyente
 from declaras.services.conciliacion import Decision, Motivo, a_caso, autorresolver, resolver
-from tests.unit.conciliacion.fabricas import partida_coincide, partida_discrepancia, partida_solo_dian
+from tests.unit.conciliacion.fabricas import (
+    partida_coincide,
+    partida_discrepancia,
+    partida_solo_dian,
+)
 
 CONTRIB = Contribuyente(num_doc="1234567", nombre="Prueba")
 
@@ -780,8 +832,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ```python
 def test_ingresos_llevan_nit_opcional_para_el_cruce():
-    p = IngresoPension(pagador="Colpensiones", pagador_nit="900123456",
-                       mesadas=[10_000_000] * 12, fuente=FX)
+    p = IngresoPension(
+        pagador="Colpensiones", pagador_nit="900123456", mesadas=[10_000_000] * 12, fuente=FX
+    )
     assert p.pagador_nit == "900123456"
     # Opcional: la entrada manual puede no tenerlo.
     assert IngresoPension(pagador="X", mesadas=[0] * 12, fuente=FX).pagador_nit is None
@@ -831,14 +884,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 def test_base_centraliza_preflight_y_llamada():
     with pytest.raises(ValueError, match="PDF"):
-        extraer(b"no-es-pdf", schema=Extraccion220, prompt="x", anio_esperado=None,
-                client=ClienteFalso(EXTRACCION))
+        extraer(
+            b"no-es-pdf",
+            schema=Extraccion220,
+            prompt="x",
+            anio_esperado=None,
+            client=ClienteFalso(EXTRACCION),
+        )
 
 
 def test_base_revienta_sin_salida_estructurada():
     with pytest.raises(ValueError, match="stop_reason"):
-        extraer(b"%PDF-x", schema=Extraccion220, prompt="x", anio_esperado=None,
-                client=ClienteSinSalida())
+        extraer(
+            b"%PDF-x",
+            schema=Extraccion220,
+            prompt="x",
+            anio_esperado=None,
+            client=ClienteSinSalida(),
+        )
 
 
 def test_reglas_comunes_traen_el_guard_de_instrucciones():

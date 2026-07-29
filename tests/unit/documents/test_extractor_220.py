@@ -18,13 +18,20 @@ def _kwargs_validos(**cambios):
     validación del schema: `model_copy(update=…)` la salta.
     """
     base = dict(
-        empleador_nit="900123456", empleador_nombre="ACME SAS",
-        anio_gravable=2025, numero_de_certificados=1,
+        empleador_nit="900123456",
+        empleador_nombre="ACME SAS",
+        anio_gravable=2025,
+        numero_de_certificados=1,
         total_ingresos_brutos=123_000_000,
-        salarios=120_000_000, cesantias_e_intereses=2_000_000, prima=1_000_000,
-        bonificaciones=0, pensiones_de_jubilacion=0,
-        aportes_salud=4_800_000, aportes_pension=4_800_000,
-        retencion=8_000_000, confianza=0.97,
+        salarios=120_000_000,
+        cesantias_e_intereses=2_000_000,
+        prima=1_000_000,
+        bonificaciones=0,
+        pensiones_de_jubilacion=0,
+        aportes_salud=4_800_000,
+        aportes_pension=4_800_000,
+        retencion=8_000_000,
+        confianza=0.97,
     )
     base.update(cambios)
     return base
@@ -60,13 +67,21 @@ def test_envia_pdf_como_documento_base64():
 
 # Un valor DISTINTO por campo: si el constructor cruza dos campos (p. ej. salud con
 # pensión), el assert del campo cruzado falla. Con montos repetidos el mutante sobrevive.
-EXTRACCION_DISTINTA = Extraccion220(**_kwargs_validos(
-    empleador_nit="800555111", empleador_nombre="OTRA LTDA",
-    total_ingresos_brutos=10_000_000,  # 1 + 2 + 3 + 4
-    salarios=1_000_000, cesantias_e_intereses=2_000_000, prima=3_000_000,
-    bonificaciones=4_000_000, aportes_salud=5_000_000, aportes_pension=6_000_000,
-    retencion=7_000_000, confianza=0.5,
-))
+EXTRACCION_DISTINTA = Extraccion220(
+    **_kwargs_validos(
+        empleador_nit="800555111",
+        empleador_nombre="OTRA LTDA",
+        total_ingresos_brutos=10_000_000,  # 1 + 2 + 3 + 4
+        salarios=1_000_000,
+        cesantias_e_intereses=2_000_000,
+        prima=3_000_000,
+        bonificaciones=4_000_000,
+        aportes_salud=5_000_000,
+        aportes_pension=6_000_000,
+        retencion=7_000_000,
+        confianza=0.5,
+    )
+)
 
 
 def test_mapea_cada_campo_a_su_homonimo():
@@ -99,6 +114,7 @@ def test_falla_con_error_de_dominio_si_no_hay_salida_estructurada():
 
 # --- guards ruidosos: el extractor alimenta un formulario tributario ---
 
+
 def test_rechaza_bytes_que_no_son_pdf_sin_llamar_al_api():
     cliente = ClienteFalso(EXTRACCION)
     with pytest.raises(ValueError, match="no parece un PDF"):
@@ -126,10 +142,12 @@ def test_pensiones_con_total_descuadrado_reporta_no_reconcilia():
 # El 220 mixto es el caso que se colaba en silencio: un modelo obediente plegaba las
 # pensiones dentro de `bonificaciones` para cumplir la regla de partición, la
 # reconciliación cuadraba y el ingreso pensional se liquidaba como laboral.
-MIXTO = Extraccion220(**_kwargs_validos(
-    pensiones_de_jubilacion=30_000_000,
-    total_ingresos_brutos=153_000_000,  # el total impreso INCLUYE las pensiones
-))
+MIXTO = Extraccion220(
+    **_kwargs_validos(
+        pensiones_de_jubilacion=30_000_000,
+        total_ingresos_brutos=153_000_000,  # el total impreso INCLUYE las pensiones
+    )
+)
 
 
 def test_mixto_dispara_el_guard_de_pensiones_y_no_el_de_reconciliacion():
@@ -164,9 +182,7 @@ def test_el_prompt_blinda_contra_instrucciones_dentro_del_pdf():
 def test_pensiones_de_jubilacion_es_obligatoria_en_el_schema():
     # Sin default: el modelo debe declararla siempre, aunque sea 0. Si fuera opcional,
     # un modelo que la omite deja pasar el 220 mixto como laboral puro.
-    sin_pensiones = {
-        k: v for k, v in _kwargs_validos().items() if k != "pensiones_de_jubilacion"
-    }
+    sin_pensiones = {k: v for k, v in _kwargs_validos().items() if k != "pensiones_de_jubilacion"}
     with pytest.raises(ValueError, match="pensiones_de_jubilacion"):
         Extraccion220(**sin_pensiones)
 
@@ -184,9 +200,7 @@ def test_rechaza_extraccion_que_no_reconcilia_contra_el_total():
 def test_borde_exacto_de_la_tolerancia(diferencia, revienta):
     # Ancla del borde: 1000 pasa, 1001 revienta. Mata los mutantes `1_000 -> 999`
     # y `> -> >=`, que solo se distinguen justo en el borde.
-    ext = EXTRACCION.model_copy(
-        update={"total_ingresos_brutos": 123_000_000 + diferencia}
-    )
+    ext = EXTRACCION.model_copy(update={"total_ingresos_brutos": 123_000_000 + diferencia})
     if revienta:
         with pytest.raises(ValueError, match="no reconcilia"):
             extraer_220(PDF, client=ClienteFalso(ext))

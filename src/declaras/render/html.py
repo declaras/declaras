@@ -6,7 +6,8 @@ from declaras.render.memoria import _verificar_pareja, casillas
 
 # autoescape: el nombre del contribuyente llega de extracción LLM y del API — dato no
 # confiable que se interpola en el <title> y el <p>. Las fórmulas (−, ×, Σ) no se tocan.
-_PLANTILLA = Template("""<!doctype html>
+_PLANTILLA = Template(
+    """<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <title>Borrador 210 — {{ caso.contribuyente.nombre }}</title>
 <style>
@@ -40,7 +41,9 @@ Elecciones: art. 387 = {{ "sí" if liq.elecciones.usar_387 else "no" }},
 {%- if c.insumos %}<br><small>Insumos: {{ c.insumos|join(", ") }}</small>{% endif %}</td>
 <td><small>{{ c.regla or "" }}</small></td>
 </tr>{% endfor %}</tbody></table>
-</body></html>""", autoescape=True)
+</body></html>""",
+    autoescape=True,
+)
 
 
 def borrador_html(liq: Liquidacion, caso: CasoTributario) -> str:

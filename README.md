@@ -355,11 +355,11 @@ from declaras.optimizador import optimizar
 from declaras.parametros import cargar
 from declaras.render import borrador_html, memoria_markdown
 
-p = cargar(2025)                          # parametros del anio gravable, desde ag2025.yaml
-r = optimizar(caso, p)                    # evalua las elecciones legales y elige la mejor
-r.liquidacion.valor("IMPUESTO_NETO")      # la cifra
-memoria_markdown(r.liquidacion, caso)     # el porque, renglon por renglon
-borrador_html(r.liquidacion, caso)        # el borrador del 210 para que alguien lo firme
+p = cargar(2025)  # parametros del anio gravable, desde ag2025.yaml
+r = optimizar(caso, p)  # evalua las elecciones legales y elige la mejor
+r.liquidacion.valor("IMPUESTO_NETO")  # la cifra
+memoria_markdown(r.liquidacion, caso)  # el porque, renglon por renglon
+borrador_html(r.liquidacion, caso)  # el borrador del 210 para que alguien lo firme
 ```
 
 | Modulo | Que hace |

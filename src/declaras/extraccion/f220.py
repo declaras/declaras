@@ -108,9 +108,7 @@ def extraer_220(
     Falla RUIDOSO: esto alimenta un formulario tributario, así que cualquier duda sobre
     la extracción es un `ValueError`, nunca un número silenciosamente equivocado.
     """
-    return extraer_220_con_metadatos(
-        pdf_bytes, anio_esperado=anio_esperado, client=client
-    )[0]
+    return extraer_220_con_metadatos(pdf_bytes, anio_esperado=anio_esperado, client=client)[0]
 
 
 def extraer_220_con_metadatos(
@@ -149,8 +147,7 @@ def extraer_220_con_metadatos(
         # Con dos certificados en el PDF no se sabe de cuál salió cada cifra.
         raise Extraccion220InvalidaError(
             Motivo220.VARIOS_CERTIFICADOS,
-            f"El PDF contiene {ext.numero_de_certificados} certificados; "
-            "procesa uno a la vez."
+            f"El PDF contiene {ext.numero_de_certificados} certificados; procesa uno a la vez.",
         )
 
     # Identidad del documento primero: el error más común es subir el 220 del año
@@ -159,7 +156,7 @@ def extraer_220_con_metadatos(
         raise Extraccion220InvalidaError(
             Motivo220.OTRO_ANIO,
             f"El certificado es del año gravable {ext.anio_gravable} "
-            f"y se esperaba {anio_esperado}."
+            f"y se esperaba {anio_esperado}.",
         )
 
     # Las pensiones entran en la suma porque el "Total de ingresos brutos" impreso las
@@ -167,7 +164,10 @@ def extraer_220_con_metadatos(
     # load-bearing (un 220 mixto bien extraído reconcilia gracias a él) y por tanto
     # verificable, en vez de ser código correcto pero inalcanzable.
     suma = (
-        ext.salarios + ext.cesantias_e_intereses + ext.prima + ext.bonificaciones
+        ext.salarios
+        + ext.cesantias_e_intereses
+        + ext.prima
+        + ext.bonificaciones
         + ext.pensiones_de_jubilacion
     )
     if abs(suma - ext.total_ingresos_brutos) > TOLERANCIA_RECONCILIACION_PESOS:
@@ -178,7 +178,7 @@ def extraer_220_con_metadatos(
             Motivo220.NO_RECONCILIA,
             "La extracción no reconcilia contra el total impreso del certificado: "
             f"los campos suman {suma:,} y el certificado dice "
-            f"{ext.total_ingresos_brutos:,}."
+            f"{ext.total_ingresos_brutos:,}.",
         )
 
     if ext.pensiones_de_jubilacion > 0:
@@ -187,7 +187,7 @@ def extraer_220_con_metadatos(
         raise Extraccion220InvalidaError(
             Motivo220.TIENE_PENSIONES,
             f"El 220 reporta pensiones ({ext.pensiones_de_jubilacion:,}); "
-            "regístralas como IngresoPension, no laboral."
+            "regístralas como IngresoPension, no laboral.",
         )
 
     laboral = IngresoLaboral(

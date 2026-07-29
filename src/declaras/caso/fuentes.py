@@ -57,8 +57,9 @@ class Fuente(_Modelo):
         return cls(clase="fixture", ref=nombre)
 
     @classmethod
-    def documento(cls, tipo: str, doc_id: str, pagina: int | None = None,
-                  confianza: float | None = None) -> "Fuente":
+    def documento(
+        cls, tipo: str, doc_id: str, pagina: int | None = None, confianza: float | None = None
+    ) -> "Fuente":
         detalle = f"{tipo} pág {pagina}" if pagina is not None else tipo
         return cls(clase="documento", ref=doc_id, detalle=detalle, confianza=confianza)
 

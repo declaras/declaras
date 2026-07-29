@@ -88,9 +88,7 @@ def extraer_pension(
     client: Any = None,
 ) -> IngresoPension:
     """Extrae un certificado de pensión y devuelve el hecho con proveniencia."""
-    return extraer_pension_con_metadatos(
-        pdf_bytes, anio_esperado=anio_esperado, client=client
-    )[0]
+    return extraer_pension_con_metadatos(pdf_bytes, anio_esperado=anio_esperado, client=client)[0]
 
 
 def extraer_pension_con_metadatos(

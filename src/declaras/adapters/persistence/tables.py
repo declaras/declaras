@@ -169,9 +169,7 @@ class CasePartidaRow(Base):
     partida_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        UniqueConstraint("case_id", "partida_id", name="uq_partida_caso"),
-    )
+    __table_args__ = (UniqueConstraint("case_id", "partida_id", name="uq_partida_caso"),)
 
 
 class CaseConciliacionRow(Base):
@@ -196,9 +194,7 @@ class CaseConciliacionRow(Base):
 
     __tablename__ = "case_conciliacion"
 
-    case_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("cases.id"), primary_key=True
-    )
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("cases.id"), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     huella_documentos: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -221,9 +217,7 @@ class CaseRespuestaRow(Base):
     respuesta_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        UniqueConstraint("case_id", "pregunta", name="uq_respuesta_caso_pregunta"),
-    )
+    __table_args__ = (UniqueConstraint("case_id", "pregunta", name="uq_respuesta_caso_pregunta"),)
 
 
 class CaseLiquidacionRow(Base):
@@ -249,9 +243,7 @@ class CaseLiquidacionRow(Base):
     base_sin_documentos: Mapped[bool] = mapped_column(Boolean, default=False)
     liquidacion_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    __table_args__ = (
-        UniqueConstraint("case_id", "version", name="uq_liquidacion_caso_version"),
-    )
+    __table_args__ = (UniqueConstraint("case_id", "version", name="uq_liquidacion_caso_version"),)
 
 
 class LoginAttemptRow(Base):

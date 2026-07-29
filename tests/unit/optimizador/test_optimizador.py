@@ -27,8 +27,9 @@ def test_g3_elige_387_y_72uvt():
 def test_nunca_peor_que_ingenuo():
     for caso in (caso_g1(), caso_g3_parcial()):
         opt = optimizar(caso, P).liquidacion.valor("IMPUESTO_NETO")
-        ingenuo = liquidar(caso, P, Elecciones(usar_387=False,
-                                               usar_72uvt=False)).valor("IMPUESTO_NETO")
+        ingenuo = liquidar(caso, P, Elecciones(usar_387=False, usar_72uvt=False)).valor(
+            "IMPUESTO_NETO"
+        )
         assert opt <= ingenuo
 
 
@@ -60,8 +61,7 @@ def test_sin_dependientes_un_solo_combo():
     assert optimizar(caso, P).evaluadas == 1
 
 
-@pytest.mark.parametrize("modelo", [Nodo, Flag, Liquidacion, Elecciones,
-                                    ResultadoOptimizacion])
+@pytest.mark.parametrize("modelo", [Nodo, Flag, Liquidacion, Elecciones, ResultadoOptimizacion])
 def test_modelos_exportados_prohiben_campos_extra(modelo: type[BaseModel]):
     """Un campo mal escrito debe explotar, no colarse silencioso en la traza."""
     assert modelo.model_config.get("extra") == "forbid"

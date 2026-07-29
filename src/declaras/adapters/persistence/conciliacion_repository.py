@@ -151,9 +151,7 @@ class SqlConciliacionRepository:
                         ),
                     )
                     if not cambiadas.rowcount:
-                        raise ConflictoDeConcurrenciaError(
-                            revision_leida=revision_esperada
-                        )
+                        raise ConflictoDeConcurrenciaError(revision_leida=revision_esperada)
                 else:
                     session.add(
                         CaseConciliacionRow(

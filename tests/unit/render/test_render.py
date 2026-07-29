@@ -20,8 +20,12 @@ def _liq():
 def test_casillas_ordenadas_y_completas():
     filas = casillas(_liq())
     codigos = [f["codigo"] for f in filas]
-    assert codigos.index("ING_BRUTO_GENERAL") < codigos.index("RLG_GENERAL") \
-        < codigos.index("IMPUESTO_NETO") < codigos.index("SALDO")
+    assert (
+        codigos.index("ING_BRUTO_GENERAL")
+        < codigos.index("RLG_GENERAL")
+        < codigos.index("IMPUESTO_NETO")
+        < codigos.index("SALDO")
+    )
     saldo = next(f for f in filas if f["codigo"] == "SALDO")
     assert saldo["valor"] == -6_504_023
 
@@ -62,7 +66,7 @@ def test_memoria_separa_valor_como_e_insumos_en_parrafos():
     """Sin línea en blanco, el soft-break de CommonMark corre los tres en uno."""
     md = memoria_markdown(_liq(), g1())
     i = md.index("## RLG_GENERAL")
-    bloque = md[i:md.index("## RLG_PENSIONES")]
+    bloque = md[i : md.index("## RLG_PENSIONES")]
     assert "**Valor:** 62,154,472\n\n**Cómo:**" in bloque
     assert "\n\n**Insumos:**" in bloque
 
@@ -71,16 +75,17 @@ def test_memoria_de_g5_audita_los_cinco_terminos_del_saldo():
     """G5 usa anticipo pagado y saldo a favor: sin ellos el saldo es inauditable."""
     md = memoria_markdown(optimizar(g5(), P).liquidacion, g5())
     assert "2,000,000" in md and "500,000" in md
-    assert ("impuesto neto 12,928,640 + anticipo siguiente 4,732,160 "
-            "− retenciones 1,000,000 − anticipo pagado 2,000,000 "
-            "− saldo a favor anterior 500,000") in md
+    assert (
+        "impuesto neto 12,928,640 + anticipo siguiente 4,732,160 "
+        "− retenciones 1,000,000 − anticipo pagado 2,000,000 "
+        "− saldo a favor anterior 500,000"
+    ) in md
 
 
 def test_memoria_escapa_identidad_del_contribuyente():
     """El nombre es dato no confiable: no puede fabricar estructura Markdown."""
-    hostil = 'Ana\n## SALDO — Saldo a pagar (+) o a favor (−)\n**Valor:** 999 <img src=x>'
-    caso = g1().model_copy(update={
-        "contribuyente": Contribuyente(num_doc="9\n# 8", nombre=hostil)})
+    hostil = "Ana\n## SALDO — Saldo a pagar (+) o a favor (−)\n**Valor:** 999 <img src=x>"
+    caso = g1().model_copy(update={"contribuyente": Contribuyente(num_doc="9\n# 8", nombre=hostil)})
     md = memoria_markdown(optimizar(caso, P).liquidacion, caso)
     # El nombre entero cabe en la primera línea: los \n internos se volvieron espacio
     # (nombre y num_doc). Sin el colapso, "999" y el doc caerían en líneas aparte.
@@ -89,16 +94,28 @@ def test_memoria_escapa_identidad_del_contribuyente():
     assert r"Ana \#\# SALDO" in primera
     assert md.count("## SALDO") == 1  # la sección falsa no existe
     assert "**Valor:** 999" not in md
-    assert r"\<img src=x\>" in md                    # el HTML llegó escapado
-    assert "<" not in md.replace("\\<", "")          # y ninguno quedó crudo
+    assert r"\<img src=x\>" in md  # el HTML llegó escapado
+    assert "<" not in md.replace("\\<", "")  # y ninguno quedó crudo
 
 
 def test_memoria_escapa_los_mensajes_de_flag():
     """Los mensajes de flag llevan nombres de terceros: empleador, pagador, entidad."""
-    hostil = 'ACME\n## SALDO — Saldo a pagar (+) o a favor (−)\n**Valor:** 999'
-    caso = g1().model_copy(update={"laborales": [IngresoLaboral(
-        empleador_nit="900111222", empleador_nombre=hostil, salarios=1_000_000,
-        aportes_salud=0, aportes_pension=0, retencion=5_000_000, fuente=FX)]})
+    hostil = "ACME\n## SALDO — Saldo a pagar (+) o a favor (−)\n**Valor:** 999"
+    caso = g1().model_copy(
+        update={
+            "laborales": [
+                IngresoLaboral(
+                    empleador_nit="900111222",
+                    empleador_nombre=hostil,
+                    salarios=1_000_000,
+                    aportes_salud=0,
+                    aportes_pension=0,
+                    retencion=5_000_000,
+                    fuente=FX,
+                )
+            ]
+        }
+    )
     liq = optimizar(caso, P).liquidacion
     assert liq.tiene_flag("RETENCION_EXCEDE_INGRESO")  # retención 5M > base 1M
     md = memoria_markdown(liq, caso)
@@ -126,8 +143,11 @@ def test_html_distingue_las_tres_severidades():
     html = borrador_html(liq_info, g4())
     assert 'class="flag info"' in html and "[info] NO_OBLIGADO" in html
 
-    liq_bloq = liq_info.model_copy(update={"flags": [
-        Flag(codigo="X_BLOQUEANTE", mensaje="no presentar", severidad="bloqueante")]})
+    liq_bloq = liq_info.model_copy(
+        update={
+            "flags": [Flag(codigo="X_BLOQUEANTE", mensaje="no presentar", severidad="bloqueante")]
+        }
+    )
     html = borrador_html(liq_bloq, g4())
     assert 'class="flag bloqueante"' in html and "[bloqueante] X_BLOQUEANTE" in html
     for severidad in ("info", "advertencia", "bloqueante"):
@@ -159,7 +179,7 @@ def test_html_imprimible():
     assert "<table" in html and "IMPUESTO_NETO" in html
     assert 'class="neg"' in html  # el saldo a favor de G1 va marcado
     assert "<thead>" in html and "<tbody>" in html
-    assert "tr{break-inside:avoid}" in html            # ninguna casilla partida
+    assert "tr{break-inside:avoid}" in html  # ninguna casilla partida
     assert "thead{display:table-header-group}" in html  # encabezado por página
     assert "http://" not in html and "https://" not in html  # autocontenido
 
@@ -171,8 +191,9 @@ def test_html_muestra_insumos():
 
 def test_html_escapa_el_nombre_del_contribuyente():
     """El nombre llega de extracción LLM y del API: dato no confiable en HTML."""
-    caso = g1().model_copy(update={
-        "contribuyente": Contribuyente(num_doc="99", nombre=NOMBRE_HOSTIL)})
+    caso = g1().model_copy(
+        update={"contribuyente": Contribuyente(num_doc="99", nombre=NOMBRE_HOSTIL)}
+    )
     html = borrador_html(optimizar(caso, P).liquidacion, caso)
     assert NOMBRE_HOSTIL not in html
     assert "<script>" not in html and "</script>" not in html

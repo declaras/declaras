@@ -151,8 +151,7 @@ def extraer[T: BaseModel](
         # que saldría al leer el primer campo de None.
         raise ExtraccionInvalidaError(
             MotivoExtraccion.SIN_SALIDA,
-            "La extracción no produjo salida estructurada "
-            f"(stop_reason={respuesta.stop_reason}).",
+            f"La extracción no produjo salida estructurada (stop_reason={respuesta.stop_reason}).",
         )
 
     if anio_esperado is not None:

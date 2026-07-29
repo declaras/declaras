@@ -98,8 +98,12 @@ def partida_pension(total: int = 66_000_000) -> Partida:
         concepto=Concepto.PENSIONES,
         codigos_crudos=["5099"],
         version_dian=Valor(
-            monto=total, retencion=None, lado=Lado.DIAN,
-            tercero="COLPENSIONES", celda="A20", confianza=1.0,
+            monto=total,
+            retencion=None,
+            lado=Lado.DIAN,
+            tercero="COLPENSIONES",
+            celda="A20",
+            confianza=1.0,
         ),
         estado=EstadoPartida.SOLO_DIAN,
     )
@@ -115,8 +119,12 @@ def partida_dividendos(total: int = 14_000_000) -> Partida:
         concepto=Concepto.DIVIDENDOS,
         codigos_crudos=["5043"],
         version_dian=Valor(
-            monto=total, retencion=None, lado=Lado.DIAN,
-            tercero="SOCIEDAD W", celda="A22", confianza=1.0,
+            monto=total,
+            retencion=None,
+            lado=Lado.DIAN,
+            tercero="SOCIEDAD W",
+            celda="A22",
+            confianza=1.0,
         ),
         estado=EstadoPartida.SOLO_DIAN,
     )

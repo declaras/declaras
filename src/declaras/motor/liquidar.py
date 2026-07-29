@@ -8,8 +8,7 @@ from declaras.motor.traza import Liquidacion, Traza
 from declaras.parametros import ParametrosAnio
 
 
-def liquidar(caso: CasoTributario, p: ParametrosAnio,
-             elecciones: Elecciones) -> Liquidacion:
+def liquidar(caso: CasoTributario, p: ParametrosAnio, elecciones: Elecciones) -> Liquidacion:
     """Función pura: Caso + Parámetros + Elecciones → Liquidación trazable."""
     if caso.anio_gravable != p.anio:
         raise ValueError(

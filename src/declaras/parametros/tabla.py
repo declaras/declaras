@@ -13,6 +13,7 @@ def impuesto_tabla_241(base: int, p: ParametrosAnio) -> int:
         desde = tramo.desde_uvt * p.uvt
         hasta = tramo.hasta_uvt * p.uvt if tramo.hasta_uvt is not None else None
         if base > desde and (hasta is None or base <= hasta):
-            return pesos(Decimal(base - desde) * Decimal(str(tramo.tarifa))
-                         + tramo.constante_uvt * p.uvt)
+            return pesos(
+                Decimal(base - desde) * Decimal(str(tramo.tarifa)) + tramo.constante_uvt * p.uvt
+            )
     return 0

@@ -73,9 +73,7 @@ NOTA_VALORES_CAMBIARON = "los valores cambiaron desde la resolución anterior"
 # este automatismo EN SILENCIO, sin pasar por acá. Quien agregue ese tipo tiene que verificar
 # que su documento también sea la fuente autoritativa del aporte; si no lo es, hay que
 # discriminar por `doc_type` (y eso exige que la partida lo lleve, que hoy no lo lleva).
-CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO = frozenset(
-    {Concepto.APORTES_SALUD, Concepto.APORTES_PENSION}
-)
+CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO = frozenset({Concepto.APORTES_SALUD, Concepto.APORTES_PENSION})
 
 # Qué decisión es posible sobre qué desenlace del cruce. La tabla del brief, con DOS
 # desviaciones autorizadas. (1) Herencia de T4 (riesgo 2 de la ronda 2): SOLO_DOCUMENTO
@@ -92,16 +90,18 @@ _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
         {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.LLEVAR_A_MANO}
     ),
     EstadoPartida.DISCREPANCIA: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO,
-         Decision.LLEVAR_A_MANO}
+        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO, Decision.LLEVAR_A_MANO}
     ),
     EstadoPartida.SOLO_DIAN: frozenset(
-        {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO,
-         Decision.LLEVAR_A_MANO}
+        {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO, Decision.LLEVAR_A_MANO}
     ),
     EstadoPartida.SOLO_DOCUMENTO: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CERRAR_SIN_SOPORTE,
-         Decision.LLEVAR_A_MANO}
+        {
+            Decision.USAR_DOCUMENTO,
+            Decision.USAR_OTRO,
+            Decision.CERRAR_SIN_SOPORTE,
+            Decision.LLEVAR_A_MANO,
+        }
     ),
     # Sin concepto no se sabe a qué cédula del 210 iría el valor: no puede aportar hecho
     # (y tampoco "llevarse a mano": no se sabe QUÉ se estaría llevando).
@@ -117,12 +117,20 @@ _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
 # pidió que el nombre Y el motivo digan "el soporte existe, falta el motor").
 _MOTIVOS_POR_DECISION: dict[Decision, frozenset[Motivo]] = {
     Decision.USAR_DIAN: frozenset(
-        {Motivo.ERROR_DEL_CERTIFICADO, Motivo.FALTA_DOCUMENTO, Motivo.COINCIDEN,
-         Motivo.DECISION_DEL_CONTADOR}
+        {
+            Motivo.ERROR_DEL_CERTIFICADO,
+            Motivo.FALTA_DOCUMENTO,
+            Motivo.COINCIDEN,
+            Motivo.DECISION_DEL_CONTADOR,
+        }
     ),
     Decision.USAR_DOCUMENTO: frozenset(
-        {Motivo.ERROR_DEL_TERCERO, Motivo.COINCIDEN, Motivo.DECISION_DEL_CONTADOR,
-         Motivo.SIN_CONTRAPARTE_DIAN}
+        {
+            Motivo.ERROR_DEL_TERCERO,
+            Motivo.COINCIDEN,
+            Motivo.DECISION_DEL_CONTADOR,
+            Motivo.SIN_CONTRAPARTE_DIAN,
+        }
     ),
     Decision.USAR_OTRO: frozenset({Motivo.DECISION_DEL_CONTADOR}),
     Decision.MARCAR_AJENO: frozenset({Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}),
@@ -184,8 +192,13 @@ def resolver(
             "subdeclararía."
         )
     return _con_resolucion(
-        partida, decision, motivo=motivo, quien=quien, origen=Origen.CONTADOR,
-        valor=valor, nota=nota,
+        partida,
+        decision,
+        motivo=motivo,
+        quien=quien,
+        origen=Origen.CONTADOR,
+        valor=valor,
+        nota=nota,
     )
 
 
@@ -217,35 +230,57 @@ def autorresolver(partidas: list[Partida]) -> list[Partida]:
     """
     resueltas: list[Partida] = []
     for p in partidas:
-        if (p.resolucion is not None
-                and p.resolucion.origen is Origen.SISTEMA
-                and p.resolucion.huella != _huella(p)):
+        if (
+            p.resolucion is not None
+            and p.resolucion.origen is Origen.SISTEMA
+            and p.resolucion.huella != _huella(p)
+        ):
             p = p.model_copy(update={"resolucion": None})
-        if (p.resolucion is not None or p.reportado_a is not None
-                or p.concepto in CONCEPTOS_FUERA_DEL_MOTOR):
+        if (
+            p.resolucion is not None
+            or p.reportado_a is not None
+            or p.concepto in CONCEPTOS_FUERA_DEL_MOTOR
+        ):
             resueltas.append(p)
         elif p.estado is EstadoPartida.COINCIDE:
-            resueltas.append(_con_resolucion(
-                p, Decision.USAR_DOCUMENTO, motivo=Motivo.COINCIDEN,
-                quien=QUIEN_SISTEMA, origen=Origen.SISTEMA,
-            ))
+            resueltas.append(
+                _con_resolucion(
+                    p,
+                    Decision.USAR_DOCUMENTO,
+                    motivo=Motivo.COINCIDEN,
+                    quien=QUIEN_SISTEMA,
+                    origen=Origen.SISTEMA,
+                )
+            )
         elif p.estado is EstadoPartida.SOLO_DIAN:
-            resueltas.append(_con_resolucion(
-                p, Decision.USAR_DIAN, motivo=Motivo.FALTA_DOCUMENTO,
-                quien=QUIEN_SISTEMA, origen=Origen.SISTEMA,
-            ))
-        elif (p.estado is EstadoPartida.SOLO_DOCUMENTO
-                and p.concepto in CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO):
+            resueltas.append(
+                _con_resolucion(
+                    p,
+                    Decision.USAR_DIAN,
+                    motivo=Motivo.FALTA_DOCUMENTO,
+                    quien=QUIEN_SISTEMA,
+                    origen=Origen.SISTEMA,
+                )
+            )
+        elif (
+            p.estado is EstadoPartida.SOLO_DOCUMENTO
+            and p.concepto in CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO
+        ):
             # El TERCER automatismo (ver `CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO`): la exógena
             # reporta los aportes obligatorios bajo el NIT de la EPS o del fondo, así que
             # esta partida no puede cruzar contra ninguna fila del reporte —imposible por
             # construcción, no "todavía no llegó"— y el 220 es el soporte que la ley exige.
             # Provisional como las otras dos: origen SISTEMA, visible, y un cambio de cifras
             # la invalida por huella.
-            resueltas.append(_con_resolucion(
-                p, Decision.USAR_DOCUMENTO, motivo=Motivo.SIN_CONTRAPARTE_DIAN,
-                quien=QUIEN_SISTEMA, origen=Origen.SISTEMA,
-            ))
+            resueltas.append(
+                _con_resolucion(
+                    p,
+                    Decision.USAR_DOCUMENTO,
+                    motivo=Motivo.SIN_CONTRAPARTE_DIAN,
+                    quien=QUIEN_SISTEMA,
+                    origen=Origen.SISTEMA,
+                )
+            )
         else:
             resueltas.append(p)
     return resueltas
@@ -307,10 +342,14 @@ def refrescar(
             # ARRASTRADA por `incorporar` sobre cifras nuevas, y sin esto la rama ponía
             # la nota pero dejaba la resolución rancia pegada (resuelta con el valor
             # viejo y fuera de la cola).
-            resultado.append(nueva.model_copy(update={
-                "resolucion": None,
-                "nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON),
-            }))
+            resultado.append(
+                nueva.model_copy(
+                    update={
+                        "resolucion": None,
+                        "nota": _con_nota(nueva.nota, NOTA_VALORES_CAMBIARON),
+                    }
+                )
+            )
     return autorresolver(resultado), huerfanas
 
 

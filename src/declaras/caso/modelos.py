@@ -88,8 +88,7 @@ class Dividendo(_Modelo):
 
 
 class Dependiente(_Modelo):
-    tipo: Literal["hijo_menor", "hijo_estudiante", "hijo_discapacidad",
-                  "conyuge", "padre_hermano"]
+    tipo: Literal["hijo_menor", "hijo_estudiante", "hijo_discapacidad", "conyuge", "padre_hermano"]
     meses: int = Field(default=12, ge=1, le=12)
     fuente: Fuente
 

@@ -246,9 +246,7 @@ class Liquidaciones:
 
 
 class ConciliacionService:
-    def __init__(
-        self, *, cases: CaseRepository, conciliacion: ConciliacionRepository
-    ) -> None:
+    def __init__(self, *, cases: CaseRepository, conciliacion: ConciliacionRepository) -> None:
         self._cases = cases
         self._repo = conciliacion
 
@@ -406,9 +404,7 @@ class ConciliacionService:
         detail = await self._detalle(case_id)
         respuestas = await self._repo.respuestas(case_id)
         caso = estado.caso if estado.caso is not None else self._caso_vacio(detail)
-        return derivar_peticiones(
-            estado.partidas, respuestas, caso, p=self._parametros(detail)
-        )
+        return derivar_peticiones(estado.partidas, respuestas, caso, p=self._parametros(detail))
 
     async def registrar_respuesta(
         self,
@@ -669,9 +665,7 @@ class ConciliacionService:
             corresponde=True,
         )
 
-    def _mismos_renglones(
-        self, antes: Sequence[Partida], despues: Sequence[Partida]
-    ) -> bool:
+    def _mismos_renglones(self, antes: Sequence[Partida], despues: Sequence[Partida]) -> bool:
         """¿Los renglones dicen lo mismo? Por id y sin mirar CUÁNDO se resolvieron.
 
         Comparar las listas tal cual daba SIEMPRE distinto, por dos razones independientes y
@@ -686,10 +680,7 @@ class ConciliacionService:
         """
 
         def por_id(ps: Sequence[Partida]) -> dict[str, dict[str, object]]:
-            return {
-                p.id: p.model_dump(mode="json", exclude={"resolucion": {"cuando"}})
-                for p in ps
-            }
+            return {p.id: p.model_dump(mode="json", exclude={"resolucion": {"cuando"}}) for p in ps}
 
         return por_id(antes) == por_id(despues)
 
@@ -752,9 +743,7 @@ class ConciliacionService:
         portal: acumular copias dejaría el cruce sin un insumo vigente claro.
         """
         candidatas = [
-            d
-            for d in detail.documents
-            if d.doc_type == DOC_TYPE_EXOGENA and d.reading is not None
+            d for d in detail.documents if d.doc_type == DOC_TYPE_EXOGENA and d.reading is not None
         ]
         if not candidatas:
             return None
@@ -863,9 +852,7 @@ class ConciliacionService:
                 descartadas.append(guardada)
         return descartadas
 
-    async def _registrar_descartadas(
-        self, case_id: UUID, descartadas: Sequence[Partida]
-    ) -> None:
+    async def _registrar_descartadas(self, case_id: UUID, descartadas: Sequence[Partida]) -> None:
         """Deja la decisión descartada como HECHO, no como texto que el próximo rebuild borra.
 
         Dos registros, cada uno con su razón de ser: un evento en la bitácora (append-only y
@@ -877,9 +864,7 @@ class ConciliacionService:
         for partida in descartadas:
             previa = partida.resolucion
             assert previa is not None  # filtrado en `_resoluciones_descartadas`
-            resumen = (
-                f"{previa.decision} por {previa.valor:,} pesos, decidida por {previa.quien}"
-            )
+            resumen = f"{previa.decision} por {previa.valor:,} pesos, decidida por {previa.quien}"
             await self._cases.add_event(
                 case_id=case_id,
                 kind="RESOLUCION_DESCARTADA",

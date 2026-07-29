@@ -56,13 +56,21 @@ class SqlJobRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = session_factory
 
-    async def create(self, *, kind: JobKind, request: dict[str, Any]) -> Job:
+    async def create(
+        self,
+        *,
+        kind: JobKind,
+        request: dict[str, Any],
+        job_id: UUID | None = None,
+        progress: list[dict[str, Any]] | None = None,
+    ) -> Job:
         now = _utcnow()
         row = JobRow(
-            id=str(uuid4()),
+            id=str(job_id or uuid4()),
             kind=kind.value,
             status=JobStatus.QUEUED.value,
             request=request,
+            progress=progress or [],
             attempts=0,
             created_at=now,
             updated_at=now,

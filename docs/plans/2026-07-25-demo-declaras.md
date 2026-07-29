@@ -36,6 +36,7 @@
 # tests/test_smoke.py
 def test_importa():
     import declaras
+
     assert declaras.__version__ == "0.1.0"
 ```
 
@@ -159,8 +160,8 @@ def test_carga_ag2025():
 def test_tabla_241():
     p = cargar(2025)
     assert impuesto_tabla_241(0, p) == 0
-    assert impuesto_tabla_241(54_280_910, p) == 0            # exacto en 1.090 UVT
-    assert impuesto_tabla_241(62_154_472, p) == 1_495_977    # tramo 19% (constante 0)
+    assert impuesto_tabla_241(54_280_910, p) == 0  # exacto en 1.090 UVT
+    assert impuesto_tabla_241(62_154_472, p) == 1_495_977  # tramo 19% (constante 0)
     assert impuesto_tabla_241(125_212_000, p) == 17_131_720  # tramo 28% + 116 UVT
     assert impuesto_tabla_241(118_978_944, p) == 15_386_464
 ```
@@ -314,8 +315,9 @@ def impuesto_tabla_241(base: int, p: ParametrosAnio) -> int:
         desde = tramo.desde_uvt * p.uvt
         hasta = tramo.hasta_uvt * p.uvt if tramo.hasta_uvt is not None else None
         if base > desde and (hasta is None or base <= hasta):
-            return pesos(Decimal(base - desde) * Decimal(str(tramo.tarifa))
-                         + tramo.constante_uvt * p.uvt)
+            return pesos(
+                Decimal(base - desde) * Decimal(str(tramo.tarifa)) + tramo.constante_uvt * p.uvt
+            )
     return 0
 ```
 
@@ -363,7 +365,11 @@ import pytest
 from pydantic import ValidationError
 
 from declaras.caso import (
-    CasoTributario, Contribuyente, Fuente, IngresoLaboral, IngresoPension,
+    CasoTributario,
+    Contribuyente,
+    Fuente,
+    IngresoLaboral,
+    IngresoPension,
 )
 
 FX = Fuente.fixture("test")
@@ -371,9 +377,13 @@ FX = Fuente.fixture("test")
 
 def _laboral(**kw):
     base = dict(
-        empleador_nit="900123456", empleador_nombre="ACME SAS",
-        salarios=120_000_000, aportes_salud=4_800_000,
-        aportes_pension=4_800_000, retencion=8_000_000, fuente=FX,
+        empleador_nit="900123456",
+        empleador_nombre="ACME SAS",
+        salarios=120_000_000,
+        aportes_salud=4_800_000,
+        aportes_pension=4_800_000,
+        retencion=8_000_000,
+        fuente=FX,
     )
     base.update(kw)
     return IngresoLaboral(**base)
@@ -434,8 +444,9 @@ class Fuente(BaseModel):
         return cls(clase="fixture", ref=nombre)
 
     @classmethod
-    def documento(cls, tipo: str, doc_id: str, pagina: int | None = None,
-                  confianza: float | None = None) -> "Fuente":
+    def documento(
+        cls, tipo: str, doc_id: str, pagina: int | None = None, confianza: float | None = None
+    ) -> "Fuente":
         detalle = f"{tipo} pág {pagina}" if pagina else tipo
         return cls(clase="documento", ref=doc_id, detalle=detalle, confianza=confianza)
 
@@ -530,8 +541,7 @@ class Dividendo(BaseModel):
 
 
 class Dependiente(BaseModel):
-    tipo: Literal["hijo_menor", "hijo_estudiante", "hijo_discapacidad",
-                  "conyuge", "padre_hermano"]
+    tipo: Literal["hijo_menor", "hijo_estudiante", "hijo_discapacidad", "conyuge", "padre_hermano"]
     meses: int = Field(default=12, ge=1, le=12)
     fuente: Fuente
 
@@ -622,16 +632,45 @@ class CasoTributario(BaseModel):
 # src/declaras/caso/__init__.py
 from declaras.caso.fuentes import Fuente, MontoDeclarado
 from declaras.caso.modelos import (
-    Activo, AporteAfc, Arriendo, Beneficios, CasoTributario, Contribuyente,
-    CostosArriendo, Creditos, Dependiente, Deuda, Dividendo, Donacion,
-    IngresoLaboral, IngresoPension, Movimientos, Patrimonio, Rendimiento,
+    Activo,
+    AporteAfc,
+    Arriendo,
+    Beneficios,
+    CasoTributario,
+    Contribuyente,
+    CostosArriendo,
+    Creditos,
+    Dependiente,
+    Deuda,
+    Dividendo,
+    Donacion,
+    IngresoLaboral,
+    IngresoPension,
+    Movimientos,
+    Patrimonio,
+    Rendimiento,
 )
 
 __all__ = [
-    "Activo", "AporteAfc", "Arriendo", "Beneficios", "CasoTributario",
-    "Contribuyente", "CostosArriendo", "Creditos", "Dependiente", "Deuda",
-    "Dividendo", "Donacion", "Fuente", "IngresoLaboral", "IngresoPension",
-    "MontoDeclarado", "Movimientos", "Patrimonio", "Rendimiento",
+    "Activo",
+    "AporteAfc",
+    "Arriendo",
+    "Beneficios",
+    "CasoTributario",
+    "Contribuyente",
+    "CostosArriendo",
+    "Creditos",
+    "Dependiente",
+    "Deuda",
+    "Dividendo",
+    "Donacion",
+    "Fuente",
+    "IngresoLaboral",
+    "IngresoPension",
+    "MontoDeclarado",
+    "Movimientos",
+    "Patrimonio",
+    "Rendimiento",
 ]
 ```
 
@@ -701,8 +740,8 @@ from pydantic import BaseModel
 class Elecciones(BaseModel):
     """Decisiones legales abiertas que el optimizador enumera."""
 
-    usar_387: bool = False    # 10% art. 387 (dentro del límite 40%)
-    usar_72uvt: bool = True   # 72 UVT por dependiente (extra-límite)
+    usar_387: bool = False  # 10% art. 387 (dentro del límite 40%)
+    usar_72uvt: bool = True  # 72 UVT por dependiente (extra-límite)
 
     @property
     def activas(self) -> int:
@@ -753,20 +792,35 @@ class Traza:
         self.nodos: dict[str, Nodo] = {}
         self.flags: list[Flag] = []
 
-    def nodo(self, codigo: str, etiqueta: str, valor, formula: str,
-             insumos=(), regla: str | None = None) -> int:
+    def nodo(
+        self, codigo: str, etiqueta: str, valor, formula: str, insumos=(), regla: str | None = None
+    ) -> int:
         v = int(valor)
-        self.nodos[codigo] = Nodo(codigo=codigo, etiqueta=etiqueta, valor=v,
-                                  formula=formula, insumos=list(insumos), regla=regla)
+        self.nodos[codigo] = Nodo(
+            codigo=codigo,
+            etiqueta=etiqueta,
+            valor=v,
+            formula=formula,
+            insumos=list(insumos),
+            regla=regla,
+        )
         return v
 
-    def flag(self, codigo: str, mensaje: str,
-             severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia") -> None:
+    def flag(
+        self,
+        codigo: str,
+        mensaje: str,
+        severidad: Literal["info", "advertencia", "bloqueante"] = "advertencia",
+    ) -> None:
         self.flags.append(Flag(codigo=codigo, mensaje=mensaje, severidad=severidad))
 
     def a_liquidacion(self, anio: int, elecciones: Elecciones) -> Liquidacion:
-        return Liquidacion(anio_gravable=anio, elecciones=elecciones,
-                           nodos=dict(self.nodos), flags=list(self.flags))
+        return Liquidacion(
+            anio_gravable=anio,
+            elecciones=elecciones,
+            nodos=dict(self.nodos),
+            flags=list(self.flags),
+        )
 ```
 
 - [ ] **Step 4: Correr y ver el pass**
@@ -800,8 +854,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 # tests/test_general_base.py
 from declaras.caso import (
-    Arriendo, CasoTributario, Contribuyente, CostosArriendo, Fuente,
-    IngresoLaboral, Rendimiento,
+    Arriendo,
+    CasoTributario,
+    Contribuyente,
+    CostosArriendo,
+    Fuente,
+    IngresoLaboral,
+    Rendimiento,
 )
 from declaras.motor.general import base_general
 from declaras.motor.traza import Traza
@@ -818,8 +877,13 @@ def _caso(**kw):
 
 
 LABORAL = IngresoLaboral(
-    empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
-    aportes_salud=4_800_000, aportes_pension=4_800_000, retencion=8_000_000, fuente=FX,
+    empleador_nit="900",
+    empleador_nombre="ACME",
+    salarios=120_000_000,
+    aportes_salud=4_800_000,
+    aportes_pension=4_800_000,
+    retencion=8_000_000,
+    fuente=FX,
 )
 
 
@@ -834,8 +898,9 @@ def test_solo_laboral():
 
 def test_rendimientos_con_ci_provisional():
     t = Traza()
-    caso = _caso(rendimientos=[Rendimiento(entidad="Banco", valor=8_000_000,
-                                           retencion=560_000, fuente=FX)])
+    caso = _caso(
+        rendimientos=[Rendimiento(entidad="Banco", valor=8_000_000, retencion=560_000, fuente=FX)]
+    )
     base_general(caso, P, t)
     assert t.nodos["INCR_CI"].valor == 0
     assert any(f.codigo == "COMPONENTE_INFLACIONARIO_PROVISIONAL" for f in t.flags)
@@ -843,10 +908,19 @@ def test_rendimientos_con_ci_provisional():
 
 def test_arriendos_restan_costos():
     t = Traza()
-    caso = _caso(arriendos=[Arriendo(
-        inmueble="Apto 101", canon_total=36_000_000, retencion=1_260_000,
-        costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
-                              comision_inmobiliaria=3_600_000), fuente=FX)])
+    caso = _caso(
+        arriendos=[
+            Arriendo(
+                inmueble="Apto 101",
+                canon_total=36_000_000,
+                retencion=1_260_000,
+                costos=CostosArriendo(
+                    predial=3_000_000, administracion=4_800_000, comision_inmobiliaria=3_600_000
+                ),
+                fuente=FX,
+            )
+        ]
+    )
     base_general(caso, P, t)
     assert t.nodos["ING_BRUTO_GENERAL"].valor == 36_000_000
     assert t.nodos["COSTOS_ARRIENDOS"].valor == 11_400_000
@@ -874,14 +948,16 @@ def base_general(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
     total_arriendos = sum(a.canon_total for a in caso.arriendos)
 
     bruto = t.nodo(
-        "ING_BRUTO_GENERAL", "Ingresos brutos cédula general",
+        "ING_BRUTO_GENERAL",
+        "Ingresos brutos cédula general",
         bruto_laboral + total_rend + total_arriendos,
         f"laborales {bruto_laboral:,} + rendimientos {total_rend:,} + arriendos {total_arriendos:,}",
         regla="art. 335 ET",
     )
 
     aportes = t.nodo(
-        "INCR_APORTES", "INCRNGO aportes obligatorios salud/pensión",
+        "INCR_APORTES",
+        "INCRNGO aportes obligatorios salud/pensión",
         sum(l.aportes_salud + l.aportes_pension for l in caso.laborales),
         "suma aportes obligatorios de cada 220",
         regla="arts. 55-56 ET",
@@ -895,28 +971,46 @@ def base_general(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
         )
     pct_ci = p.componente_inflacionario or 0.0
     ci = t.nodo(
-        "INCR_CI", "INCRNGO componente inflacionario de rendimientos",
+        "INCR_CI",
+        "INCRNGO componente inflacionario de rendimientos",
         pesos(total_rend * pct_ci),
         f"{pct_ci:.2%} × rendimientos {total_rend:,}",
         regla="arts. 38-41 ET",
     )
 
-    incr = t.nodo("INCR_TOTAL", "Total INCRNGO", aportes + ci,
-                  "INCR_APORTES + INCR_CI", insumos=["INCR_APORTES", "INCR_CI"])
+    incr = t.nodo(
+        "INCR_TOTAL",
+        "Total INCRNGO",
+        aportes + ci,
+        "INCR_APORTES + INCR_CI",
+        insumos=["INCR_APORTES", "INCR_CI"],
+    )
 
-    netos = t.nodo("ING_NETOS_GENERAL", "Ingresos netos (base del límite 40%)",
-                   bruto - incr, "ING_BRUTO_GENERAL − INCR_TOTAL",
-                   insumos=["ING_BRUTO_GENERAL", "INCR_TOTAL"], regla="art. 336 num. 3")
+    netos = t.nodo(
+        "ING_NETOS_GENERAL",
+        "Ingresos netos (base del límite 40%)",
+        bruto - incr,
+        "ING_BRUTO_GENERAL − INCR_TOTAL",
+        insumos=["ING_BRUTO_GENERAL", "INCR_TOTAL"],
+        regla="art. 336 num. 3",
+    )
 
-    t.nodo("COSTOS_ARRIENDOS", "Costos y gastos procedentes de arriendos",
-           sum(a.costos.total for a in caso.arriendos),
-           "predial + administración + comisión + reparaciones (con soporte)",
-           regla="art. 336 num. 4")
+    t.nodo(
+        "COSTOS_ARRIENDOS",
+        "Costos y gastos procedentes de arriendos",
+        sum(a.costos.total for a in caso.arriendos),
+        "predial + administración + comisión + reparaciones (con soporte)",
+        regla="art. 336 num. 4",
+    )
 
-    t.nodo("CAP_40", "Límite exentas+deducciones (menor entre 40% y 1.340 UVT)",
-           min(pesos(netos * p.limite_general_pct), p.uvt_pesos(p.limite_general_uvt)),
-           f"min(40% × {netos:,}, 1.340 UVT = {p.uvt_pesos(p.limite_general_uvt):,})",
-           insumos=["ING_NETOS_GENERAL"], regla="art. 336 num. 3")
+    t.nodo(
+        "CAP_40",
+        "Límite exentas+deducciones (menor entre 40% y 1.340 UVT)",
+        min(pesos(netos * p.limite_general_pct), p.uvt_pesos(p.limite_general_uvt)),
+        f"min(40% × {netos:,}, 1.340 UVT = {p.uvt_pesos(p.limite_general_uvt):,})",
+        insumos=["ING_NETOS_GENERAL"],
+        regla="art. 336 num. 3",
+    )
 ```
 
 - [ ] **Step 4: Correr y ver el pass**
@@ -951,8 +1045,16 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 # tests/test_rlg_general.py
 from declaras.caso import (
-    Arriendo, Beneficios, CasoTributario, Contribuyente, CostosArriendo,
-    Dependiente, Fuente, IngresoLaboral, MontoDeclarado, Rendimiento,
+    Arriendo,
+    Beneficios,
+    CasoTributario,
+    Contribuyente,
+    CostosArriendo,
+    Dependiente,
+    Fuente,
+    IngresoLaboral,
+    MontoDeclarado,
+    Rendimiento,
 )
 from declaras.motor.elecciones import Elecciones
 from declaras.motor.general import base_general, rlg_general
@@ -971,10 +1073,17 @@ def caso_g1():
     """Asalariado 120M con beneficios: el límite 40% se copa."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="1", nombre="G1"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
-            aportes_salud=4_800_000, aportes_pension=4_800_000,
-            retencion=8_000_000, fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900",
+                empleador_nombre="ACME",
+                salarios=120_000_000,
+                aportes_salud=4_800_000,
+                aportes_pension=4_800_000,
+                retencion=8_000_000,
+                fuente=FX,
+            )
+        ],
         beneficios=Beneficios(
             dependientes=[Dependiente(tipo="hijo_menor", fuente=FX)],
             medicina_prepagada=_md(6_000_000),
@@ -989,19 +1098,36 @@ def caso_g3_parcial():
     """Asalariado 100M + rendimientos + arriendo: el límite NO se copa, el 387 sí paga."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="3", nombre="G3"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900", empleador_nombre="ACME", salarios=100_000_000,
-            aportes_salud=4_000_000, aportes_pension=4_000_000,
-            retencion=6_000_000, fuente=FX)],
-        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
-                                  retencion=280_000, fuente=FX)],
-        arriendos=[Arriendo(
-            inmueble="Apto", canon_total=36_000_000, retencion=1_260_000,
-            costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
-                                  comision_inmobiliaria=3_600_000), fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900",
+                empleador_nombre="ACME",
+                salarios=100_000_000,
+                aportes_salud=4_000_000,
+                aportes_pension=4_000_000,
+                retencion=6_000_000,
+                fuente=FX,
+            )
+        ],
+        rendimientos=[
+            Rendimiento(entidad="Banco Y", valor=4_000_000, retencion=280_000, fuente=FX)
+        ],
+        arriendos=[
+            Arriendo(
+                inmueble="Apto",
+                canon_total=36_000_000,
+                retencion=1_260_000,
+                costos=CostosArriendo(
+                    predial=3_000_000, administracion=4_800_000, comision_inmobiliaria=3_600_000
+                ),
+                fuente=FX,
+            )
+        ],
         beneficios=Beneficios(
-            dependientes=[Dependiente(tipo="hijo_menor", fuente=FX),
-                          Dependiente(tipo="hijo_estudiante", fuente=FX)],
+            dependientes=[
+                Dependiente(tipo="hijo_menor", fuente=FX),
+                Dependiente(tipo="hijo_estudiante", fuente=FX),
+            ],
             gmf_pagado=_md(900_000),
         ),
     )
@@ -1017,8 +1143,8 @@ def test_g1_cap_copado_ambas_elecciones_igual():
     v_sin, t = _rlg(caso_g1(), Elecciones(usar_387=False, usar_72uvt=True))
     v_con, _ = _rlg(caso_g1(), Elecciones(usar_387=True, usar_72uvt=True))
     assert v_sin == v_con == 62_154_472
-    assert t.nodos["APLICADO_40"].valor == 44_160_000       # cap manda
-    assert t.nodos["EXTRA_LIMITE"].valor == 4_085_528       # 72 UVT + 1% facturas
+    assert t.nodos["APLICADO_40"].valor == 44_160_000  # cap manda
+    assert t.nodos["EXTRA_LIMITE"].valor == 4_085_528  # 72 UVT + 1% facturas
 
 
 def test_g1_sin_72uvt():
@@ -1052,23 +1178,32 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
     incr_aportes = t.nodos["INCR_APORTES"].valor
     b = caso.beneficios
 
-    intereses = min(b.intereses_vivienda.valor if b.intereses_vivienda else 0,
-                    p.uvt_pesos(p.intereses_vivienda_tope_uvt))
-    prepagada = min(b.medicina_prepagada.valor if b.medicina_prepagada else 0,
-                    p.uvt_pesos(p.prepagada_tope_uvt_anio))
-    icetex = min(b.intereses_icetex.valor if b.intereses_icetex else 0,
-                 p.uvt_pesos(p.icetex_tope_uvt))
+    intereses = min(
+        b.intereses_vivienda.valor if b.intereses_vivienda else 0,
+        p.uvt_pesos(p.intereses_vivienda_tope_uvt),
+    )
+    prepagada = min(
+        b.medicina_prepagada.valor if b.medicina_prepagada else 0,
+        p.uvt_pesos(p.prepagada_tope_uvt_anio),
+    )
+    icetex = min(
+        b.intereses_icetex.valor if b.intereses_icetex else 0, p.uvt_pesos(p.icetex_tope_uvt)
+    )
     gmf = pesos((b.gmf_pagado.valor if b.gmf_pagado else 0) * p.gmf_pct_deducible)
-    afc = min(sum(a.valor for a in b.aportes_afc_fvp),
-              pesos(t.nodos["ING_BRUTO_GENERAL"].valor * p.afc_pct),
-              p.uvt_pesos(p.afc_tope_uvt))
+    afc = min(
+        sum(a.valor for a in b.aportes_afc_fvp),
+        pesos(t.nodos["ING_BRUTO_GENERAL"].valor * p.afc_pct),
+        p.uvt_pesos(p.afc_tope_uvt),
+    )
     ded_387 = 0
     if e.usar_387 and b.dependientes:
-        ded_387 = min(pesos(bruto_laboral * p.ded_387_pct),
-                      p.uvt_pesos(p.ded_387_tope_uvt_mes * 12))
+        ded_387 = min(
+            pesos(bruto_laboral * p.ded_387_pct), p.uvt_pesos(p.ded_387_tope_uvt_mes * 12)
+        )
 
     deducciones = t.nodo(
-        "DEDUCCIONES_LIMITADAS", "Deducciones dentro del límite 40%",
+        "DEDUCCIONES_LIMITADAS",
+        "Deducciones dentro del límite 40%",
         intereses + prepagada + icetex + gmf + afc + ded_387,
         f"vivienda {intereses:,} + prepagada {prepagada:,} + icetex {icetex:,} "
         f"+ GMF50% {gmf:,} + AFC/FVP {afc:,} + art387 {ded_387:,}",
@@ -1076,18 +1211,21 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
     )
 
     # Interpretación I-1: base del 25% excluye GMF, 72 UVT y 1% (validar con contador).
-    base_25 = max(0, bruto_laboral - incr_aportes
-                  - (intereses + prepagada + icetex + ded_387 + afc))
+    base_25 = max(
+        0, bruto_laboral - incr_aportes - (intereses + prepagada + icetex + ded_387 + afc)
+    )
     exenta_25 = t.nodo(
-        "EXENTA_25", "Renta exenta 25% laboral (tope 790 UVT)",
-        min(pesos(base_25 * p.exenta_laboral_pct),
-            p.uvt_pesos(p.exenta_laboral_tope_uvt)),
-        f"min(25% × base {base_25:,}, 790 UVT)", regla="art. 206 num. 10 ET",
+        "EXENTA_25",
+        "Renta exenta 25% laboral (tope 790 UVT)",
+        min(pesos(base_25 * p.exenta_laboral_pct), p.uvt_pesos(p.exenta_laboral_tope_uvt)),
+        f"min(25% × base {base_25:,}, 790 UVT)",
+        regla="art. 206 num. 10 ET",
     )
 
     cap = t.nodos["CAP_40"].valor
     aplicado = t.nodo(
-        "APLICADO_40", "Exentas + deducciones aplicadas (tras el límite)",
+        "APLICADO_40",
+        "Exentas + deducciones aplicadas (tras el límite)",
         min(deducciones + exenta_25, cap),
         f"min({deducciones:,} + {exenta_25:,}, cap {cap:,})",
         insumos=["DEDUCCIONES_LIMITADAS", "EXENTA_25", "CAP_40"],
@@ -1099,19 +1237,25 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
         n = min(len(b.dependientes), p.dependientes_max)
         dep_72 = p.uvt_pesos(p.dependiente_uvt * n)
     fact_1 = min(
-        pesos((b.facturas_electronicas_total.valor
-               if b.facturas_electronicas_total else 0) * p.facturas_pct),
+        pesos(
+            (b.facturas_electronicas_total.valor if b.facturas_electronicas_total else 0)
+            * p.facturas_pct
+        ),
         p.uvt_pesos(p.facturas_tope_uvt),
     )
-    extra = t.nodo("EXTRA_LIMITE", "Beneficios por fuera del límite 40%",
-                   dep_72 + fact_1,
-                   f"72 UVT dependientes {dep_72:,} + 1% facturas {fact_1:,}",
-                   regla="art. 336 num. 3 y 5")
+    extra = t.nodo(
+        "EXTRA_LIMITE",
+        "Beneficios por fuera del límite 40%",
+        dep_72 + fact_1,
+        f"72 UVT dependientes {dep_72:,} + 1% facturas {fact_1:,}",
+        regla="art. 336 num. 3 y 5",
+    )
 
     netos = t.nodos["ING_NETOS_GENERAL"].valor
     costos = t.nodos["COSTOS_ARRIENDOS"].valor
     return t.nodo(
-        "RLG_GENERAL", "Renta líquida gravable cédula general",
+        "RLG_GENERAL",
+        "Renta líquida gravable cédula general",
         max(0, netos - costos - aplicado - extra),
         f"{netos:,} − costos {costos:,} − aplicado {aplicado:,} − extra {extra:,}",
         insumos=["ING_NETOS_GENERAL", "COSTOS_ARRIENDOS", "APLICADO_40", "EXTRA_LIMITE"],
@@ -1203,11 +1347,11 @@ def rlg_pensiones(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> int:
     los pagadores de cada mes antes de restar el tope; el exceso grava."""
     tope_mes = p.uvt_pesos(p.pension_exenta_uvt_mes)
     gravado = sum(
-        max(0, sum(pn.mesadas[mes] for pn in caso.pensiones) - tope_mes)
-        for mes in range(12)
+        max(0, sum(pn.mesadas[mes] for pn in caso.pensiones) - tope_mes) for mes in range(12)
     )
     return t.nodo(
-        "RLG_PENSIONES", "Renta líquida gravable cédula de pensiones",
+        "RLG_PENSIONES",
+        "Renta líquida gravable cédula de pensiones",
         gravado,
         f"Σ max(0, mesada_mes − 1.000 UVT = {tope_mes:,}) sobre 12 meses",
         regla="art. 206 num. 5 ET",
@@ -1255,32 +1399,36 @@ P = cargar(2025)
 
 
 def _caso(dividendos=()):
-    return CasoTributario(contribuyente=Contribuyente(num_doc="3", nombre="G3"),
-                          dividendos=list(dividendos))
+    return CasoTributario(
+        contribuyente=Contribuyente(num_doc="3", nombre="G3"), dividendos=list(dividendos)
+    )
 
 
 def test_sin_dividendos_solo_tabla():
     t = Traza()
-    assert impuesto_total(_caso(), P, t, rlg_general=62_154_472, rlg_pensiones=0) \
-        == 1_495_977
+    assert impuesto_total(_caso(), P, t, rlg_general=62_154_472, rlg_pensiones=0) == 1_495_977
     assert t.nodos["DESCUENTO_254_1"].valor == 0
 
 
 def test_dividendos_mixtos_g3():
-    div = Dividendo(sociedad_nit="800", sociedad_nombre="Soc SA",
-                    no_gravados=30_000_000, gravados=10_000_000, fuente=FX)
+    div = Dividendo(
+        sociedad_nit="800",
+        sociedad_nombre="Soc SA",
+        no_gravados=30_000_000,
+        gravados=10_000_000,
+        fuente=FX,
+    )
     t = Traza()
     v = impuesto_total(_caso([div]), P, t, rlg_general=82_478_944, rlg_pensiones=0)
     assert t.nodos["IMP_DIV_35"].valor == 3_500_000
     assert t.nodos["BASE_TABLA_241"].valor == 118_978_944  # 82.478.944 + 30M + 6.5M
-    assert t.nodos["IMPUESTO_241"].valor == 15_386_464     # 28% + 116 UVT
-    assert t.nodos["DESCUENTO_254_1"].valor == 0           # 36.5M < 1.090 UVT
+    assert t.nodos["IMPUESTO_241"].valor == 15_386_464  # 28% + 116 UVT
+    assert t.nodos["DESCUENTO_254_1"].valor == 0  # 36.5M < 1.090 UVT
     assert v == 18_886_464
 
 
 def test_descuento_254_1_sobre_umbral():
-    div = Dividendo(sociedad_nit="800", sociedad_nombre="Soc SA",
-                    no_gravados=80_000_000, fuente=FX)
+    div = Dividendo(sociedad_nit="800", sociedad_nombre="Soc SA", no_gravados=80_000_000, fuente=FX)
     t = Traza()
     v = impuesto_total(_caso([div]), P, t, rlg_general=50_000_000, rlg_pensiones=0)
     # base 130M → imp241 18.472.360 (28% + 116 UVT); descuento 19% × (80M − 54.280.910)
@@ -1305,49 +1453,78 @@ from declaras.parametros import ParametrosAnio
 from declaras.parametros.tabla import impuesto_tabla_241
 
 
-def impuesto_total(caso: CasoTributario, p: ParametrosAnio, t: Traza,
-                   rlg_general: int, rlg_pensiones: int) -> int:
+def impuesto_total(
+    caso: CasoTributario, p: ParametrosAnio, t: Traza, rlg_general: int, rlg_pensiones: int
+) -> int:
     """Cédula de dividendos + tabla 241 + descuentos → impuesto neto."""
-    no_grav = t.nodo("DIV_NO_GRAVADOS", "Dividendos no gravados (art. 49)",
-                     sum(d.no_gravados for d in caso.dividendos),
-                     "suma certificados", regla="art. 242 ET")
-    grav = t.nodo("DIV_GRAVADOS", "Dividendos gravados",
-                  sum(d.gravados for d in caso.dividendos),
-                  "suma certificados", regla="art. 240 ET")
+    no_grav = t.nodo(
+        "DIV_NO_GRAVADOS",
+        "Dividendos no gravados (art. 49)",
+        sum(d.no_gravados for d in caso.dividendos),
+        "suma certificados",
+        regla="art. 242 ET",
+    )
+    grav = t.nodo(
+        "DIV_GRAVADOS",
+        "Dividendos gravados",
+        sum(d.gravados for d in caso.dividendos),
+        "suma certificados",
+        regla="art. 240 ET",
+    )
 
-    imp_35 = t.nodo("IMP_DIV_35", "Impuesto 35% sobre dividendos gravados",
-                    pesos(grav * p.dividendos_tarifa_gravados),
-                    f"35% × {grav:,}", insumos=["DIV_GRAVADOS"],
-                    regla="art. 242 par. / art. 240 ET")
+    imp_35 = t.nodo(
+        "IMP_DIV_35",
+        "Impuesto 35% sobre dividendos gravados",
+        pesos(grav * p.dividendos_tarifa_gravados),
+        f"35% × {grav:,}",
+        insumos=["DIV_GRAVADOS"],
+        regla="art. 242 par. / art. 240 ET",
+    )
     neto_grav = grav - imp_35
 
-    base = t.nodo("BASE_TABLA_241", "Base gravable tabla art. 241",
-                  rlg_general + rlg_pensiones + no_grav + neto_grav,
-                  f"RLG_GENERAL {rlg_general:,} + RLG_PENSIONES {rlg_pensiones:,} "
-                  f"+ no gravados {no_grav:,} + neto gravados {neto_grav:,}",
-                  insumos=["RLG_GENERAL", "RLG_PENSIONES", "DIV_NO_GRAVADOS", "DIV_GRAVADOS"])
+    base = t.nodo(
+        "BASE_TABLA_241",
+        "Base gravable tabla art. 241",
+        rlg_general + rlg_pensiones + no_grav + neto_grav,
+        f"RLG_GENERAL {rlg_general:,} + RLG_PENSIONES {rlg_pensiones:,} "
+        f"+ no gravados {no_grav:,} + neto gravados {neto_grav:,}",
+        insumos=["RLG_GENERAL", "RLG_PENSIONES", "DIV_NO_GRAVADOS", "DIV_GRAVADOS"],
+    )
 
-    imp_241 = t.nodo("IMPUESTO_241", "Impuesto tabla art. 241",
-                     impuesto_tabla_241(base, p), "tabla marginal art. 241",
-                     insumos=["BASE_TABLA_241"], regla="art. 241 ET")
+    imp_241 = t.nodo(
+        "IMPUESTO_241",
+        "Impuesto tabla art. 241",
+        impuesto_tabla_241(base, p),
+        "tabla marginal art. 241",
+        insumos=["BASE_TABLA_241"],
+        regla="art. 241 ET",
+    )
 
-    base_desc = max(0, (no_grav + neto_grav)
-                    - p.uvt_pesos(p.descuento_dividendos_umbral_uvt))
-    desc_div = t.nodo("DESCUENTO_254_1", "Descuento marginal por dividendos",
-                      pesos(base_desc * p.descuento_dividendos_pct),
-                      f"19% × max(0, dividendos en base − 1.090 UVT) = 19% × {base_desc:,}",
-                      regla="art. 254-1 ET")
+    base_desc = max(0, (no_grav + neto_grav) - p.uvt_pesos(p.descuento_dividendos_umbral_uvt))
+    desc_div = t.nodo(
+        "DESCUENTO_254_1",
+        "Descuento marginal por dividendos",
+        pesos(base_desc * p.descuento_dividendos_pct),
+        f"19% × max(0, dividendos en base − 1.090 UVT) = 19% × {base_desc:,}",
+        regla="art. 254-1 ET",
+    )
 
     donado = sum(d.valor for d in caso.beneficios.donaciones_esal if d.certificada)
-    desc_don = t.nodo("DESCUENTO_DONACIONES", "Descuento donaciones ESAL certificadas",
-                      pesos(donado * p.donaciones_descuento_pct),
-                      f"25% × {donado:,}", regla="art. 257 ET")
+    desc_don = t.nodo(
+        "DESCUENTO_DONACIONES",
+        "Descuento donaciones ESAL certificadas",
+        pesos(donado * p.donaciones_descuento_pct),
+        f"25% × {donado:,}",
+        regla="art. 257 ET",
+    )
 
-    return t.nodo("IMPUESTO_NETO", "Impuesto neto de renta",
-                  max(0, imp_241 + imp_35 - desc_div - desc_don),
-                  f"{imp_241:,} + {imp_35:,} − {desc_div:,} − {desc_don:,} (piso 0)",
-                  insumos=["IMPUESTO_241", "IMP_DIV_35",
-                           "DESCUENTO_254_1", "DESCUENTO_DONACIONES"])
+    return t.nodo(
+        "IMPUESTO_NETO",
+        "Impuesto neto de renta",
+        max(0, imp_241 + imp_35 - desc_div - desc_don),
+        f"{imp_241:,} + {imp_35:,} − {desc_div:,} − {desc_don:,} (piso 0)",
+        insumos=["IMPUESTO_241", "IMP_DIV_35", "DESCUENTO_254_1", "DESCUENTO_DONACIONES"],
+    )
 ```
 
 - [ ] **Step 4: Correr y ver el pass**
@@ -1384,8 +1561,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 # tests/test_cierre.py
 from declaras.caso import (
-    Activo, CasoTributario, Contribuyente, Creditos, Deuda, Fuente,
-    IngresoLaboral, Patrimonio,
+    Activo,
+    CasoTributario,
+    Contribuyente,
+    Creditos,
+    Deuda,
+    Fuente,
+    IngresoLaboral,
+    Patrimonio,
 )
 from declaras.motor import Elecciones, liquidar
 from declaras.parametros import cargar
@@ -1397,17 +1580,25 @@ P = cargar(2025)
 def _caso_laboral(**creditos_kw):
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="1", nombre="X"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900", empleador_nombre="ACME", salarios=120_000_000,
-            aportes_salud=4_800_000, aportes_pension=4_800_000,
-            retencion=8_000_000, fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900",
+                empleador_nombre="ACME",
+                salarios=120_000_000,
+                aportes_salud=4_800_000,
+                aportes_pension=4_800_000,
+                retencion=8_000_000,
+                fuente=FX,
+            )
+        ],
         creditos=Creditos(**creditos_kw),
     )
 
 
 def test_saldo_a_favor_primer_anio():
-    liq = liquidar(_caso_laboral(anios_previos_declarando=0), P,
-                   Elecciones(usar_387=False, usar_72uvt=False))
+    liq = liquidar(
+        _caso_laboral(anios_previos_declarando=0), P, Elecciones(usar_387=False, usar_72uvt=False)
+    )
     # sin beneficios: 25% = min(25%×110.4M, 790 UVT) = 27.600.000 ≤ cap 44.16M
     # RLG = 110.4M − 27.6M = 82.800.000 → imp241 = 28.519.090×0.19 = 5.418.627
     assert liq.valor("IMPUESTO_NETO") == 5_418_627
@@ -1418,11 +1609,13 @@ def test_saldo_a_favor_primer_anio():
 
 
 def test_anticipo_promedio_dos_anios():
-    liq = liquidar(_caso_laboral(anios_previos_declarando=2,
-                                 impuesto_neto_anio_anterior=1_000_000), P,
-                   Elecciones(usar_387=False, usar_72uvt=False))
-    imp = liq.valor("IMPUESTO_NETO")           # 5.418.627
-    promedio = round((imp + 1_000_000) / 2)    # 3.209.314 (menor que imp)
+    liq = liquidar(
+        _caso_laboral(anios_previos_declarando=2, impuesto_neto_anio_anterior=1_000_000),
+        P,
+        Elecciones(usar_387=False, usar_72uvt=False),
+    )
+    imp = liq.valor("IMPUESTO_NETO")  # 5.418.627
+    promedio = round((imp + 1_000_000) / 2)  # 3.209.314 (menor que imp)
     esperado = max(0, round(promedio * 0.75) - 8_000_000)
     assert liq.valor("ANTICIPO_SIGUIENTE") == esperado == 0
 
@@ -1431,12 +1624,13 @@ def test_obligado_por_patrimonio_y_comparacion():
     caso = CasoTributario(
         contribuyente=Contribuyente(num_doc="0", nombre="G0"),
         patrimonio=Patrimonio(
-            activos=[Activo(tipo="cuenta", descripcion="CDT",
-                            valor_31dic=250_000_000, fuente=FX)],
-            deudas=[], patrimonio_liquido_anterior=200_000_000),
+            activos=[Activo(tipo="cuenta", descripcion="CDT", valor_31dic=250_000_000, fuente=FX)],
+            deudas=[],
+            patrimonio_liquido_anterior=200_000_000,
+        ),
     )
     liq = liquidar(caso, P, Elecciones())
-    assert liq.valor("OBLIGADO_DECLARAR") == 1        # patrimonio > 4.500 UVT
+    assert liq.valor("OBLIGADO_DECLARAR") == 1  # patrimonio > 4.500 UVT
     assert liq.valor("IMPUESTO_NETO") == 0
     assert liq.tiene_flag("COMPARACION_PATRIMONIAL")  # creció 50M sin rentas
 
@@ -1467,7 +1661,8 @@ from declaras.parametros import ParametrosAnio
 
 def cerrar(caso: CasoTributario, p: ParametrosAnio, t: Traza, impuesto_neto: int) -> None:
     retenciones = t.nodo(
-        "RETENCIONES", "Total retenciones en la fuente",
+        "RETENCIONES",
+        "Total retenciones en la fuente",
         sum(l.retencion for l in caso.laborales)
         + sum(pn.retencion for pn in caso.pensiones)
         + sum(r.retencion for r in caso.rendimientos)
@@ -1486,28 +1681,41 @@ def cerrar(caso: CasoTributario, p: ParametrosAnio, t: Traza, impuesto_neto: int
         if promedio < base:
             base, detalle = promedio, f"promedio dos años {promedio:,} (menor)"
     anticipo = t.nodo(
-        "ANTICIPO_SIGUIENTE", "Anticipo del año siguiente",
+        "ANTICIPO_SIGUIENTE",
+        "Anticipo del año siguiente",
         max(0, pesos(base * pct) - retenciones),
         f"max(0, {pct:.0%} × {detalle} − retenciones {retenciones:,})",
-        insumos=["IMPUESTO_NETO", "RETENCIONES"], regla="art. 807 ET",
+        insumos=["IMPUESTO_NETO", "RETENCIONES"],
+        regla="art. 807 ET",
     )
 
     t.nodo(
-        "SALDO", "Saldo a pagar (+) o a favor (−)",
-        impuesto_neto + anticipo - retenciones
-        - caso.creditos.anticipo_pagado - caso.creditos.saldo_favor_anterior,
+        "SALDO",
+        "Saldo a pagar (+) o a favor (−)",
+        impuesto_neto
+        + anticipo
+        - retenciones
+        - caso.creditos.anticipo_pagado
+        - caso.creditos.saldo_favor_anterior,
         "IMPUESTO_NETO + ANTICIPO_SIGUIENTE − RETENCIONES − anticipo pagado − saldo a favor anterior",
         insumos=["IMPUESTO_NETO", "ANTICIPO_SIGUIENTE", "RETENCIONES"],
     )
 
 
 def validar(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
-    bruto_pat = t.nodo("PATRIMONIO_BRUTO", "Patrimonio bruto a 31 dic",
-                       sum(a.valor_31dic for a in caso.patrimonio.activos),
-                       "suma de activos")
-    liquido = t.nodo("PATRIMONIO_LIQUIDO", "Patrimonio líquido a 31 dic",
-                     bruto_pat - sum(d.saldo_31dic for d in caso.patrimonio.deudas),
-                     "PATRIMONIO_BRUTO − deudas", insumos=["PATRIMONIO_BRUTO"])
+    bruto_pat = t.nodo(
+        "PATRIMONIO_BRUTO",
+        "Patrimonio bruto a 31 dic",
+        sum(a.valor_31dic for a in caso.patrimonio.activos),
+        "suma de activos",
+    )
+    liquido = t.nodo(
+        "PATRIMONIO_LIQUIDO",
+        "Patrimonio líquido a 31 dic",
+        bruto_pat - sum(d.saldo_31dic for d in caso.patrimonio.deudas),
+        "PATRIMONIO_BRUTO − deudas",
+        insumos=["PATRIMONIO_BRUTO"],
+    )
 
     criterios = []
     if caso.ingresos_brutos_totales >= p.uvt_pesos(p.tope_obligacion_ingresos_uvt):
@@ -1515,30 +1723,41 @@ def validar(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
     if bruto_pat > p.uvt_pesos(p.tope_obligacion_patrimonio_uvt):
         criterios.append("patrimonio > 4.500 UVT")
     mov = caso.movimientos
-    if mov.consignaciones_totales and mov.consignaciones_totales.valor \
-            > p.uvt_pesos(p.tope_obligacion_consignaciones_uvt):
+    if mov.consignaciones_totales and mov.consignaciones_totales.valor > p.uvt_pesos(
+        p.tope_obligacion_consignaciones_uvt
+    ):
         criterios.append("consignaciones > 1.400 UVT")
-    if mov.compras_y_consumos and mov.compras_y_consumos.valor \
-            > p.uvt_pesos(p.tope_obligacion_consignaciones_uvt):
+    if mov.compras_y_consumos and mov.compras_y_consumos.valor > p.uvt_pesos(
+        p.tope_obligacion_consignaciones_uvt
+    ):
         criterios.append("compras y consumos > 1.400 UVT")
-    t.nodo("OBLIGADO_DECLARAR", "¿Obligado a declarar?",
-           1 if criterios else 0,
-           "; ".join(criterios) or "ningún criterio superado",
-           regla="art. 592-594-3 ET")
+    t.nodo(
+        "OBLIGADO_DECLARAR",
+        "¿Obligado a declarar?",
+        1 if criterios else 0,
+        "; ".join(criterios) or "ningún criterio superado",
+        regla="art. 592-594-3 ET",
+    )
     if not criterios:
-        t.flag("NO_OBLIGADO", "No supera ningún tope de obligación: la declaración "
-               "sería voluntaria.", severidad="info")
+        t.flag(
+            "NO_OBLIGADO",
+            "No supera ningún tope de obligación: la declaración sería voluntaria.",
+            severidad="info",
+        )
 
     anterior = caso.patrimonio.patrimonio_liquido_anterior
     if anterior is not None:
         incremento = liquido - anterior
         justificado = (
-            t.nodos["RLG_GENERAL"].valor + t.nodos["RLG_PENSIONES"].valor
-            + t.nodos["DIV_NO_GRAVADOS"].valor + t.nodos["DIV_GRAVADOS"].valor
-            + t.nodos["APLICADO_40"].valor + t.nodos["EXTRA_LIMITE"].valor
+            t.nodos["RLG_GENERAL"].valor
+            + t.nodos["RLG_PENSIONES"].valor
+            + t.nodos["DIV_NO_GRAVADOS"].valor
+            + t.nodos["DIV_GRAVADOS"].valor
+            + t.nodos["APLICADO_40"].valor
+            + t.nodos["EXTRA_LIMITE"].valor
             + t.nodos["INCR_TOTAL"].valor
         )
-        gastado = (t.nodos["RETENCIONES"].valor + caso.creditos.anticipo_pagado)
+        gastado = t.nodos["RETENCIONES"].valor + caso.creditos.anticipo_pagado
         if justificado < incremento + gastado:
             t.flag(
                 "COMPARACION_PATRIMONIAL",
@@ -1560,8 +1779,7 @@ from declaras.motor.traza import Liquidacion, Traza
 from declaras.parametros import ParametrosAnio
 
 
-def liquidar(caso: CasoTributario, p: ParametrosAnio,
-             elecciones: Elecciones) -> Liquidacion:
+def liquidar(caso: CasoTributario, p: ParametrosAnio, elecciones: Elecciones) -> Liquidacion:
     """Función pura: Caso + Parámetros + Elecciones → Liquidación trazable."""
     t = Traza()
     base_general(caso, p, t)
@@ -1637,8 +1855,9 @@ def test_g3_elige_387_y_72uvt():
 def test_nunca_peor_que_ingenuo():
     for caso in (caso_g1(), caso_g3_parcial()):
         opt = optimizar(caso, P).liquidacion.valor("IMPUESTO_NETO")
-        ingenuo = liquidar(caso, P, Elecciones(usar_387=False,
-                                               usar_72uvt=False)).valor("IMPUESTO_NETO")
+        ingenuo = liquidar(caso, P, Elecciones(usar_387=False, usar_72uvt=False)).valor(
+            "IMPUESTO_NETO"
+        )
         assert opt <= ingenuo
 
 
@@ -1683,8 +1902,7 @@ class ResultadoOptimizacion(BaseModel):
 def _combos(caso: CasoTributario) -> list[Elecciones]:
     if not caso.beneficios.dependientes:
         return [Elecciones(usar_387=False, usar_72uvt=False)]
-    return [Elecciones(usar_387=a, usar_72uvt=b)
-            for a in (False, True) for b in (False, True)]
+    return [Elecciones(usar_387=a, usar_72uvt=b) for a in (False, True) for b in (False, True)]
 
 
 def optimizar(caso: CasoTributario, p: ParametrosAnio) -> ResultadoOptimizacion:
@@ -1695,18 +1913,22 @@ def optimizar(caso: CasoTributario, p: ParametrosAnio) -> ResultadoOptimizacion:
     evaluados = [(liquidar(caso, p, e), e) for e in _combos(caso)]
     liq, e = min(
         evaluados,
-        key=lambda par: (par[0].valor("IMPUESTO_NETO"), par[1].activas,
-                         (par[1].usar_387, par[1].usar_72uvt)),
+        key=lambda par: (
+            par[0].valor("IMPUESTO_NETO"),
+            par[1].activas,
+            (par[1].usar_387, par[1].usar_72uvt),
+        ),
     )
-    return ResultadoOptimizacion(liquidacion=liq, elecciones=e,
-                                 evaluadas=len(evaluados))
+    return ResultadoOptimizacion(liquidacion=liq, elecciones=e, evaluadas=len(evaluados))
 
 
-def ahorro_marginal(caso_base: CasoTributario, caso_con_hecho: CasoTributario,
-                    p: ParametrosAnio) -> int:
+def ahorro_marginal(
+    caso_base: CasoTributario, caso_con_hecho: CasoTributario, p: ParametrosAnio
+) -> int:
     """Cuánto impuesto ahorra un hecho: base del 'cada pregunta lleva su ahorro'."""
-    return (optimizar(caso_base, p).liquidacion.valor("IMPUESTO_NETO")
-            - optimizar(caso_con_hecho, p).liquidacion.valor("IMPUESTO_NETO"))
+    return optimizar(caso_base, p).liquidacion.valor("IMPUESTO_NETO") - optimizar(
+        caso_con_hecho, p
+    ).liquidacion.valor("IMPUESTO_NETO")
 ```
 
 - [ ] **Step 4: Correr y ver el pass**
@@ -1739,10 +1961,25 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 # tests/golden/casos.py
 """Golden cases sintéticos, verificables a mano. Un caso por escenario del spec."""
+
 from declaras.caso import (
-    Activo, Arriendo, Beneficios, CasoTributario, Contribuyente, CostosArriendo,
-    Creditos, Dependiente, Deuda, Dividendo, Fuente, IngresoLaboral,
-    IngresoPension, MontoDeclarado, Movimientos, Patrimonio, Rendimiento,
+    Activo,
+    Arriendo,
+    Beneficios,
+    CasoTributario,
+    Contribuyente,
+    CostosArriendo,
+    Creditos,
+    Dependiente,
+    Deuda,
+    Dividendo,
+    Fuente,
+    IngresoLaboral,
+    IngresoPension,
+    MontoDeclarado,
+    Movimientos,
+    Patrimonio,
+    Rendimiento,
 )
 
 FX = Fuente.fixture("golden")
@@ -1757,9 +1994,9 @@ def g0() -> CasoTributario:
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="10", nombre="G0 Fácil"),
         patrimonio=Patrimonio(
-            activos=[Activo(tipo="cuenta", descripcion="CDT",
-                            valor_31dic=250_000_000, fuente=FX)],
-            patrimonio_liquido_anterior=250_000_000),
+            activos=[Activo(tipo="cuenta", descripcion="CDT", valor_31dic=250_000_000, fuente=FX)],
+            patrimonio_liquido_anterior=250_000_000,
+        ),
     )
 
 
@@ -1767,23 +2004,32 @@ def g1() -> CasoTributario:
     """Asalariado con beneficios: el límite del 40% se copa."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="11", nombre="G1 Asalariado"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900111222", empleador_nombre="ACME SAS",
-            salarios=120_000_000, aportes_salud=4_800_000,
-            aportes_pension=4_800_000, retencion=8_000_000, fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900111222",
+                empleador_nombre="ACME SAS",
+                salarios=120_000_000,
+                aportes_salud=4_800_000,
+                aportes_pension=4_800_000,
+                retencion=8_000_000,
+                fuente=FX,
+            )
+        ],
         beneficios=Beneficios(
             dependientes=[Dependiente(tipo="hijo_menor", fuente=FX)],
             medicina_prepagada=_md(6_000_000),
             intereses_vivienda=_md(18_000_000),
             gmf_pagado=_md(1_000_000),
-            facturas_electronicas_total=_md(50_000_000)),
+            facturas_electronicas_total=_md(50_000_000),
+        ),
         patrimonio=Patrimonio(
-            activos=[Activo(tipo="inmueble", descripcion="Apto",
-                            valor_31dic=300_000_000, fuente=FX),
-                     Activo(tipo="cuenta", descripcion="Ahorros",
-                            valor_31dic=20_000_000, fuente=FX)],
+            activos=[
+                Activo(tipo="inmueble", descripcion="Apto", valor_31dic=300_000_000, fuente=FX),
+                Activo(tipo="cuenta", descripcion="Ahorros", valor_31dic=20_000_000, fuente=FX),
+            ],
             deudas=[Deuda(acreedor="Banco", saldo_31dic=150_000_000, fuente=FX)],
-            patrimonio_liquido_anterior=165_000_000),
+            patrimonio_liquido_anterior=165_000_000,
+        ),
         creditos=Creditos(anios_previos_declarando=0),
     )
 
@@ -1792,14 +2038,21 @@ def g2() -> CasoTributario:
     """Asalariado + pensión alta + movimientos (rendimientos, GMF, consignaciones)."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="12", nombre="G2 Pensionado"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900333444", empleador_nombre="Universidad X",
-            salarios=80_000_000, aportes_salud=3_200_000,
-            aportes_pension=3_200_000, retencion=3_000_000, fuente=FX)],
-        pensiones=[IngresoPension(pagador="Colpensiones",
-                                  mesadas=[55_000_000] * 12, fuente=FX)],
-        rendimientos=[Rendimiento(entidad="Banco Y", valor=8_000_000,
-                                  retencion=560_000, fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900333444",
+                empleador_nombre="Universidad X",
+                salarios=80_000_000,
+                aportes_salud=3_200_000,
+                aportes_pension=3_200_000,
+                retencion=3_000_000,
+                fuente=FX,
+            )
+        ],
+        pensiones=[IngresoPension(pagador="Colpensiones", mesadas=[55_000_000] * 12, fuente=FX)],
+        rendimientos=[
+            Rendimiento(entidad="Banco Y", valor=8_000_000, retencion=560_000, fuente=FX)
+        ],
         beneficios=Beneficios(gmf_pagado=_md(800_000)),
         movimientos=Movimientos(consignaciones_totales=_md(700_000_000)),
         creditos=Creditos(anios_previos_declarando=2),
@@ -1810,23 +2063,48 @@ def g3() -> CasoTributario:
     """Asalariado + rendimientos + arriendos con costos + dividendos mixtos."""
     return CasoTributario(
         contribuyente=Contribuyente(num_doc="13", nombre="G3 Capital"),
-        laborales=[IngresoLaboral(
-            empleador_nit="900555666", empleador_nombre="Consultora Z",
-            salarios=100_000_000, aportes_salud=4_000_000,
-            aportes_pension=4_000_000, retencion=6_000_000, fuente=FX)],
-        rendimientos=[Rendimiento(entidad="Banco Y", valor=4_000_000,
-                                  retencion=280_000, fuente=FX)],
-        arriendos=[Arriendo(
-            inmueble="Apto arrendado", canon_total=36_000_000, retencion=1_260_000,
-            costos=CostosArriendo(predial=3_000_000, administracion=4_800_000,
-                                  comision_inmobiliaria=3_600_000), fuente=FX)],
-        dividendos=[Dividendo(sociedad_nit="800777888", sociedad_nombre="Soc SA",
-                              no_gravados=30_000_000, gravados=10_000_000,
-                              retencion=0, fuente=FX)],
+        laborales=[
+            IngresoLaboral(
+                empleador_nit="900555666",
+                empleador_nombre="Consultora Z",
+                salarios=100_000_000,
+                aportes_salud=4_000_000,
+                aportes_pension=4_000_000,
+                retencion=6_000_000,
+                fuente=FX,
+            )
+        ],
+        rendimientos=[
+            Rendimiento(entidad="Banco Y", valor=4_000_000, retencion=280_000, fuente=FX)
+        ],
+        arriendos=[
+            Arriendo(
+                inmueble="Apto arrendado",
+                canon_total=36_000_000,
+                retencion=1_260_000,
+                costos=CostosArriendo(
+                    predial=3_000_000, administracion=4_800_000, comision_inmobiliaria=3_600_000
+                ),
+                fuente=FX,
+            )
+        ],
+        dividendos=[
+            Dividendo(
+                sociedad_nit="800777888",
+                sociedad_nombre="Soc SA",
+                no_gravados=30_000_000,
+                gravados=10_000_000,
+                retencion=0,
+                fuente=FX,
+            )
+        ],
         beneficios=Beneficios(
-            dependientes=[Dependiente(tipo="hijo_menor", fuente=FX),
-                          Dependiente(tipo="hijo_estudiante", fuente=FX)],
-            gmf_pagado=_md(900_000)),
+            dependientes=[
+                Dependiente(tipo="hijo_menor", fuente=FX),
+                Dependiente(tipo="hijo_estudiante", fuente=FX),
+            ],
+            gmf_pagado=_md(900_000),
+        ),
         creditos=Creditos(anios_previos_declarando=2),
     )
 ```
@@ -1834,6 +2112,7 @@ def g3() -> CasoTributario:
 ```python
 # tests/golden/test_golden.py
 """Contrato del motor: 210 esperado por escenario, calculado a mano en el plan."""
+
 from declaras.motor import Elecciones
 from declaras.optimizador import optimizar
 from declaras.parametros import cargar
@@ -1844,7 +2123,7 @@ P = cargar(2025)
 
 def test_g0_facil_sin_movimientos():
     liq = optimizar(g0(), P).liquidacion
-    assert liq.valor("OBLIGADO_DECLARAR") == 1     # patrimonio > 224.095.500
+    assert liq.valor("OBLIGADO_DECLARAR") == 1  # patrimonio > 224.095.500
     assert liq.valor("IMPUESTO_NETO") == 0
     assert liq.valor("SALDO") == 0
     assert not liq.tiene_flag("COMPARACION_PATRIMONIAL")  # incremento 0
@@ -1858,19 +2137,19 @@ def test_g1_asalariado():
     assert liq.valor("IMPUESTO_NETO") == 1_495_977
     assert liq.valor("RETENCIONES") == 8_000_000
     assert liq.valor("ANTICIPO_SIGUIENTE") == 0
-    assert liq.valor("SALDO") == -6_504_023        # a favor
+    assert liq.valor("SALDO") == -6_504_023  # a favor
     assert not liq.tiene_flag("COMPARACION_PATRIMONIAL")  # creció 5M, justificado
 
 
 def test_g2_pension_y_movimientos():
     liq = optimizar(g2(), P).liquidacion
     assert liq.valor("RLG_GENERAL") == 62_800_000
-    assert liq.valor("RLG_PENSIONES") == 62_412_000        # exceso mensual × 12
-    assert liq.valor("IMPUESTO_NETO") == 17_131_720        # 28% + 116 UVT
+    assert liq.valor("RLG_PENSIONES") == 62_412_000  # exceso mensual × 12
+    assert liq.valor("IMPUESTO_NETO") == 17_131_720  # 28% + 116 UVT
     assert liq.valor("RETENCIONES") == 3_560_000
-    assert liq.valor("ANTICIPO_SIGUIENTE") == 9_288_790    # 75% − retenciones
+    assert liq.valor("ANTICIPO_SIGUIENTE") == 9_288_790  # 75% − retenciones
     assert liq.valor("SALDO") == 22_860_510
-    assert liq.valor("OBLIGADO_DECLARAR") == 1             # también por consignaciones
+    assert liq.valor("OBLIGADO_DECLARAR") == 1  # también por consignaciones
     assert liq.tiene_flag("COMPONENTE_INFLACIONARIO_PROVISIONAL")
 
 
@@ -1881,7 +2160,7 @@ def test_g3_capital_y_dividendos():
     assert liq.valor("RLG_GENERAL") == 82_478_944
     assert liq.valor("IMP_DIV_35") == 3_500_000
     assert liq.valor("DESCUENTO_254_1") == 0
-    assert liq.valor("IMPUESTO_NETO") == 18_886_464        # 15.386.464 + 3.5M
+    assert liq.valor("IMPUESTO_NETO") == 18_886_464  # 15.386.464 + 3.5M
     assert liq.valor("RETENCIONES") == 7_540_000
     assert liq.valor("ANTICIPO_SIGUIENTE") == 6_624_848
     assert liq.valor("SALDO") == 17_971_312
@@ -1938,8 +2217,12 @@ def _liq():
 def test_casillas_ordenadas_y_completas():
     filas = casillas(_liq())
     codigos = [f["codigo"] for f in filas]
-    assert codigos.index("ING_BRUTO_GENERAL") < codigos.index("RLG_GENERAL") \
-        < codigos.index("IMPUESTO_NETO") < codigos.index("SALDO")
+    assert (
+        codigos.index("ING_BRUTO_GENERAL")
+        < codigos.index("RLG_GENERAL")
+        < codigos.index("IMPUESTO_NETO")
+        < codigos.index("SALDO")
+    )
     saldo = next(f for f in filas if f["codigo"] == "SALDO")
     assert saldo["valor"] == -6_504_023
 
@@ -1968,14 +2251,32 @@ Expected: FAIL.
 # src/declaras/render/orden.py
 ORDEN_CASILLAS: list[str] = [
     "OBLIGADO_DECLARAR",
-    "PATRIMONIO_BRUTO", "PATRIMONIO_LIQUIDO",
-    "ING_BRUTO_GENERAL", "INCR_APORTES", "INCR_CI", "INCR_TOTAL",
-    "ING_NETOS_GENERAL", "COSTOS_ARRIENDOS", "CAP_40",
-    "DEDUCCIONES_LIMITADAS", "EXENTA_25", "APLICADO_40", "EXTRA_LIMITE",
-    "RLG_GENERAL", "RLG_PENSIONES",
-    "DIV_NO_GRAVADOS", "DIV_GRAVADOS", "IMP_DIV_35",
-    "BASE_TABLA_241", "IMPUESTO_241", "DESCUENTO_254_1", "DESCUENTO_DONACIONES",
-    "IMPUESTO_NETO", "RETENCIONES", "ANTICIPO_SIGUIENTE", "SALDO",
+    "PATRIMONIO_BRUTO",
+    "PATRIMONIO_LIQUIDO",
+    "ING_BRUTO_GENERAL",
+    "INCR_APORTES",
+    "INCR_CI",
+    "INCR_TOTAL",
+    "ING_NETOS_GENERAL",
+    "COSTOS_ARRIENDOS",
+    "CAP_40",
+    "DEDUCCIONES_LIMITADAS",
+    "EXENTA_25",
+    "APLICADO_40",
+    "EXTRA_LIMITE",
+    "RLG_GENERAL",
+    "RLG_PENSIONES",
+    "DIV_NO_GRAVADOS",
+    "DIV_GRAVADOS",
+    "IMP_DIV_35",
+    "BASE_TABLA_241",
+    "IMPUESTO_241",
+    "DESCUENTO_254_1",
+    "DESCUENTO_DONACIONES",
+    "IMPUESTO_NETO",
+    "RETENCIONES",
+    "ANTICIPO_SIGUIENTE",
+    "SALDO",
 ]
 ```
 
@@ -1991,8 +2292,15 @@ def casillas(liq: Liquidacion) -> list[dict]:
     for codigo in ORDEN_CASILLAS:
         if codigo in liq.nodos:
             n = liq.nodos[codigo]
-            filas.append({"codigo": n.codigo, "etiqueta": n.etiqueta,
-                          "valor": n.valor, "formula": n.formula, "regla": n.regla})
+            filas.append(
+                {
+                    "codigo": n.codigo,
+                    "etiqueta": n.etiqueta,
+                    "valor": n.valor,
+                    "formula": n.formula,
+                    "regla": n.regla,
+                }
+            )
     return filas
 
 
@@ -2122,10 +2430,16 @@ class ClienteFalso:
 
 
 EXTRACCION = Extraccion220(
-    empleador_nit="900123456", empleador_nombre="ACME SAS",
-    salarios=120_000_000, cesantias_e_intereses=2_000_000, prima=1_000_000,
-    bonificaciones=0, aportes_salud=4_800_000, aportes_pension=4_800_000,
-    retencion=8_000_000, confianza=0.97,
+    empleador_nit="900123456",
+    empleador_nombre="ACME SAS",
+    salarios=120_000_000,
+    cesantias_e_intereses=2_000_000,
+    prima=1_000_000,
+    bonificaciones=0,
+    aportes_salud=4_800_000,
+    aportes_pension=4_800_000,
+    retencion=8_000_000,
+    confianza=0.97,
 )
 
 
@@ -2197,21 +2511,25 @@ def extraer_220(pdf_bytes: bytes, client=None) -> IngresoLaboral:
     """Extrae un 220 con LLM y devuelve el hecho con proveniencia. Único punto con IA."""
     if client is None:  # import perezoso: los tests no necesitan el SDK real
         import anthropic
+
         client = anthropic.Anthropic()
 
     data = base64.standard_b64encode(pdf_bytes).decode()
     respuesta = client.messages.parse(
         model=MODELO,
         max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "document",
-                 "source": {"type": "base64", "media_type": "application/pdf",
-                            "data": data}},
-                {"type": "text", "text": PROMPT_220},
-            ],
-        }],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {"type": "base64", "media_type": "application/pdf", "data": data},
+                    },
+                    {"type": "text", "text": PROMPT_220},
+                ],
+            }
+        ],
         output_format=Extraccion220,
     )
     ext: Extraccion220 = respuesta.parsed_output
@@ -2244,6 +2562,7 @@ __all__ = ["Extraccion220", "extraer_220"]
 Uso: uv run python scripts/probar_extractor.py ruta/al/220.pdf
 Requiere ANTHROPIC_API_KEY o perfil de `ant auth login`.
 """
+
 import sys
 from pathlib import Path
 
@@ -2347,14 +2666,22 @@ def test_subir_220_agrega_hecho(cliente, monkeypatch):
 
     def _extraer_falso(pdf_bytes, client=None):
         from declaras.caso import Fuente
+
         return IngresoLaboral(
-            empleador_nit="901", empleador_nombre="Otro Empleador",
-            salarios=10_000_000, aportes_salud=400_000, aportes_pension=400_000,
-            retencion=0, fuente=Fuente.documento("220", "abc123", confianza=0.9))
+            empleador_nit="901",
+            empleador_nombre="Otro Empleador",
+            salarios=10_000_000,
+            aportes_salud=400_000,
+            aportes_pension=400_000,
+            retencion=0,
+            fuente=Fuente.documento("220", "abc123", confianza=0.9),
+        )
 
     monkeypatch.setattr(api_main, "extraer_220", _extraer_falso)
-    r = cliente.post(f"/casos/{caso_id}/documentos/220",
-                     files={"archivo": ("220.pdf", b"%PDF-fake", "application/pdf")})
+    r = cliente.post(
+        f"/casos/{caso_id}/documentos/220",
+        files={"archivo": ("220.pdf", b"%PDF-fake", "application/pdf")},
+    )
     assert r.status_code == 200
     assert len(r.json()["laborales"]) == 2
 ```

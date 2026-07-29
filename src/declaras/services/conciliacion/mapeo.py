@@ -42,9 +42,7 @@ from declaras.services.conciliacion.modelos import Decision, Partida, Resolucion
 from declaras.services.conciliacion.resolucion import pendientes
 
 # Las decisiones que hacen valer un monto en el caso; las otras tres cierran sin aportar.
-DECISIONES_CON_HECHO = frozenset(
-    {Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO}
-)
+DECISIONES_CON_HECHO = frozenset({Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO})
 
 # Códigos de los avisos del ensamble (los lee T6 al fusionarlos en la liquidación).
 PENSION_DISTRIBUIDA_UNIFORME = "PENSION_DISTRIBUIDA_UNIFORME"
@@ -172,9 +170,7 @@ def _ensamblar(partidas: list[Partida]) -> _Ensamble:
     return ensamble
 
 
-def _avisar_posible_doble_conteo(
-    ensamble: _Ensamble, grupos: dict[str, list[Partida]]
-) -> None:
+def _avisar_posible_doble_conteo(ensamble: _Ensamble, grupos: dict[str, list[Partida]]) -> None:
     """I6 de la ronda 2: la suelta sin NIT y la conciliada del mismo empleador pueden ser
     la misma plata (forma aceptada en T4), y si una persona resuelve LAS DOS con hecho
     entran como dos hechos — ingresos Y retención dobles. El ensamble no puede saberlo
@@ -189,23 +185,28 @@ def _avisar_posible_doble_conteo(
     for suelta in sueltas:
         for identificada in identificadas:
             mismo_nombre = (
-                suelta.nombre_tercero and identificada.nombre_tercero
-                and suelta.nombre_tercero.casefold()
-                == identificada.nombre_tercero.casefold()
+                suelta.nombre_tercero
+                and identificada.nombre_tercero
+                and suelta.nombre_tercero.casefold() == identificada.nombre_tercero.casefold()
             )
-            if (suelta.concepto is identificada.concepto and mismo_nombre
-                    and _resuelta(suelta).valor == _resuelta(identificada).valor):
-                ensamble.avisos.append(Flag(
-                    codigo=POSIBLE_DOBLE_CONTEO,
-                    mensaje=(
-                        f"Las partidas {suelta.id} y {identificada.id} entraron las "
-                        f"dos al caso con el mismo concepto, el mismo nombre "
-                        f"({identificada.nombre_tercero}) y la misma cifra "
-                        f"({_resuelta(identificada).valor:,} pesos): pueden ser el "
-                        "mismo hecho contado dos veces. Si lo son, cerrar la suelta "
-                        "sin NIT con CERRAR_SIN_SOPORTE."
-                    ),
-                ))
+            if (
+                suelta.concepto is identificada.concepto
+                and mismo_nombre
+                and _resuelta(suelta).valor == _resuelta(identificada).valor
+            ):
+                ensamble.avisos.append(
+                    Flag(
+                        codigo=POSIBLE_DOBLE_CONTEO,
+                        mensaje=(
+                            f"Las partidas {suelta.id} y {identificada.id} entraron las "
+                            f"dos al caso con el mismo concepto, el mismo nombre "
+                            f"({identificada.nombre_tercero}) y la misma cifra "
+                            f"({_resuelta(identificada).valor:,} pesos): pueden ser el "
+                            "mismo hecho contado dos veces. Si lo son, cerrar la suelta "
+                            "sin NIT con CERRAR_SIN_SOPORTE."
+                        ),
+                    )
+                )
 
 
 def _tercero(p: Partida) -> str:
@@ -256,9 +257,7 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
     # propia DIAN asignó (declarar más retención que lo reportado por el tercero casi
     # garantiza requerimiento); sin ella, la de la versión escogida.
     retenciones = por_concepto.pop(Concepto.RETENCION, [])
-    retencion_pendiente = (
-        sum(_resuelta(p).valor for p in retenciones) if retenciones else None
-    )
+    retencion_pendiente = sum(_resuelta(p).valor for p in retenciones) if retenciones else None
 
     salud = por_concepto.pop(Concepto.APORTES_SALUD, [])
     pension_obligatoria = por_concepto.pop(Concepto.APORTES_PENSION, [])
@@ -297,17 +296,19 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                     # USAR_OTRO sobre la partida RETENCION, indistinguible de "no hay
                     # fuente explícita" sin este aviso.
                     nombre = p.nombre_tercero or p.nit_tercero
-                    ensamble.avisos.append(Flag(
-                        codigo=RETENCION_DESPLAZADA,
-                        mensaje=(
-                            f"La retención declarada para {nombre} salió de la fuente "
-                            f"explícita ({retencion_pendiente:,} pesos, "
-                            f"{', '.join(x.id for x in retenciones)}) y desplazó la "
-                            f"que certifica la otra versión ({retencion:,} pesos): "
-                            "rige una sola fuente — verificar cuál es la real antes "
-                            "de presentar."
-                        ),
-                    ))
+                    ensamble.avisos.append(
+                        Flag(
+                            codigo=RETENCION_DESPLAZADA,
+                            mensaje=(
+                                f"La retención declarada para {nombre} salió de la fuente "
+                                f"explícita ({retencion_pendiente:,} pesos, "
+                                f"{', '.join(x.id for x in retenciones)}) y desplazó la "
+                                f"que certifica la otra versión ({retencion:,} pesos): "
+                                "rige una sola fuente — verificar cuál es la real antes "
+                                "de presentar."
+                            ),
+                        )
+                    )
                 retencion = retencion_pendiente
                 retencion_pendiente = None
                 extras.append(f"retención de {', '.join(x.id for x in retenciones)}")
@@ -316,84 +317,105 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                 if any(aportes):
                     ids = [x.id for x in aportes[0] + aportes[1]]
                     extras.append(f"aportes de {', '.join(ids)}")
-                ensamble.laborales.append(IngresoLaboral(
-                    empleador_nit=p.nit_tercero,
-                    empleador_nombre=p.nombre_tercero,
-                    # El valor resuelto es el agregado de pagos laborales (el 5001 de la
-                    # exógena y el lado documento del 220 agregan igual): va completo en
-                    # `salarios` y el motor solo consume `bruto`, que es su suma.
-                    salarios=_resuelta(p).valor,
-                    aportes_salud=sum(_resuelta(x).valor for x in aportes[0]),
-                    aportes_pension=sum(_resuelta(x).valor for x in aportes[1]),
-                    retencion=retencion,
-                    fuente=_fuente(p, extras),
-                ))
+                ensamble.laborales.append(
+                    IngresoLaboral(
+                        empleador_nit=p.nit_tercero,
+                        empleador_nombre=p.nombre_tercero,
+                        # El valor resuelto es el agregado de pagos laborales (el 5001 de la
+                        # exógena y el lado documento del 220 agregan igual): va completo en
+                        # `salarios` y el motor solo consume `bruto`, que es su suma.
+                        salarios=_resuelta(p).valor,
+                        aportes_salud=sum(_resuelta(x).valor for x in aportes[0]),
+                        aportes_pension=sum(_resuelta(x).valor for x in aportes[1]),
+                        retencion=retencion,
+                        fuente=_fuente(p, extras),
+                    )
+                )
             elif concepto is Concepto.PENSIONES:
                 pagador = p.nombre_tercero or p.nit_tercero
                 total = _resuelta(p).valor
-                ensamble.pensiones.append(IngresoPension(
-                    pagador=pagador, mesadas=_mesadas(total),
-                    retencion=retencion, fuente=_fuente(p, extras),
-                ))
-                ensamble.avisos.append(Flag(
-                    codigo=PENSION_DISTRIBUIDA_UNIFORME,
-                    mensaje=(
-                        f"La pensión de {pagador} entró como el total anual "
-                        f"({total:,} pesos) repartido en 12 mesadas iguales: correcto "
-                        "si la mesada fue pareja, equivocado si hubo retroactivos o "
-                        "reajustes — verificar contra los comprobantes del pagador."
-                    ),
-                ))
+                ensamble.pensiones.append(
+                    IngresoPension(
+                        pagador=pagador,
+                        mesadas=_mesadas(total),
+                        retencion=retencion,
+                        fuente=_fuente(p, extras),
+                    )
+                )
+                ensamble.avisos.append(
+                    Flag(
+                        codigo=PENSION_DISTRIBUIDA_UNIFORME,
+                        mensaje=(
+                            f"La pensión de {pagador} entró como el total anual "
+                            f"({total:,} pesos) repartido en 12 mesadas iguales: correcto "
+                            "si la mesada fue pareja, equivocado si hubo retroactivos o "
+                            "reajustes — verificar contra los comprobantes del pagador."
+                        ),
+                    )
+                )
             elif concepto is Concepto.RENDIMIENTOS:
-                ensamble.rendimientos.append(Rendimiento(
-                    entidad=p.nombre_tercero or p.nit_tercero,
-                    valor=_resuelta(p).valor,
-                    retencion=retencion, fuente=_fuente(p, extras),
-                ))
+                ensamble.rendimientos.append(
+                    Rendimiento(
+                        entidad=p.nombre_tercero or p.nit_tercero,
+                        valor=_resuelta(p).valor,
+                        retencion=retencion,
+                        fuente=_fuente(p, extras),
+                    )
+                )
             elif concepto is Concepto.ARRENDAMIENTOS:
-                ensamble.arriendos.append(Arriendo(
-                    # La exógena identifica a quien PAGÓ el canon, no al inmueble; los
-                    # costos (predial, administración...) tampoco salen del cruce y
-                    # entran después por la captura.
-                    inmueble=p.nombre_tercero or p.nit_tercero,
-                    canon_total=_resuelta(p).valor,
-                    retencion=retencion, fuente=_fuente(p, extras),
-                ))
+                ensamble.arriendos.append(
+                    Arriendo(
+                        # La exógena identifica a quien PAGÓ el canon, no al inmueble; los
+                        # costos (predial, administración...) tampoco salen del cruce y
+                        # entran después por la captura.
+                        inmueble=p.nombre_tercero or p.nit_tercero,
+                        canon_total=_resuelta(p).valor,
+                        retencion=retencion,
+                        fuente=_fuente(p, extras),
+                    )
+                )
             elif concepto is Concepto.DIVIDENDOS:
                 nombre = p.nombre_tercero or p.nit_tercero
-                ensamble.dividendos.append(Dividendo(
-                    sociedad_nit=p.nit_tercero,
-                    sociedad_nombre=p.nombre_tercero,
-                    # La partida trae UN número y el modelo exige el desglose. Se asume
-                    # GRAVADOS — la dirección que nunca subdeclara, como el componente
-                    # inflacionario en 0% — y el aviso deja la decisión a la vista.
-                    gravados=_resuelta(p).valor,
-                    no_gravados=0,
-                    retencion=retencion, fuente=_fuente(p, extras),
-                ))
-                ensamble.avisos.append(Flag(
-                    codigo=DIVIDENDOS_SIN_DESAGREGAR,
-                    mensaje=(
-                        f"Los dividendos de {nombre} entraron completos como gravados: "
-                        "la partida no distingue la parte no gravada (art. 49) y "
-                        "asumirla sin soporte bajaría el impuesto. Con el certificado "
-                        "de la sociedad se desagregan y la carga puede bajar."
-                    ),
-                ))
+                ensamble.dividendos.append(
+                    Dividendo(
+                        sociedad_nit=p.nit_tercero,
+                        sociedad_nombre=p.nombre_tercero,
+                        # La partida trae UN número y el modelo exige el desglose. Se asume
+                        # GRAVADOS — la dirección que nunca subdeclara, como el componente
+                        # inflacionario en 0% — y el aviso deja la decisión a la vista.
+                        gravados=_resuelta(p).valor,
+                        no_gravados=0,
+                        retencion=retencion,
+                        fuente=_fuente(p, extras),
+                    )
+                )
+                ensamble.avisos.append(
+                    Flag(
+                        codigo=DIVIDENDOS_SIN_DESAGREGAR,
+                        mensaje=(
+                            f"Los dividendos de {nombre} entraron completos como gravados: "
+                            "la partida no distingue la parte no gravada (art. 49) y "
+                            "asumirla sin soporte bajaría el impuesto. Con el certificado "
+                            "de la sociedad se desagregan y la carga puede bajar."
+                        ),
+                    )
+                )
 
     if retencion_pendiente is not None:
         # Declararla sola fabrica un saldo a favor sin ingreso que lo sostenga;
         # perderla en silencio regala plata del cliente. No entra, y queda a la vista.
         nombre = retenciones[0].nombre_tercero or retenciones[0].nit_tercero
-        ensamble.avisos.append(Flag(
-            codigo=RETENCION_SIN_INGRESO,
-            mensaje=(
-                f"La retención reportada por {nombre} ({retencion_pendiente:,} pesos) "
-                "quedó resuelta sin ningún ingreso del mismo tercero en el caso: no se "
-                "declaró, porque una retención sin ingreso fabrica un saldo a favor "
-                "sin sustento. Revisar de qué ingreso viene."
-            ),
-        ))
+        ensamble.avisos.append(
+            Flag(
+                codigo=RETENCION_SIN_INGRESO,
+                mensaje=(
+                    f"La retención reportada por {nombre} ({retencion_pendiente:,} pesos) "
+                    "quedó resuelta sin ningún ingreso del mismo tercero en el caso: no se "
+                    "declaró, porque una retención sin ingreso fabrica un saldo a favor "
+                    "sin sustento. Revisar de qué ingreso viene."
+                ),
+            )
+        )
 
 
 def _aviso_exclusion(p: Partida) -> Flag:
@@ -507,6 +529,4 @@ def _fuente(p: Partida, extras: list[str]) -> Fuente:
     # congelado en esta tarea: se adjuntan con `model_copy` sobre claves LITERALES del
     # modelo (la trampa de `model_copy(update=...)` es el typo silencioso; acá las claves
     # están a la vista y los tests fijan los valores).
-    return fuente.model_copy(
-        update={"celda": version.celda, "confianza": version.confianza}
-    )
+    return fuente.model_copy(update={"celda": version.celda, "confianza": version.confianza})

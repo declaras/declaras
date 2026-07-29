@@ -87,9 +87,7 @@ def lector_220(monkeypatch):
             doc_type=DOC_220,
             parser="doble",
             content_sha256=hashlib.sha256(content).hexdigest(),
-            fields=[
-                ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()
-            ],
+            fields=[ExtractedField(name=k, value=v, confidence=0.97) for k, v in campos.items()],
         )
 
     monkeypatch.setitem(registry.LLM_READERS, DOC_220, lector)
@@ -503,9 +501,7 @@ async def test_dos_resoluciones_simultaneas_no_se_pierden_en_silencio(client):
     otro = dict(FILA_SALARIO, reporter_nit="900999888", reporter_name="OTRA SAS")
     case_id = await _conciliado(client, FILA_SALARIO, otro)
     await _subir(client, case_id, DOC_220, "acme.pdf", _bytes_220())
-    await _subir(
-        client, case_id, DOC_220, "otra.pdf", _bytes_220("900999888", nombre="OTRA SAS")
-    )
+    await _subir(client, case_id, DOC_220, "otra.pdf", _bytes_220("900999888", nombre="OTRA SAS"))
     pendientes = [p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is None]
     assert len(pendientes) >= 2, pendientes
 
@@ -522,12 +518,8 @@ async def test_dos_resoluciones_simultaneas_no_se_pierden_en_silencio(client):
     respuestas = await asyncio.gather(
         resolver(pendientes[0]), resolver(pendientes[1]), return_exceptions=True
     )
-    codigos = sorted(
-        r.status_code for r in respuestas if not isinstance(r, BaseException)
-    )
-    resueltas = {
-        p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is not None
-    }
+    codigos = sorted(r.status_code for r in respuestas if not isinstance(r, BaseException))
+    resueltas = {p["id"] for p in await _partidas(client, case_id) if p["resolucion"] is not None}
 
     # O las dos entraron (si la base las serializó), o la perdedora dijo 409 — nunca dos
     # 200 con una sola decisión guardada.
@@ -1053,8 +1045,9 @@ async def test_resolver_no_contradice_a_los_otros_caminos(client, container):
         "resolver decía que no falta nada mientras GET /conciliacion decía lo contrario"
     )
     del_otro_camino = (await client.get(f"/v1/cases/{case_id}/conciliacion")).json()
-    assert resuelto.json()["resumen"]["falta_para_liquidar"] == (
-        del_otro_camino["falta_para_liquidar"]
+    assert (
+        resuelto.json()["resumen"]["falta_para_liquidar"]
+        == (del_otro_camino["falta_para_liquidar"])
     )
     assert len(await container.conciliacion.versiones(UUID(case_id))) == versiones_antes, (
         "se persistió una versión calculada sin el documento que ya está en el expediente"
@@ -1114,9 +1107,7 @@ async def test_una_exogena_sin_filas_tambien_produce_su_210(client):
         json={"id_number": ID_TITULAR, "tax_year": 2025, "full_name": NOMBRE_TITULAR},
     )
     case_id = creado.json()["id"]
-    vacia = build_exogena_xlsx(
-        id_number=ID_TITULAR, taxpayer_name=NOMBRE_TITULAR, detail_rows=[]
-    )
+    vacia = build_exogena_xlsx(id_number=ID_TITULAR, taxpayer_name=NOMBRE_TITULAR, detail_rows=[])
     await _subir(client, case_id, "EXOGENA", "exogena-vacia.xlsx", vacia)
     resumen = (await client.post(f"/v1/cases/{case_id}/conciliacion")).json()
     assert resumen["total"] == 0
@@ -1131,9 +1122,7 @@ async def test_una_exogena_sin_filas_tambien_produce_su_210(client):
     assert cerrar.json()["status"] == "DRAFT_READY"
 
 
-async def test_la_invalidacion_ve_un_cierre_que_ocurrio_a_mitad_de_la_request(
-    client, monkeypatch
-):
+async def test_la_invalidacion_ve_un_cierre_que_ocurrio_a_mitad_de_la_request(client, monkeypatch):
     """D3, segunda mitad: la invalidación leía el estado del expediente del `detail` que su
     llamador tomó al EMPEZAR. Si el cierre ocurre en medio, ahí el caso todavía no era
     `DRAFT_READY` y la red de seguridad no disparaba. Se fuerza esa ventana exacta."""
@@ -1253,9 +1242,7 @@ def lector_prepagada(monkeypatch):
             doc_type="CERT_PREPAGADA",
             parser="doble",
             content_sha256=hashlib.sha256(content).hexdigest(),
-            fields=[
-                ExtractedField(name=k, value=v, confidence=0.93) for k, v in campos.items()
-            ],
+            fields=[ExtractedField(name=k, value=v, confidence=0.93) for k, v in campos.items()],
         )
 
     monkeypatch.setitem(registry.LLM_READERS, "CERT_PREPAGADA", lector)

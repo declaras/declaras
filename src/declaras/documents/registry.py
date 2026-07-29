@@ -61,6 +61,7 @@ class LlmReader(Protocol):
 
     def __call__(self, content: bytes, *, anio_esperado: int | None = ...) -> DocumentReading: ...
 
+
 # Un lector ya atado al contexto del caso, listo para llamarse con `(content)`. Los de la
 # familia con modelo necesitan saber de que anio es el caso —el error mas comun es subir el
 # certificado del anio equivocado, y el guard que lo ataja no puede adivinarlo—, pero quien
