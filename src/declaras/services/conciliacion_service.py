@@ -58,6 +58,7 @@ from declaras.services.conciliacion import (
     autorresolver,
     bloqueantes,
     derivar_peticiones,
+    etiqueta_de_pregunta,
     ganancia,
     incorporar,
     liquidar_conciliado,
@@ -406,6 +407,17 @@ class ConciliacionService:
         caso = estado.caso if estado.caso is not None else self._caso_vacio(detail)
         return derivar_peticiones(estado.partidas, respuestas, caso, p=self._parametros(detail))
 
+    async def respuestas(self, case_id: UUID) -> list[Respuesta]:
+        """Lo que ya se contestó, para poder verlo y cambiarlo.
+
+        Sin esto, contestar apaga la pregunta y no queda nada a la vista: un "no" dado por
+        error es irrecuperable desde la interfaz, y el que revise después no puede saber si una
+        deducción falta porque no se preguntó o porque el cliente dijo que no la tenía. Son dos
+        situaciones distintas y llevan a decisiones distintas.
+        """
+        await self._detalle(case_id)
+        return await self._repo.respuestas(case_id)
+
     async def registrar_respuesta(
         self,
         case_id: UUID,
@@ -419,7 +431,8 @@ class ConciliacionService:
         """Guarda lo que contestó el cliente y devuelve la lista que queda.
 
         Un `no` apaga la petición PARA SIEMPRE: sin este registro el sistema le pregunta
-        por prepagada en cada consulta.
+        por prepagada en cada consulta. Justo por eso queda en la bitácora: apagar una
+        deducción cambia la declaración, y un cambio así no puede no dejar rastro.
         """
         from datetime import UTC, datetime
 
@@ -433,6 +446,15 @@ class ConciliacionService:
                 quien=quien,
                 cuando=datetime.now(tz=UTC),
             ),
+        )
+        await self._cases.add_event(
+            case_id=case_id,
+            kind="ANSWER_RECORDED",
+            message=(
+                f"{'Sí' if tiene else 'No'} tiene {etiqueta_de_pregunta(pregunta)} "
+                f"(lo respondió {quien})"
+            ),
+            payload={"pregunta": pregunta, "tiene": tiene, "quien": quien},
         )
         return await self.peticiones(case_id)
 

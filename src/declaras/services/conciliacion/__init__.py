@@ -53,6 +53,7 @@ from declaras.services.conciliacion.peticiones import (
     Peticion,
     costo_de_cerrar,
     derivar_peticiones,
+    etiqueta_de_pregunta,
 )
 from declaras.services.conciliacion.resolucion import (
     CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO,
@@ -102,6 +103,7 @@ __all__ = [
     "concepto_de_codigo",
     "costo_de_cerrar",
     "derivar_peticiones",
+    "etiqueta_de_pregunta",
     "ganancia",
     "hay_bloqueante",
     "incorporar",

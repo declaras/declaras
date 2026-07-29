@@ -130,6 +130,24 @@ def _monto(valor: int) -> MontoDeclarado:
     return MontoDeclarado(valor=valor, fuente=_FUENTE_HIPOTESIS)
 
 
+# Como se nombra cada pregunta cuando hay que contarla en una frase, no ofrecerla. Se usa en la
+# bitacora: "No tiene medicina prepagada" se lee; "No tiene PREPAGADA" no.
+ETIQUETAS_DE_PREGUNTA = {
+    "PREPAGADA": "medicina prepagada",
+    "INTERESES_VIVIENDA": "crédito de vivienda",
+    "DEPENDIENTES": "personas a cargo",
+    "AFC_FVP": "aportes a AFC o pensiones voluntarias",
+    "ICETEX": "crédito educativo del ICETEX",
+    "GMF": "gravamen a los movimientos financieros",
+    "DONACION_ESAL": "donaciones a entidades sin ánimo de lucro",
+}
+
+
+def etiqueta_de_pregunta(pregunta: str) -> str:
+    """Nombre legible de una pregunta; si es una derivada del cruce, su propia clave."""
+    return ETIQUETAS_DE_PREGUNTA.get(pregunta, pregunta.replace("_", " ").lower())
+
+
 _BENEFICIOS: tuple[_Beneficio, ...] = (
     _Beneficio(
         pregunta="PREPAGADA",

@@ -16,7 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from declaras.api.case_schemas import CaseDetailResponse
 from declaras.motor import Flag, Liquidacion
-from declaras.services.conciliacion import Decision, LiquidacionVersionada, Motivo, Partida
+from declaras.services.conciliacion import (
+    Decision,
+    LiquidacionVersionada,
+    Motivo,
+    Partida,
+    Respuesta,
+    etiqueta_de_pregunta,
+)
 from declaras.services.conciliacion.peticiones import Peticion
 from declaras.services.conciliacion.resolucion import _plata_en_juego
 from declaras.services.conciliacion_service import (
@@ -401,3 +408,29 @@ class UploadDocumentsResponse(CaseDetailResponse):
     """
 
     resultados: list[ArchivoIncorporadoResponse]
+
+
+class RespuestaGuardadaResponse(BaseModel):
+    """Una pregunta ya contestada, para poder verla y cambiarla.
+
+    Existe porque contestar apagaba la pregunta sin dejar nada a la vista: un "no" dado por
+    error era irrecuperable desde la interfaz, y quien revisara después no podía distinguir una
+    deducción que falta porque nadie preguntó de una que falta porque el cliente dijo que no la
+    tenía. Son dos situaciones distintas y llevan a decisiones distintas.
+    """
+
+    pregunta: str
+    etiqueta: str
+    tiene: bool
+    quien: str
+    cuando: datetime
+
+    @classmethod
+    def from_respuesta(cls, r: Respuesta) -> RespuestaGuardadaResponse:
+        return cls(
+            pregunta=r.pregunta,
+            etiqueta=etiqueta_de_pregunta(r.pregunta),
+            tiene=r.tiene,
+            quien=r.quien,
+            cuando=r.cuando,
+        )

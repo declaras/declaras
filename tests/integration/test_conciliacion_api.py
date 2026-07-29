@@ -1294,3 +1294,48 @@ async def test_el_mismo_certificado_de_beneficio_dos_veces_no_dobla_la_deduccion
 
     borrador = (await client.get(f"/v1/cases/{case_id}/memoria")).text
     assert "repetido" in borrador
+
+
+async def test_una_respuesta_se_puede_ver_y_cambiar(client):
+    """Contestar apagaba la pregunta sin dejar nada a la vista.
+
+    Un "no" dado por error era irrecuperable desde la interfaz, y quien revisara después no podía
+    distinguir una deducción que falta porque nadie preguntó de una que falta porque el cliente
+    dijo que no la tenía. Son dos situaciones distintas y llevan a decisiones distintas.
+    """
+    case_id = await _conciliado(client)
+
+    await client.post(
+        f"/v1/cases/{case_id}/respuestas",
+        json={"pregunta": "PREPAGADA", "tiene": False, "quien": "cliente"},
+    )
+    guardadas = (await client.get(f"/v1/cases/{case_id}/respuestas")).json()
+    assert [r["pregunta"] for r in guardadas] == ["PREPAGADA"]
+    assert guardadas[0]["tiene"] is False
+    # Con nombre legible: "No tiene PREPAGADA" no se lee.
+    assert guardadas[0]["etiqueta"] == "medicina prepagada"
+
+    # Y se puede corregir: volver a contestar reemplaza, no acumula.
+    await client.post(
+        f"/v1/cases/{case_id}/respuestas",
+        json={"pregunta": "PREPAGADA", "tiene": True, "quien": "contador"},
+    )
+    guardadas = (await client.get(f"/v1/cases/{case_id}/respuestas")).json()
+    assert len(guardadas) == 1
+    assert guardadas[0]["tiene"] is True
+    assert guardadas[0]["quien"] == "contador"
+
+
+async def test_apagar_una_deduccion_queda_en_la_bitacora(client):
+    """Cambia la declaración, así que no puede no dejar rastro."""
+    case_id = await _conciliado(client)
+    await client.post(
+        f"/v1/cases/{case_id}/respuestas",
+        json={"pregunta": "PREPAGADA", "tiene": False, "quien": "cliente"},
+    )
+
+    eventos = (await client.get(f"/v1/cases/{case_id}")).json()["events"]
+    registrado = [e for e in eventos if e["kind"] == "ANSWER_RECORDED"]
+    assert len(registrado) == 1
+    assert "medicina prepagada" in registrado[0]["message"]
+    assert registrado[0]["payload"]["tiene"] is False

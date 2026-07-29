@@ -26,6 +26,7 @@ from declaras.api.conciliacion_schemas import (
     RegistrarRespuestaRequest,
     ResolverPartidaRequest,
     ResolverPartidaResponse,
+    RespuestaGuardadaResponse,
     RespuestaRegistradaResponse,
 )
 from declaras.api.deps import ApiKeyDep, ContainerDep
@@ -95,6 +96,23 @@ async def ver_peticiones(
 ) -> list[PeticionResponse]:
     peticiones = await container.conciliacion_service.peticiones(case_id)
     return [PeticionResponse.from_peticion(p) for p in peticiones]
+
+
+@router.get(
+    "/respuestas",
+    response_model=list[RespuestaGuardadaResponse],
+    summary="Lo que el cliente ya contestó, para verlo y poder cambiarlo",
+)
+async def listar_respuestas(
+    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+) -> list[RespuestaGuardadaResponse]:
+    """Una respuesta apaga una pregunta, y apagar una deducción cambia la declaración. Sin poder
+    verla, un "no" dado por error no tiene vuelta atrás desde la interfaz."""
+    respuestas = await container.conciliacion_service.respuestas(case_id)
+    return [
+        RespuestaGuardadaResponse.from_respuesta(r)
+        for r in sorted(respuestas, key=lambda r: r.cuando, reverse=True)
+    ]
 
 
 @router.post(
