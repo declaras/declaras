@@ -24,18 +24,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from declaras.caso import (
+    Activo,
     Arriendo,
     Beneficios,
     CasoTributario,
     Contribuyente,
     Creditos,
+    Deuda,
     Dividendo,
     Fuente,
     IngresoLaboral,
     IngresoPension,
+    MontoDeclarado,
+    Movimientos,
     Patrimonio,
     Rendimiento,
 )
+from declaras.documents.models import DocumentReading
 from declaras.motor import Flag
 from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
 from declaras.services.conciliacion.modelos import Decision, Partida, Resolucion, Valor
@@ -64,6 +69,41 @@ _ORDEN_INGRESOS = (
 )
 
 
+def movimientos_de(exogena: DocumentReading) -> Movimientos:
+    """Los insumos del chequeo de obligación, tal como los publica la DIAN.
+
+    NO son ingreso y no van a ninguna casilla del 210: solo sirven para saber si la persona está
+    obligada a declarar. Por eso sus filas no abren partida en el cruce (no hay nada que decidir)
+    y llegan al caso por acá, con los totales que la propia DIAN consolida en la cabecera del
+    reporte en vez de sumando filas.
+
+    Sin esto `caso.movimientos` llegaba siempre vacío, así que el motor solo podía detectar la
+    obligación por ingresos o por patrimonio: alguien obligado únicamente por sus consignaciones
+    salía como "no obligado".
+    """
+    # Clase `exogena`: el valor lo consolida la DIAN en la cabecera del reporte, así que no hay
+    # una celda de detalle que señalar ni una resolución de la que venga.
+    fuente = Fuente(clase="exogena", ref="topes de obligación del reporte")
+
+    def tope(nombre: str) -> MontoDeclarado | None:
+        valor = exogena.field(nombre)
+        return MontoDeclarado(valor=int(valor), fuente=fuente) if valor else None
+
+    return Movimientos(
+        consignaciones_totales=tope("tope_movimientos"),
+        # El art. 594-3 separa "compras y consumos" de los "consumos con tarjeta de crédito", y
+        # el modelo del motor solo tiene una casilla: entra el mayor de los dos, que es el que
+        # decide si se supera el tope. Con los dos por debajo el mayor tampoco lo supera, así que
+        # la conclusión no cambia; lo que se pierde es cuál de los dos fue, y eso ya se ve en los
+        # cinco topes que se muestran aparte.
+        compras_y_consumos=max(
+            (t for t in (tope("tope_compras"), tope("tope_consumo_tarjeta")) if t),
+            key=lambda m: m.valor,
+            default=None,
+        ),
+    )
+
+
 def a_caso(
     partidas: list[Partida],
     *,
@@ -72,6 +112,7 @@ def a_caso(
     beneficios: Beneficios | None = None,
     patrimonio: Patrimonio | None = None,
     creditos: Creditos | None = None,
+    movimientos: Movimientos | None = None,
 ) -> CasoTributario:
     """Las partidas resueltas, convertidas en el caso que `liquidar` recibe.
 
@@ -88,6 +129,17 @@ def a_caso(
             "resolver: el caso solo se arma cuando todas están decididas."
         )
     ensamble = _ensamblar(partidas)
+    # El patrimonio del 210 es la SUMA de dos fuentes, no una que reemplaza a la otra: lo que la
+    # exógena reporta (saldos, cesantías, activos laborales) y lo que una persona captura (el
+    # carro, la casa, que ningún tercero le reporta a la DIAN). Si el ensamble reemplazara,
+    # declarar el carro borraría los saldos bancarios.
+    capturado = patrimonio if patrimonio is not None else Patrimonio()
+    patrimonio_completo = capturado.model_copy(
+        update={
+            "activos": [*ensamble.activos, *capturado.activos],
+            "deudas": [*ensamble.deudas, *capturado.deudas],
+        }
+    )
     return CasoTributario(
         anio_gravable=anio_gravable,
         contribuyente=contribuyente,
@@ -97,7 +149,8 @@ def a_caso(
         arriendos=ensamble.arriendos,
         dividendos=ensamble.dividendos,
         beneficios=beneficios if beneficios is not None else Beneficios(),
-        patrimonio=patrimonio if patrimonio is not None else Patrimonio(),
+        patrimonio=patrimonio_completo,
+        movimientos=movimientos if movimientos is not None else Movimientos(),
         creditos=creditos if creditos is not None else Creditos(),
     )
 
@@ -119,6 +172,11 @@ class _Ensamble:
     rendimientos: list[Rendimiento] = field(default_factory=list)
     arriendos: list[Arriendo] = field(default_factory=list)
     dividendos: list[Dividendo] = field(default_factory=list)
+    # Lo que la DIAN manda a R29 y R30. Sale del cruce igual que los ingresos, y por eso vive
+    # acá: la exógena SÍ reporta los saldos bancarios, las cesantías acumuladas y los activos
+    # laborales. Lo que no reporta (el carro, la casa) lo captura una persona y se suma aparte.
+    activos: list[Activo] = field(default_factory=list)
+    deudas: list[Deuda] = field(default_factory=list)
     avisos: list[Flag] = field(default_factory=list)
 
 
@@ -271,6 +329,33 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
         raise ValueError(
             "Hay aportes obligatorios resueltos sin un ingreso laboral del mismo "
             "tercero que los reciba: hay que revisar esas resoluciones."
+        )
+
+    # El patrimonio se consume acá, antes del cierre de la partición: no es un ingreso y no
+    # tiene sitio en `_ORDEN_INGRESOS`, pero tampoco puede caerse del caso.
+    for p in por_concepto.pop(Concepto.PATRIMONIO, []):
+        ensamble.activos.append(
+            Activo(
+                # Todo lo que sale de la exógena entra como "otro", a propósito. Se intentó
+                # inferir el tipo de las palabras del reporte y no se puede: cuando el concepto
+                # mapea, la partida se agrupa por `nit:CONCEPTO` y el texto original ya no está.
+                # Y no hace falta: el tipo no cambia ninguna casilla del 210 —todo activo suma a
+                # R29— así que sirve para el detalle, y ahí "otro" es más honesto que una
+                # heurística de palabras que falla en silencio. El carro y la casa llegan con su
+                # tipo puesto, porque los captura una persona que sabe qué son.
+                tipo="otro",
+                descripcion=_descripcion_patrimonial(p),
+                valor_31dic=_resuelta(p).valor,
+                fuente=_fuente(p, []),
+            )
+        )
+    for p in por_concepto.pop(Concepto.DEUDA, []):
+        ensamble.deudas.append(
+            Deuda(
+                acreedor=p.nombre_tercero or p.nit_tercero or "sin identificar",
+                saldo_31dic=_resuelta(p).valor,
+                fuente=_fuente(p, []),
+            )
         )
 
     # El cierre de la partición (I1 de la ronda 2): a esta altura todo concepto tiene
@@ -515,6 +600,14 @@ def _mesadas(total: int) -> list[int]:
     `dinero.pesos` — redondear total/12 perdería o inventaría pesos."""
     base, resto = divmod(total, 12)
     return [base + 1 if mes < resto else base for mes in range(12)]
+
+
+def _descripcion_patrimonial(p: Partida) -> str:
+    """Qué es y de quién, para poder leerlo en la memoria de cálculo sin ir al reporte."""
+    tercero = p.nombre_tercero or p.nit_tercero or "sin identificar"
+    # El id de una partida sin concepto mapeado trae el texto del reporte tras el prefijo.
+    detalle = p.id.split("texto:", 1)[-1] if "texto:" in p.id else (p.concepto or "patrimonio")
+    return f"{detalle} ({tercero})"
 
 
 def _fuente(p: Partida, extras: list[str]) -> Fuente:

@@ -1339,3 +1339,27 @@ async def test_apagar_una_deduccion_queda_en_la_bitacora(client):
     assert len(registrado) == 1
     assert "medicina prepagada" in registrado[0]["message"]
     assert registrado[0]["payload"]["tiene"] is False
+
+
+async def test_los_movimientos_que_la_dian_reporta_llegan_al_chequeo_de_obligacion(
+    client, container
+):
+    """`caso.movimientos` existe para determinar si la persona esta obligada a declarar y nadie
+    lo llenaba nunca: en produccion siempre llegaba vacio, asi que el motor solo podia detectar
+    obligacion por ingresos o por patrimonio.
+
+    Las filas que lo alimentan (los movimientos en cuentas, las compras) no abren partida a
+    proposito, porque no se declaran en ninguna casilla del 210. Pero no desaparecen: van a
+    donde sirven. "Sacar del cruce" no es "botar".
+    """
+    from uuid import UUID
+
+    case_id = await _conciliado(client)
+    estado = await container.conciliacion_service.estado(UUID(case_id))
+
+    assert estado.caso is not None
+    movimientos = estado.caso.movimientos
+    assert movimientos.consignaciones_totales is not None, (
+        "el tope de consignaciones que la DIAN publica no llegó al caso"
+    )
+    assert movimientos.consignaciones_totales.valor > 0

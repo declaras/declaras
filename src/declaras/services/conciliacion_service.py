@@ -25,7 +25,7 @@ from uuid import UUID
 
 from pydantic import ValidationError as PydanticValidationError
 
-from declaras.caso import Beneficios, CasoTributario, Contribuyente
+from declaras.caso import Beneficios, CasoTributario, Contribuyente, Movimientos
 from declaras.documents.models import DocumentReading
 from declaras.domain.case import Case, CaseDetail, CaseDocument, CaseStatus, FlagSeverity
 from declaras.domain.case_ports import CaseRepository
@@ -63,6 +63,7 @@ from declaras.services.conciliacion import (
     incorporar,
     liquidar_conciliado,
     liquidar_y_versionar,
+    movimientos_de,
     pendientes,
     refrescar,
     resolver,
@@ -988,6 +989,14 @@ class ConciliacionService:
             )
         return estado, liquidacion
 
+    @staticmethod
+    def _movimientos(detail: CaseDetail) -> Movimientos:
+        """Los insumos del chequeo de obligación, de la exógena vigente del expediente."""
+        for d in detail.documents:
+            if d.doc_type == "EXOGENA" and d.reading is not None:
+                return movimientos_de(d.reading)
+        return Movimientos()
+
     def _intentar_caso(
         self, partidas: Sequence[Partida], detail: CaseDetail, beneficios: Beneficios
     ) -> tuple[CasoTributario | None, str | None]:
@@ -1017,6 +1026,11 @@ class ConciliacionService:
                     # certificados de beneficio se leen, se paga la llamada al modelo, y no
                     # se declaran.
                     beneficios=beneficios,
+                    # Tampoco salen del cruce, y por la razón opuesta: sus filas no abren
+                    # partida porque no se declaran en ninguna casilla. Pero el motor los
+                    # necesita para saber si la persona está obligada, así que llegan por acá
+                    # en vez de desaparecer.
+                    movimientos=self._movimientos(detail),
                 ),
                 None,
             )

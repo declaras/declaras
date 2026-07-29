@@ -36,6 +36,7 @@ from declaras.services.conciliacion.mapeo import (
     RETENCION_SIN_INGRESO,
     a_caso,
     avisos,
+    movimientos_de,
 )
 from declaras.services.conciliacion.modelos import (
     Decision,
@@ -109,6 +110,7 @@ __all__ = [
     "incorporar",
     "liquidar_conciliado",
     "liquidar_y_versionar",
+    "movimientos_de",
     "pendientes",
     "refrescar",
     "resolver",

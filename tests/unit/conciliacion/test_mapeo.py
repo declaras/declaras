@@ -645,3 +645,87 @@ def test_cerrar_sin_soporte_tambien_enumera_lo_excluido():
     assert aviso.severidad == "info"
     assert "5,000,000" in aviso.mensaje
     assert "sin clasificar" in aviso.mensaje  # concepto None: se dice, no se inventa
+
+
+# ─────────── el patrimonio que la exogena si reporta llega al 210 ───────────
+#
+# La DIAN reporta los saldos bancarios, las cesantias acumuladas y los activos laborales, y los
+# manda a "R29 Patrimonio Bruto". Son patrimonio de verdad: si el ensamble los ignora, la
+# casilla 29 sale sin ellos y la comparacion patrimonial —la validacion que protege al
+# declarante de un requerimiento— se hace contra un patrimonio incompleto.
+
+
+def _patrimonial(nit, detalle, monto, uso, nombre="BANCO ACME"):
+    from tests.unit.conciliacion.test_cruce import _fila_libre
+
+    return _fila_libre(nit, detalle, monto, uso, nombre=nombre)
+
+
+def test_un_saldo_bancario_llega_al_patrimonio_del_caso():
+    from tests.unit.conciliacion.test_cruce import _exogena
+
+    partidas = autorresolver(
+        abrir(
+            _exogena(
+                _patrimonial(
+                    "890903938",
+                    "Saldo cuentas bancarias (Titular Principal)",
+                    1_998_635,
+                    "Tope 2: Patrimonio | R29 Patrimonio Bruto",
+                )
+            )
+        )
+    )
+    caso = a_caso(partidas, contribuyente=CONTRIB, anio_gravable=2025)
+
+    assert [a.valor_31dic for a in caso.patrimonio.activos] == [1_998_635]
+    activo = caso.patrimonio.activos[0]
+    # Entra como "otro" a proposito: cuando el concepto mapea, la partida se agrupa por
+    # `nit:CONCEPTO` y el texto del reporte ya no esta, asi que no hay de donde inferir el tipo.
+    # Y no hace falta, porque todo activo suma a R29: el tipo no cambia ninguna casilla.
+    assert activo.tipo == "otro"
+    # La descripcion si dice de donde salio: es lo que se lee en la memoria de cálculo.
+    assert "BANCO ACME" in activo.descripcion
+
+
+def test_una_cuenta_por_pagar_llega_como_deuda():
+    from tests.unit.conciliacion.test_cruce import _exogena
+
+    partidas = autorresolver(
+        abrir(_exogena(_patrimonial("900111222", "Cuentas por pagar", 2_329_746, "R30 Deudas")))
+    )
+    caso = a_caso(partidas, contribuyente=CONTRIB, anio_gravable=2025)
+
+    assert [d.saldo_31dic for d in caso.patrimonio.deudas] == [2_329_746]
+
+
+def test_el_patrimonio_capturado_a_mano_se_suma_al_reportado_no_lo_reemplaza():
+    """La exogena trae saldos y cesantias; el carro y la casa los captura una persona. El 210
+    lleva LOS DOS: si el ensamble reemplazara, declarar el carro borraria los saldos."""
+    from declaras.caso import Activo, Fuente, Patrimonio
+    from tests.unit.conciliacion.test_cruce import _exogena
+
+    partidas = autorresolver(
+        abrir(
+            _exogena(
+                _patrimonial(
+                    "890903938", "Saldo cuentas bancarias", 1_998_635, "R29 Patrimonio Bruto"
+                )
+            )
+        )
+    )
+    a_mano = Patrimonio(
+        activos=[
+            Activo(
+                tipo="vehiculo",
+                descripcion="Mazda 3 modelo 2019",
+                valor_31dic=45_000_000,
+                fuente=Fuente.manual("captura"),
+            )
+        ]
+    )
+    caso = a_caso(partidas, contribuyente=CONTRIB, anio_gravable=2025, patrimonio=a_mano)
+
+    tipos = sorted(a.tipo for a in caso.patrimonio.activos)
+    assert tipos == ["otro", "vehiculo"], "el carro llega con su tipo; la exógena, sin él"
+    assert sum(a.valor_31dic for a in caso.patrimonio.activos) == 46_998_635
