@@ -10,3 +10,8 @@ var/
 .secrets.env
 .secrets*
 !.secrets.env.example
+
+# Artefactos de cobertura: binarios que cambian en cada corrida.
+.coverage
+.coverage.*
+htmlcov/
