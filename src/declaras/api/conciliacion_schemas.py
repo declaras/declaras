@@ -438,3 +438,16 @@ class RespuestaGuardadaResponse(BaseModel):
             quien=r.quien,
             cuando=r.cuando,
         )
+
+
+class CasillaResponse(BaseModel):
+    """Una casilla del formulario 210, con la cifra que se va a declarar.
+
+    `nodo` permite volver del formulario a la memoria de cálculo: de "la casilla 97 dice
+    $62.800.000" a "y sale de RLG_GENERAL, art. 336 ET".
+    """
+
+    numero: int
+    nombre: str
+    valor: int
+    nodo: str | None = None

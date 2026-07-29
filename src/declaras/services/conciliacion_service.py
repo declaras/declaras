@@ -43,7 +43,7 @@ from declaras.domain.errors import (
 from declaras.motor import Flag, Liquidacion
 from declaras.observability import get_logger
 from declaras.parametros import ParametrosAnio, cargar
-from declaras.render import borrador_html, memoria_markdown
+from declaras.render import Casilla, borrador_html, formulario_210, memoria_markdown
 from declaras.services.conciliacion import (
     TIPO_A_CLAVE,
     Decision,
@@ -515,6 +515,21 @@ class ConciliacionService:
         estado, liquidacion = await self._de_hoy(case_id)
         assert estado.caso is not None  # `_de_hoy` ya se negó si no
         return memoria_markdown(liquidacion, estado.caso)
+
+    async def formulario(self, case_id: UUID) -> list[Casilla]:
+        """Las casillas del 210 con lo que se va a declarar hoy.
+
+        Se calcula sobre el estado de HOY y no sobre la última versión guardada, por la misma
+        razón que el cierre: un formulario fechado con la cifra de antes del último documento es
+        un formulario que ya nadie va a radicar.
+        """
+        estado, liquidacion = await self._de_hoy(case_id)
+        if estado.caso is None:
+            raise LiquidacionNoDisponibleError(
+                estado.falta or LiquidacionNoDisponibleError.default_message,
+                case_id=str(case_id),
+            )
+        return formulario_210(liquidacion, estado.caso)
 
     async def cerrar_borrador(self, case_id: UUID) -> Case:
         """Da el borrador por listo. Se NIEGA si no se puede calcular, o si hay bloqueante.

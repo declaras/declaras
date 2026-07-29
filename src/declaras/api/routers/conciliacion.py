@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse, Response
 
 from declaras.api.case_schemas import CaseSummaryResponse
 from declaras.api.conciliacion_schemas import (
+    CasillaResponse,
     ConciliacionEstadoResponse,
     ConciliacionResumenResponse,
     LiquidacionesResponse,
@@ -197,6 +198,24 @@ async def cerrar_borrador(
         status=caso.status,
         updated_at=caso.updated_at,
     )
+
+
+@router.get(
+    "/formulario",
+    response_model=list[CasillaResponse],
+    summary="El 210 que se va a radicar, casilla por casilla",
+)
+async def ver_formulario(
+    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+) -> list[CasillaResponse]:
+    """Las casillas del formulario oficial, con la cifra que se va a declarar en cada una.
+
+    NO es lo mismo que los renglones que la exógena sugiere: eso es lo que la DIAN pondría con lo
+    que ella sabe, y esto es lo que queda tras decidir. Medido en un caso real, la misma casilla
+    traía cifras con millones de diferencia y nada lo decía.
+    """
+    casillas = await container.conciliacion_service.formulario(case_id)
+    return [CasillaResponse(**vars(c)) for c in casillas]
 
 
 @router.get(
