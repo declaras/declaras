@@ -168,8 +168,19 @@ ETIQUETAS_DE_PREGUNTA = {
 
 
 def etiqueta_de_pregunta(pregunta: str) -> str:
-    """Nombre legible de una pregunta; si es una derivada del cruce, su propia clave."""
-    return ETIQUETAS_DE_PREGUNTA.get(pregunta, pregunta.replace("_", " ").lower())
+    """Nombre legible de una pregunta, para contarla en una frase.
+
+    Las derivadas del cruce llegan como `partida:{id}`, y ese id es `nit:CONCEPTO`: volcarlo
+    dejaba "No tiene partida:901303824:salarios" en la pantalla. De ahí solo se puede sacar el
+    concepto, que es lo único que significa algo para quien lo lee.
+    """
+    directa = ETIQUETAS_DE_PREGUNTA.get(pregunta)
+    if directa:
+        return directa
+    if pregunta.startswith("partida:"):
+        concepto = pregunta.rsplit(":", 1)[-1].replace("_", " ").lower()
+        return f"el soporte de {concepto}"
+    return pregunta.replace("_", " ").lower()
 
 
 _BENEFICIOS: tuple[_Beneficio, ...] = (
@@ -411,8 +422,24 @@ _CERTIFICADO_POR_CONCEPTO: dict[Concepto, _Certificado] = {
 #   HONORARIOS/SERVICIOS/OTROS  el motor no los liquida (CONCEPTOS_FUERA_DEL_MOTOR): el
 #                        certificado no los haría entrar al 210, y la salida de esas
 #                        partidas es LLEVAR_A_MANO en la cola de pendientes.
+#   PATRIMONIO / DEUDA   el saldo al 31 de diciembre que la DIAN publica ES el soporte: el
+#                        banco le reportó a la DIAN, no al titular, así que no hay un
+#                        certificado que pedirle al cliente por un saldo que ya está
+#                        reportado. Lo que SÍ hay que pedirle es lo que la DIAN no ve (el
+#                        carro, la casa), y eso no nace de una partida del cruce: nace de
+#                        preguntarle, como los beneficios invisibles.
+#   SOLO_PARA_TOPE       no se declara en ninguna casilla; sus filas ni abren partida.
 _SIN_CERTIFICADO: frozenset[Concepto] = (
-    frozenset({Concepto.RETENCION, Concepto.APORTES_SALUD, Concepto.APORTES_PENSION})
+    frozenset(
+        {
+            Concepto.RETENCION,
+            Concepto.APORTES_SALUD,
+            Concepto.APORTES_PENSION,
+            Concepto.PATRIMONIO,
+            Concepto.DEUDA,
+            Concepto.SOLO_PARA_TOPE,
+        }
+    )
     | CONCEPTOS_FUERA_DEL_MOTOR
 )
 
@@ -671,7 +698,9 @@ def _ahorro(
         # aviso que bloquea y el porque tecnico, y ninguna de las dos cosas ayuda aqui: el
         # contador ya ve los avisos en el cruce, y lo unico accionable es que primero hay que
         # resolverlos. Volcar el texto del motor filtraba codigos internos a la pantalla.
-        return _Ahorro(0, "no se puede calcular hasta resolver los avisos del cruce")
+        # Sin nombrar el cruce, que es vocabulario de contador: lo que importa es que hay algo
+        # antes en la fila, y eso vale igual para las dos personas.
+        return _Ahorro(0, "todavía no se puede calcular: falta resolver lo de arriba")
     except NotImplementedError:
         # El caso no se puede armar (p. ej. ingresos de independientes, fuera del alcance).
         # Reportar 0 sin decirlo haria pensar que el beneficio no sirve, cuando lo que pasa es

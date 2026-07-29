@@ -358,3 +358,33 @@ def test_el_motivo_del_ahorro_no_filtra_codigos_internos():
     for peticion in derivar_peticiones([], [], CASO, p=P):
         if peticion.ahorro_por_que:
             assert not re.search(r"\b[A-Z][A-Z_]{4,}\b", peticion.ahorro_por_que), peticion.id
+
+
+def test_por_un_saldo_que_la_dian_ya_reporta_no_se_le_pide_nada_al_cliente():
+    """El banco le reporto el saldo a la DIAN, no al titular: ese reporte ES el soporte. Pedirle
+    un certificado de algo que ya esta reportado es hacerle perder el tiempo.
+
+    Lo que si hay que pedirle es lo que la DIAN no ve (el carro, la casa), y eso no nace de una
+    partida del cruce: nace de preguntarle, como los beneficios invisibles.
+    """
+    from declaras.services.conciliacion import Concepto
+    from declaras.services.conciliacion.peticiones import _certificado_de
+
+    for concepto in (Concepto.PATRIMONIO, Concepto.DEUDA):
+        assert _certificado_de(concepto) is None, concepto
+
+
+def test_un_concepto_nuevo_sin_clasificar_revienta_en_vez_de_callarse():
+    """La guarda que hizo visible el hueco de PATRIMONIO: un concepto que no este en ninguna de
+    las dos mitades de la particion dejaria de pedir su documento en silencio."""
+    from enum import StrEnum
+
+    import pytest
+
+    from declaras.services.conciliacion.peticiones import _certificado_de
+
+    class ConceptoInventado(StrEnum):
+        NUEVO = "NUEVO"
+
+    with pytest.raises(NotImplementedError, match="No está decidido qué documento"):
+        _certificado_de(ConceptoInventado.NUEVO)
