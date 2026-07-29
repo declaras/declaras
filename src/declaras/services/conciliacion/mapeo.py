@@ -243,10 +243,13 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
         # modelo y silenciarlo haría desaparecer una cédula completa. La salida buena
         # está una capa antes: resolver la partida con LLEVAR_A_MANO (ruling de la
         # ronda de fixes 1), que excluye con aviso bloqueante en vez de tronar.
+        # El nombre de la decision se dice como lo lee el contador en los botones, no con su
+        # codigo interno: este texto sale en pantalla, y "LLEVAR_A_MANO" no es una instruccion
+        # que nadie pueda seguir.
         raise NotImplementedError(
-            f"El caso tributario todavía no modela estos conceptos: "
-            f"{', '.join(sin_modelo)}. El motor no cubre la cédula de independientes; "
-            "la salida es resolver esas partidas con LLEVAR_A_MANO y sumarlas a mano."
+            f"El cálculo todavía no cubre estos conceptos: {', '.join(sin_modelo)}. "
+            "Son ingresos de independientes, que no están en el alcance. "
+            'La salida es resolver esos renglones con "llevarlo a mano" y sumarlos aparte.'
         )
 
     # LA RETENCIÓN DEL TERCERO VIVE EN DOS SITIOS (herencia de T4, medida): la partida
