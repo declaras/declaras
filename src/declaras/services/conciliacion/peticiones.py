@@ -130,6 +130,11 @@ class _Beneficio:
     # afirmar sin inventar plata del cliente (ahí el ahorro se reporta como no estimable).
     # Todo lo que salga de acá es un techo, nunca una medición: lo marca `ahorro_es_techo`.
     hipotesis: Callable[[CasoTributario, ParametrosAnio], CasoTributario] | None
+    # El tope legal EN PESOS del año. Los textos lo interpolan como `{tope}` en vez de escribir
+    # "hasta 1.200 UVT": el mensaje de `copy_sugerido` se le manda al cliente por WhatsApp, y una
+    # UVT no significa nada para quien lo va a leer. Además cambia cada año, así que escribirlo a
+    # mano en pesos envejecería mal.
+    tope: Callable[[ParametrosAnio], int] | None = None
 
 
 def _con_beneficios(caso: CasoTributario, **cambios: object) -> CasoTributario:
@@ -138,6 +143,11 @@ def _con_beneficios(caso: CasoTributario, **cambios: object) -> CasoTributario:
     y un typo sería un no-op silencioso (un ahorro estimado en 0 sin que nadie lo note)."""
     beneficios = caso.beneficios.model_copy(update=cambios)
     return caso.model_copy(update={"beneficios": beneficios})
+
+
+def _en_pesos(valor: int) -> str:
+    """Una cifra de plata como la escribe una persona en Colombia: $1.234.567."""
+    return f"${valor:,.0f}".replace(",", ".")
 
 
 def _monto(valor: int) -> MontoDeclarado:
@@ -167,7 +177,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
         pregunta="PREPAGADA",
         tipo_documento="CERT_PREPAGADA",
         razon=(
-            "La medicina prepagada es deducible hasta 16 UVT al mes y la DIAN no la ve: "
+            "La medicina prepagada es deducible hasta {tope} al año y la DIAN no la ve: "
             "sin el certificado de la aseguradora esa plata no entra al 210."
         ),
         pregunta_previa="¿Pagaste medicina prepagada o un plan complementario de salud?",
@@ -181,12 +191,14 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
         hipotesis=lambda caso, p: _con_beneficios(
             caso, medicina_prepagada=_monto(p.uvt_pesos(p.prepagada_tope_uvt_anio))
         ),
+        tope=lambda p: p.uvt_pesos(p.prepagada_tope_uvt_anio),
     ),
     _Beneficio(
         pregunta="DEPENDIENTES",
         tipo_documento="SOPORTE_DEPENDIENTE",
         razon=(
-            "Cada dependiente vale 72 UVT por fuera del límite del 40%, y ningún tercero "
+            "Cada dependiente descuenta {tope} por fuera del límite del 40%, y además destraba "
+            "la deducción del artículo 387, y ningún tercero "
             "le reporta a la DIAN que el cliente tiene hijos o padres a cargo."
         ),
         pregunta_previa=(
@@ -205,12 +217,13 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
         hipotesis=lambda caso, p: _con_beneficios(
             caso, dependientes=[Dependiente(tipo="hijo_menor", fuente=_FUENTE_HIPOTESIS)]
         ),
+        tope=lambda p: p.uvt_pesos(72),
     ),
     _Beneficio(
         pregunta="INTERESES_VIVIENDA",
         tipo_documento="CERT_INTERESES_VIVIENDA",
         razon=(
-            "Los intereses del crédito de vivienda son deducibles hasta 1.200 UVT; el "
+            "Los intereses del crédito de vivienda son deducibles hasta {tope}; el "
             "banco los certifica una vez al año y la exógena no los trae desagregados."
         ),
         pregunta_previa="¿Tienes crédito de vivienda o leasing habitacional?",
@@ -218,30 +231,32 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "Hola. Para tu declaración de renta: si tienes crédito de vivienda o leasing "
             "habitacional, mándame el certificado de intereses del año que emite el banco "
             "(lo descargas desde la banca en línea). Los intereses son deducibles hasta "
-            "1.200 UVT."
+            "{tope}."
         ),
         presente=lambda b: b.intereses_vivienda is not None,
         hipotesis=lambda caso, p: _con_beneficios(
             caso, intereses_vivienda=_monto(p.uvt_pesos(p.intereses_vivienda_tope_uvt))
         ),
+        tope=lambda p: p.uvt_pesos(p.intereses_vivienda_tope_uvt),
     ),
     _Beneficio(
         pregunta="ICETEX",
         tipo_documento="CERT_ICETEX",
         razon=(
             "Los intereses de un crédito educativo del ICETEX son deducibles hasta "
-            "100 UVT y solo constan en el certificado de la entidad."
+            "{tope} y solo constan en el certificado de la entidad."
         ),
         pregunta_previa="¿Pagaste intereses de un crédito educativo del ICETEX?",
         copy_sugerido=(
             "Hola. Para tu declaración de renta: si tienes crédito educativo con el "
             "ICETEX, mándame el certificado de intereses del año. Son deducibles hasta "
-            "100 UVT."
+            "{tope}."
         ),
         presente=lambda b: b.intereses_icetex is not None,
         hipotesis=lambda caso, p: _con_beneficios(
             caso, intereses_icetex=_monto(p.uvt_pesos(p.icetex_tope_uvt))
         ),
+        tope=lambda p: p.uvt_pesos(p.icetex_tope_uvt),
     ),
     _Beneficio(
         pregunta="AFC_FVP",
@@ -596,12 +611,15 @@ def _de_beneficios(
             continue
         hipotesis = beneficio.hipotesis(caso, p) if beneficio.hipotesis is not None else None
         medida = _ahorro(caso, hipotesis, p, del_cruce)
+        # El tope se dice en pesos del año. El `copy_sugerido` se le manda al cliente por
+        # WhatsApp y una UVT no significa nada para quien lo lee.
+        tope = _en_pesos(beneficio.tope(p)) if beneficio.tope is not None else ""
         candidatas.append(
             _Candidata(
                 id=beneficio.pregunta,
                 tipo_documento=beneficio.tipo_documento,
                 tercero=None,
-                razon=beneficio.razon,
+                razon=beneficio.razon.format(tope=tope),
                 ahorro_estimado=medida.pesos,
                 ahorro_por_que=medida.por_que,
                 # Todo beneficio invisible se estima en su tope legal: cuánto pagó de
@@ -610,7 +628,7 @@ def _de_beneficios(
                 pregunta_previa=(
                     None if beneficio.pregunta in contestadas else beneficio.pregunta_previa
                 ),
-                copy_sugerido=beneficio.copy_sugerido,
+                copy_sugerido=beneficio.copy_sugerido.format(tope=tope),
             )
         )
     return candidatas
@@ -648,13 +666,17 @@ def _ahorro(
         )
     try:
         pesos = max(0, ahorro_marginal(caso, hipotesis, p, flags_previos=del_cruce))
-    except ValueError as exc:
-        return _Ahorro(0, f"no se puede calcular todavía: {exc}")
-    except NotImplementedError as exc:
+    except ValueError:
+        # El motor se niega a optimizar sobre una base incompleta. Su mensaje trae el codigo del
+        # aviso que bloquea y el porque tecnico, y ninguna de las dos cosas ayuda aqui: el
+        # contador ya ve los avisos en el cruce, y lo unico accionable es que primero hay que
+        # resolverlos. Volcar el texto del motor filtraba codigos internos a la pantalla.
+        return _Ahorro(0, "no se puede calcular hasta resolver los avisos del cruce")
+    except NotImplementedError:
         # El caso no se puede armar (p. ej. ingresos de independientes, fuera del alcance).
         # Reportar 0 sin decirlo haria pensar que el beneficio no sirve, cuando lo que pasa es
         # que todavia no hay con que medirlo.
-        return _Ahorro(0, f"no se puede calcular todavía: {exc}")
+        return _Ahorro(0, "no se puede calcular: el cálculo todavía no cubre este caso")
 
     if pesos:
         return _Ahorro(pesos, None)

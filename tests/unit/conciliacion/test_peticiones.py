@@ -328,3 +328,33 @@ def test_el_ahorro_son_pesos_de_impuesto_no_de_base_gravable():
     assert dependientes.ahorro_estimado < baja_de_base, (
         "el ahorro de impuesto tiene que ser menor que la reducción de la base gravable"
     )
+
+
+def test_el_tope_se_dice_en_pesos_no_en_uvt():
+    """El `copy_sugerido` se le manda al cliente por WhatsApp: una UVT no significa nada para
+    quien lo va a leer. Y el tope cambia cada año, así que escribirlo a mano en pesos
+    envejeceria mal: se interpola desde los parámetros del año."""
+    ps = derivar_peticiones([], [], CASO, p=P)
+    icetex = next(p for p in ps if p.id == "ICETEX")
+
+    assert "UVT" not in icetex.razon
+    assert "UVT" not in icetex.copy_sugerido
+    # 100 UVT del tope del ICETEX, en pesos del año.
+    assert f"${P.uvt_pesos(100):,.0f}".replace(",", ".") in icetex.copy_sugerido
+
+
+def test_ningun_texto_para_el_cliente_habla_en_uvt():
+    """La regla, sobre todas las preguntas: el que lee estos textos es el contribuyente."""
+    for peticion in derivar_peticiones([], [], CASO, p=P):
+        assert "UVT" not in peticion.copy_sugerido, peticion.id
+        assert "UVT" not in peticion.razon, peticion.id
+
+
+def test_el_motivo_del_ahorro_no_filtra_codigos_internos():
+    """El motor explica su negativa con el código del aviso que bloquea. Eso sirve en un log, no
+    en la pantalla: el contador ya ve los avisos en el cruce."""
+    import re
+
+    for peticion in derivar_peticiones([], [], CASO, p=P):
+        if peticion.ahorro_por_que:
+            assert not re.search(r"\b[A-Z][A-Z_]{4,}\b", peticion.ahorro_por_que), peticion.id
