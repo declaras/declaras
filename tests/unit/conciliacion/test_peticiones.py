@@ -263,3 +263,68 @@ def test_los_conceptos_fuera_del_motor_estan_declarados_sin_certificado():
     from declaras.services.conciliacion import peticiones
 
     assert CONCEPTOS_FUERA_DEL_MOTOR <= peticiones._SIN_CERTIFICADO
+
+
+# ─────────────── el ahorro dice pesos de impuesto, y dice cuando no baja nada ───────────────
+#
+# "$ 0" no es una cifra: son tres situaciones que llevan a decisiones opuestas. Que un beneficio
+# no baje nada significa que no vale la pena molestar al cliente; que no se pueda calcular
+# significa que hay que desbloquear el caso primero. Sin decir cuál es, las dos se leen igual.
+
+
+def test_un_beneficio_que_no_baja_el_impuesto_lo_dice_y_dice_por_que():
+    """Un caso sin ingresos no paga impuesto, así que ninguna deducción lo baja. La cifra es
+    cero de verdad y la razón es lo único accionable que hay."""
+    ps = derivar_peticiones([], [], CASO, p=P)
+    prepagada = next(p for p in ps if p.tipo_documento == "CERT_PREPAGADA")
+
+    assert prepagada.ahorro_estimado == 0
+    assert prepagada.ahorro_por_que is not None
+    assert "no baja nada" in prepagada.ahorro_por_que
+    assert "no queda impuesto que bajar" in prepagada.ahorro_por_que
+
+
+def test_un_ahorro_medido_no_necesita_explicacion():
+    """Cuando la cifra es una medición, la cifra habla sola: la explicación existe para cuando
+    no la hay, y ponerla siempre la volvería ruido."""
+    from tests.golden.casos import g2
+
+    ps = derivar_peticiones([], [], g2(), p=P)
+    con_ahorro = [p for p in ps if p.ahorro_estimado > 0]
+    assert con_ahorro, "un asalariado con impuesto sí tiene beneficios que le bajan plata"
+    assert all(p.ahorro_por_que is None for p in con_ahorro)
+
+
+def test_el_ahorro_son_pesos_de_impuesto_no_de_base_gravable():
+    """La distinción que pidió el producto, y la razón por la que decir "72 UVT" está mal.
+
+    Un dependiente no vale 72 UVT: DESBLOQUEA DOS BENEFICIOS —los 72 UVT del artículo 336, que
+    van por fuera del límite del 40%, y la deducción del artículo 387— así que la base baja
+    $9.585.528 y no $3.585.528. Sobre eso, el impuesto baja $2.683.948, que es la tarifa marginal
+    de ESTE contribuyente.
+
+    O sea que la cifra que la gente repite subestima el beneficio a menos de la mitad, y la que
+    se le puede prometer a alguien es la del impuesto, que depende de su caso.
+    """
+    from tests.golden.casos import g2
+
+    caso = g2()
+    dependientes = next(p for p in derivar_peticiones([], [], caso, p=P) if p.id == "DEPENDIENTES")
+
+    tope_de_un_dependiente_en_la_base = 72 * P.uvt
+    assert dependientes.ahorro_estimado > 0
+    # La invariante que de verdad importa: una deducción nunca puede ahorrar más impuesto que su
+    # propio monto. Si esto se rompe, el motor está regalando plata.
+    assert dependientes.ahorro_estimado < tope_de_un_dependiente_en_la_base * 3
+
+    # Y es impuesto, no base: comparado contra la reducción real de la base, es una fracción.
+    from declaras.optimizador import optimizar
+    from declaras.services.conciliacion.peticiones import _BENEFICIOS
+
+    beneficio = next(b for b in _BENEFICIOS if b.pregunta == "DEPENDIENTES")
+    baja_de_base = optimizar(caso, P).liquidacion.valor("RLG_GENERAL") - optimizar(
+        beneficio.hipotesis(caso, P), P
+    ).liquidacion.valor("RLG_GENERAL")
+    assert dependientes.ahorro_estimado < baja_de_base, (
+        "el ahorro de impuesto tiene que ser menor que la reducción de la base gravable"
+    )

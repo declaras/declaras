@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from declaras.caso import (
     Beneficios,
@@ -36,7 +37,7 @@ from declaras.caso import (
 )
 from declaras.dinero import porcentaje
 from declaras.motor import Flag
-from declaras.optimizador import ahorro_marginal
+from declaras.optimizador import ahorro_marginal, optimizar
 from declaras.parametros import ParametrosAnio, cargar
 from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
 from declaras.services.conciliacion.mapeo import avisos
@@ -61,6 +62,13 @@ _APORTE_PENSION_PCT = 0.04
 # La proveniencia de un hecho que NO se declara: vive solo dentro de la hipótesis que se
 # le pasa al motor para medir el ahorro, y esa liquidación nunca se persiste ni se imprime.
 _FUENTE_HIPOTESIS = Fuente.manual("hipótesis de ahorro")
+
+
+class _Ahorro(NamedTuple):
+    """Lo que devuelve `_ahorro`, con nombres para que no se confunda el orden."""
+
+    pesos: int
+    por_que: str | None
 
 
 class Peticion(_Modelo):
@@ -89,6 +97,12 @@ class Peticion(_Modelo):
     # el contador le prometería al cliente una cifra que nadie sostiene. La UI escribe
     # "hasta $X" cuando esto es True.
     ahorro_es_techo: bool
+    # POR QUE el ahorro es el que es, cuando no es una simple medicion. Sin esto, tres
+    # situaciones que llevan a decisiones distintas se ven iguales en pantalla: un beneficio que
+    # de verdad no baja nada (no vale la pena molestar al cliente), uno que no se puede calcular
+    # todavia (hay que desbloquear el caso primero) y uno que baja cero pesos porque el impuesto
+    # ya es cero. Las tres se mostraban como "$ 0".
+    ahorro_por_que: str | None = None
     prioridad: int
     pregunta_previa: str | None
     copy_sugerido: str
@@ -399,6 +413,7 @@ class _Candidata:
     razon: str
     ahorro_estimado: int
     ahorro_es_techo: bool
+    ahorro_por_que: str | None
     pregunta_previa: str | None
     copy_sugerido: str
 
@@ -449,6 +464,7 @@ def derivar_peticiones(
             razon=c.razon,
             ahorro_estimado=c.ahorro_estimado,
             ahorro_es_techo=c.ahorro_es_techo,
+            ahorro_por_que=c.ahorro_por_que,
             prioridad=puesto,
             pregunta_previa=c.pregunta_previa,
             copy_sugerido=c.copy_sugerido,
@@ -484,13 +500,15 @@ def _de_partidas(
         if clave in apagadas:
             continue
         nombre = partida.nombre_tercero or partida.nit_tercero or "el tercero que reportó"
+        medida = _ahorro(caso, _hipotesis_de_partida(caso, partida), p, del_cruce)
         candidatas.append(
             _Candidata(
                 id=clave,
                 tipo_documento=certificado.tipo_documento,
                 tercero={"nit": partida.nit_tercero, "nombre": partida.nombre_tercero},
                 razon=certificado.razon,
-                ahorro_estimado=_ahorro(caso, _hipotesis_de_partida(caso, partida), p, del_cruce),
+                ahorro_estimado=medida.pesos,
+                ahorro_por_que=medida.por_que,
                 # Medido, no techo: los aportes obligatorios son un porcentaje de LEY
                 # sobre el pago que la exógena ya reportó.
                 ahorro_es_techo=False,
@@ -577,13 +595,15 @@ def _de_beneficios(
         if beneficio.pregunta in apagadas or beneficio.presente(caso.beneficios):
             continue
         hipotesis = beneficio.hipotesis(caso, p) if beneficio.hipotesis is not None else None
+        medida = _ahorro(caso, hipotesis, p, del_cruce)
         candidatas.append(
             _Candidata(
                 id=beneficio.pregunta,
                 tipo_documento=beneficio.tipo_documento,
                 tercero=None,
                 razon=beneficio.razon,
-                ahorro_estimado=_ahorro(caso, hipotesis, p, del_cruce),
+                ahorro_estimado=medida.pesos,
+                ahorro_por_que=medida.por_que,
                 # Todo beneficio invisible se estima en su tope legal: cuánto pagó de
                 # prepagada o de intereses lo sabe el cliente, no nosotros.
                 ahorro_es_techo=hipotesis is not None,
@@ -601,8 +621,18 @@ def _ahorro(
     hipotesis: CasoTributario | None,
     p: ParametrosAnio,
     del_cruce: Sequence[Flag] = (),
-) -> int:
-    """Cuánto impuesto ahorraría el documento, o 0 si no se puede estimar.
+) -> _Ahorro:
+    """Cuánto IMPUESTO ahorraría el documento, y por qué es esa cifra.
+
+    Los pesos son impuesto que se deja de pagar, no reducción de la base gravable: son dos
+    números muy distintos y el que le importa a una persona es el primero. Un dependiente baja
+    la base en 72 UVT, pero lo que baja el impuesto depende de la tarifa marginal de ESE
+    contribuyente, y puede ser cero.
+
+    El segundo elemento es el porqué, y solo viene cuando la cifra no es una medición limpia.
+    Sin él, tres situaciones que llevan a decisiones opuestas se ven iguales en pantalla:
+    "no baja nada" (no vale la pena molestar al cliente), "no se puede calcular todavía" (hay
+    que desbloquear el caso primero) y "es el techo legal, no una medición".
 
     Un ahorro negativo significaría que la hipótesis SUBE el impuesto, o sea que la
     hipótesis está mal construida: no se muestra como si fuera un costo, se reporta como
@@ -613,11 +643,38 @@ def _ahorro(
     que el contador necesita para salir del bloqueo. Se reporta como no estimable.
     """
     if hipotesis is None:
-        return 0
+        return _Ahorro(
+            0, "no se puede estimar sin inventar cifras: depende de cuánto haya pagado el cliente"
+        )
     try:
-        return max(0, ahorro_marginal(caso, hipotesis, p, flags_previos=del_cruce))
-    except ValueError:
-        return 0
+        pesos = max(0, ahorro_marginal(caso, hipotesis, p, flags_previos=del_cruce))
+    except ValueError as exc:
+        return _Ahorro(0, f"no se puede calcular todavía: {exc}")
+    except NotImplementedError as exc:
+        # El caso no se puede armar (p. ej. ingresos de independientes, fuera del alcance).
+        # Reportar 0 sin decirlo haria pensar que el beneficio no sirve, cuando lo que pasa es
+        # que todavia no hay con que medirlo.
+        return _Ahorro(0, f"no se puede calcular todavía: {exc}")
+
+    if pesos:
+        return _Ahorro(pesos, None)
+
+    # Cero medido: el beneficio existe y NO baja el impuesto. Hay que decir por que, porque la
+    # conclusion practica es distinta —no vale la pena pedirle el documento al cliente— y sin la
+    # razon parece una falla del calculo.
+    try:
+        impuesto = optimizar(caso, p, flags_previos=del_cruce).liquidacion.valor("IMPUESTO_NETO")
+    except (ValueError, NotImplementedError):
+        return _Ahorro(0, "no se puede calcular todavía")
+    if impuesto == 0:
+        return _Ahorro(0, "no baja nada: con lo que ya hay registrado no queda impuesto que bajar")
+    return _Ahorro(
+        0,
+        (
+            "no baja nada: lo que ya está registrado copa el límite legal de deducciones, "
+            "así que una más no mueve el impuesto"
+        ),
+    )
 
 
 def costo_de_cerrar(peticion: Peticion) -> int:

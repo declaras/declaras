@@ -255,6 +255,10 @@ class PeticionResponse(BaseModel):
     razon: str
     ahorro_estimado: int
     ahorro_es_techo: bool
+    # Por qué el ahorro es el que es, cuando no es una medición limpia. Sin esto, "no baja nada",
+    # "no se puede calcular todavía" y "es el techo legal" se ven iguales en pantalla, y las tres
+    # llevan a decisiones distintas.
+    ahorro_por_que: str | None = None
     prioridad: int
     pregunta_previa: str | None
     copy_sugerido: str
