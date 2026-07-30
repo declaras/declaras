@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from declaras.caso import (
@@ -14,7 +16,9 @@ from declaras.services.conciliacion import (
     EstadoPartida,
     Lado,
     Motivo,
+    Origen,
     Partida,
+    Resolucion,
     Valor,
     a_caso,
     abrir,
@@ -206,16 +210,43 @@ def test_los_dividendos_entran_como_gravados_y_avisan():
     assert any(f.codigo == "DIVIDENDOS_SIN_DESAGREGAR" for f in avisos(partidas))
 
 
-def test_honorarios_resueltos_con_hecho_revientan():
-    """El motor no cubre independientes: silencio acá sería una cédula que desaparece.
-    (Desde la ronda de fixes 1 el automatismo ya NO les pone provisional — este backstop
-    queda para quien les meta un hecho a mano; la salida buena es LLEVAR_A_MANO.)"""
+def test_no_se_puede_meter_un_hecho_de_honorarios_sin_decir_a_que_cedula_va():
+    """La guarda está en `resolver`, una capa antes del ensamble, y eso es el arreglo.
+
+    Antes `USAR_DIAN` sobre un renglón de honorarios era una decisión válida y el ensamble
+    reventaba después. Desde afuera se veía así: el contador aceptaba la cifra que la DIAN
+    reportó, la interfaz decía "listo" y el caso quedaba sin armar, con el borrador en 409.
+    Pasó en un caso real.
+
+    Las salidas son CLASIFICAR (lo mete en su cédula) y LLEVAR_A_MANO (lo saca con aviso).
+    """
     [p] = abrir(_exogena(_fila("901222333", "5002", 10_000_000)))
-    resuelta = resolver(
-        p, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co"
+    with pytest.raises(ValueError, match="CLASIFICAR"):
+        resolver(p, Decision.USAR_DIAN, motivo=Motivo.DECISION_DEL_CONTADOR, quien="contador@x.co")
+
+
+def test_el_backstop_del_ensamble_sigue_vivo_para_una_partida_construida_a_mano():
+    """La guarda de `resolver` no vuelve inalcanzable la del ensamble.
+
+    `Partida` no tiene validadores, así que una resolución puesta con `model_copy` se salta
+    `resolver` entero. Silenciar eso haría desaparecer una cédula completa de la declaración.
+    """
+    [p] = abrir(_exogena(_fila("901222333", "5002", 10_000_000)))
+    a_mano = p.model_copy(
+        update={
+            "resolucion": Resolucion(
+                decision=Decision.USAR_DIAN,
+                valor=10_000_000,
+                motivo=Motivo.DECISION_DEL_CONTADOR,
+                origen=Origen.CONTADOR,
+                huella="sin verificar",
+                quien="quien se salta resolver",
+                cuando=datetime(2026, 7, 29, tzinfo=UTC),
+            )
+        }
     )
     with pytest.raises(NotImplementedError, match="HONORARIOS"):
-        _a_caso([resuelta])
+        _a_caso([a_mano])
 
 
 def test_cerrar_sin_soporte_no_aporta_hecho():
@@ -377,7 +408,7 @@ def test_llevada_a_mano_no_bloquea_el_caso_y_deja_aviso_bloqueante():
     assert aviso.severidad == "bloqueante"
     assert "ZETA SAS" in aviso.mensaje
     assert "HONORARIOS" in aviso.mensaje
-    assert "10,000,000" in aviso.mensaje
+    assert "$10.000.000" in aviso.mensaje
 
 
 def test_el_aviso_de_llevada_a_mano_dice_las_dos_cifras_si_difieren():
@@ -396,8 +427,8 @@ def test_el_aviso_de_llevada_a_mano_dice_las_dos_cifras_si_difieren():
         discrepante, Decision.LLEVAR_A_MANO, motivo=Motivo.FUERA_DEL_MOTOR, quien="contador@x.co"
     )
     [aviso] = avisos([p])
-    assert "10,000,000" in aviso.mensaje
-    assert "9,000,000" in aviso.mensaje
+    assert "$10.000.000" in aviso.mensaje
+    assert "$9.000.000" in aviso.mensaje
 
 
 # ─────────── ronda de fixes 2: C2 — la retención certificada no se tira ───────────
@@ -505,8 +536,8 @@ def test_desplazar_una_retencion_certificada_distinta_deja_aviso():
     caso = _a_caso(partidas)
     assert caso.laborales[0].retencion == 1_000_000  # la prioridad no cambia
     [aviso] = [f for f in avisos(partidas) if f.codigo == "RETENCION_DESPLAZADA"]
-    assert "1,000,000" in aviso.mensaje
-    assert "8,000,000" in aviso.mensaje
+    assert "$1.000.000" in aviso.mensaje
+    assert "$8.000.000" in aviso.mensaje
 
 
 def test_borrar_la_retencion_con_un_cero_explicito_tambien_avisa():
@@ -567,7 +598,7 @@ def test_la_suelta_sin_nit_resuelta_junto_a_la_conciliada_avisa_doble_conteo():
     [aviso] = [f for f in avisos(partidas) if f.codigo == "POSIBLE_DOBLE_CONTEO"]
     assert "sin-nit:CERT_INGRESOS_220:SALARIOS" in aviso.mensaje
     assert "900111222:SALARIOS" in aviso.mensaje
-    assert "85,000,000" in aviso.mensaje
+    assert "$85.000.000" in aviso.mensaje
 
 
 def test_cifras_distintas_no_disparan_el_aviso_de_doble_conteo():
@@ -628,7 +659,7 @@ def test_marcar_ajeno_no_excluye_en_silencio():
     assert aviso.severidad == "info"
     assert "900111222:SALARIOS" in aviso.mensaje
     assert "ACME SAS" in aviso.mensaje
-    assert "85,000,000" in aviso.mensaje
+    assert "$85.000.000" in aviso.mensaje
     assert "MARCAR_AJENO" in aviso.mensaje
     assert "NO_ES_MIO" in aviso.mensaje
 
@@ -643,7 +674,7 @@ def test_cerrar_sin_soporte_tambien_enumera_lo_excluido():
     [aviso] = avisos([p])
     assert aviso.codigo == "INGRESO_EXCLUIDO"
     assert aviso.severidad == "info"
-    assert "5,000,000" in aviso.mensaje
+    assert "$5.000.000" in aviso.mensaje
     assert "sin clasificar" in aviso.mensaje  # concepto None: se dice, no se inventa
 
 

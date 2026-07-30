@@ -198,6 +198,34 @@ async def download_prior_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> Ra
     )
 
 
+async def download_filed_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
+    """La declaracion ya presentada DEL MISMO anio gravable del expediente.
+
+    Es lo que se presento de verdad ese anio, que en la practica es lo que hizo un contador. Sirve
+    para rehacer un anio viejo con el sistema y comparar casilla por casilla.
+
+    Se diferencia de `download_prior_return` solo en el anio: aquella baja la del anio ANTERIOR
+    porque la necesita como insumo (patrimonio inicial, anticipos, saldos a favor); esta baja la
+    del anio que se esta rehaciendo, porque la necesita como CONTRASTE.
+
+    En el anio en curso no existe todavia y se reporta como no disponible, igual que el resto: la
+    extraccion sigue sin ella.
+    """
+    form_id = await _find_declaration(
+        ctx,
+        year=taxpayer.tax_year,
+        state=DIAN_API.state_filed,
+        doc_type=DocumentType.FILED_RETURN,
+    )
+    return await _download_declaration(
+        ctx,
+        form_id=form_id,
+        doc_type=DocumentType.FILED_RETURN,
+        year=taxpayer.tax_year,
+        filename=f"declaracion-presentada-{taxpayer.tax_year}.pdf",
+    )
+
+
 async def download_suggested_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
     """Borrador abierto del anio gravable en curso.
 
@@ -226,6 +254,7 @@ DOWNLOADERS = {
     DocumentType.EINVOICE_SUMMARY: download_einvoice_summary,
     DocumentType.PRIOR_RETURN: download_prior_return,
     DocumentType.SUGGESTED_RETURN: download_suggested_return,
+    DocumentType.FILED_RETURN: download_filed_return,
 }
 
 

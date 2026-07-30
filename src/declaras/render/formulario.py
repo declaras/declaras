@@ -36,53 +36,59 @@ from dataclasses import dataclass
 
 from declaras.caso import CasoTributario
 from declaras.motor import Liquidacion
+from declaras.parametros.casillas import nombre_de_casilla
 
 # Los nombres oficiales de las casillas que este módulo llena. Están transcritos del formulario
 # real (versión 18, año gravable 2024/2025) rasterizando el PDF que entrega el portal: el fondo
 # con los números de casilla es una imagen, así que es la única fuente fiable. El lector del 210
 # usa el mismo mapa para la operación inversa.
-CASILLAS_DEL_210: dict[int, str] = {
-    29: "Total patrimonio bruto",
-    30: "Deudas",
-    31: "Total patrimonio líquido",
-    # Cédula general, columna de rentas de trabajo
-    32: "Ingresos brutos por rentas de trabajo",
-    33: "Ingresos no constitutivos de renta",
-    34: "Renta líquida",
-    36: "Otras rentas exentas",
-    37: "Total rentas exentas",
-    40: "Total deducciones imputables",
-    41: "Rentas exentas y deducciones imputables (limitadas)",
-    42: "Renta líquida ordinaria del ejercicio",
-    # Columna de honorarios (rentas de trabajo sin relación laboral)
-    43: "Ingresos brutos por honorarios",
-    46: "Renta líquida",
-    # Columna de rentas de capital
-    58: "Ingresos brutos por rentas de capital",
-    59: "Ingresos no constitutivos de renta",
-    60: "Costos y deducciones procedentes",
-    61: "Renta líquida",
-    # Columna de rentas no laborales
-    74: "Ingresos brutos por rentas no laborales",
-    78: "Renta líquida",
+# Las casillas que este módulo llena. El nombre sale de `parametros.casillas`, que es la única
+# fuente: el lector del 210 y el resumen del expediente usan el mismo mapa.
+_NUMEROS = (
+    # Patrimonio
+    29,
+    30,
+    31,
+    # Cédula general: rentas de trabajo
+    32,
+    33,
+    34,
+    36,
+    37,
+    40,
+    41,
+    42,
+    # Honorarios
+    43,
+    46,
+    # Rentas de capital
+    58,
+    59,
+    60,
+    61,
+    # Rentas no laborales
+    74,
+    78,
     # Totales de la cédula general
-    91: "Renta líquida cédula general",
-    92: "Rentas exentas y deducciones imputables (limitadas)",
-    93: "Renta líquida ordinaria cédula general",
-    97: "Renta líquida gravable cédula general",
-    # Cédula de pensiones
-    103: "Renta líquida gravable cédula de pensiones",
-    # Cédula de dividendos
-    104: "Dividendos y participaciones 2016 y anteriores",
-    111: "Renta líquida gravable de dividendos",
-    # Liquidación privada
-    121: "Total impuesto sobre las rentas líquidas gravables",
-    126: "Impuesto neto de renta",
-    132: "Retenciones año gravable a declarar",
-    133: "Anticipo renta año gravable siguiente",
-    138: "Total saldo a pagar",
-    139: "Total saldo a favor",
-}
+    91,
+    92,
+    93,
+    97,
+    # Pensiones y dividendos
+    103,
+    104,
+    111,
+    # Liquidación privada. El saldo va en la 136 y la 137: la 138 y la 139 son el número de
+    # dependientes y la adición por dependientes, y se transcribieron mal la primera vez.
+    121,
+    126,
+    132,
+    133,
+    136,
+    137,
+)
+CASILLAS_DEL_210: dict[int, str] = {n: nombre_de_casilla(n) for n in _NUMEROS}
+
 
 # Las casillas del formulario que este módulo NO llena todavía, con el porqué. Un hueco declarado
 # se puede cerrar; uno silencioso se descubre cuando alguien radica un formulario incompleto.
@@ -181,8 +187,13 @@ def formulario_210(liq: Liquidacion, caso: CasoTributario) -> list[Casilla]:
         (133, liq.valor("ANTICIPO_SIGUIENTE"), "ANTICIPO_SIGUIENTE"),
         # Las dos casillas de saldo son EXCLUYENTES: el formulario tiene una para pagar y otra
         # para devolver, y llenar las dos es un formulario que no cuadra.
-        (138, max(saldo, 0), "SALDO"),
-        (139, max(-saldo, 0), "SALDO"),
+        #
+        # SON LA 136 Y LA 137, no la 138 y la 139. Se transcribieron mal la primera vez, y la
+        # prueba que exige nombre oficial en cada casilla lo destapó: la 138 es el número de
+        # dependientes económicos y la 139 la adición por dependientes a la casilla 92. El
+        # formulario habría llevado el saldo a pagar a la casilla del conteo de dependientes.
+        (136, max(saldo, 0), "SALDO"),
+        (137, max(-saldo, 0), "SALDO"),
     ]
 
     return [

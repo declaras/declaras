@@ -65,8 +65,21 @@ def partida_solo_documento() -> Partida:
 
 
 def partida_concepto_desconocido() -> Partida:
-    """Un código que la tabla no mapea: pregunta al contador, no un default."""
-    [p] = abrir(_exogena(_fila("900777333", "9999", 5_000_000)))
+    """Un código que la tabla no mapea Y un renglón que no sabemos interpretar.
+
+    HACEN FALTA LAS DOS COSAS, y antes no: la fila traía el código 9999 pero el `suggested_use` por
+    defecto de la fábrica decía "R32 Ingresos brutos". Cuando el clasificador aprendió a leer el
+    veredicto de renglón de la DIAN (que es lo que desglosa el formato 2276), esa fila dejó de ser
+    desconocida: R32 es nómina y punto.
+
+    Era una fila contradictoria: código sin mapear pero con la DIAN diciendo claramente qué es. En
+    la vida real, desconocido significa que NINGUNA de las dos fuentes resuelve. Se usa R112
+    (ingresos por ganancias ocasionales) porque es un renglón real que el motor no cubre todavía.
+    """
+    fila = _fila("900777333", "9999", 5_000_000)
+    fila["suggested_use"] = "R112 Ingresos por ganancias ocasionales"
+    fila["form_lines"] = [112]
+    [p] = abrir(_exogena(fila))
     assert p.estado is EstadoPartida.CONCEPTO_DESCONOCIDO
     return p
 

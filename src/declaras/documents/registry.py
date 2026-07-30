@@ -78,6 +78,8 @@ DETERMINISTIC_READERS: dict[str, Reader] = {
     # mismo formulario 210, asi que los lee el mismo parser.
     "PRIOR_RETURN": renta_210.parse,
     "SUGGESTED_RETURN": renta_210.parse,
+    # El mismo formulario 210, presentado en vez de sugerido.
+    "FILED_RETURN": renta_210.parse,
 }
 
 # Lectores con modelo para los certificados que aporta el cliente. Van aparte de los

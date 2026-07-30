@@ -40,12 +40,17 @@ from declaras.domain.errors import (
     PeticionNoEncontradaError,
     SinReporteDeTercerosError,
 )
+from declaras.domain.models import DocumentType
 from declaras.motor import Flag, Liquidacion
 from declaras.observability import get_logger
 from declaras.parametros import ParametrosAnio, cargar
 from declaras.render import Casilla, borrador_html, formulario_210, memoria_markdown
+from declaras.services.comparacion_210 import Comparacion210, Contra, comparar
 from declaras.services.conciliacion import (
+    CONCEPTOS_FUERA_DEL_MOTOR,
     TIPO_A_CLAVE,
+    ClaseDeIngreso,
+    Concepto,
     Decision,
     LiquidacionVersionada,
     Motivo,
@@ -74,6 +79,10 @@ from declaras.services.conciliacion import (
 # pendientes, y una segunda copia haría que la cola del contador y la lista del API se
 # ordenaran distinto sin que nadie lo note.
 from declaras.services.conciliacion.beneficios import beneficios_de
+from declaras.services.conciliacion.recomendaciones import (
+    Recomendaciones,
+    derivar_recomendaciones,
+)
 from declaras.services.conciliacion.resolucion import _plata_en_juego
 
 log = get_logger(__name__)
@@ -350,6 +359,7 @@ class ConciliacionService:
         motivo: Motivo,
         quien: str,
         valor: int | None = None,
+        clase: ClaseDeIngreso | None = None,
         nota: str | None = None,
     ) -> tuple[Partida, Estado]:
         """Registra la decisión del contador sobre un renglón y recalcula."""
@@ -359,7 +369,13 @@ class ConciliacionService:
             raise PartidaNoEncontradaError(partida_id=partida_id, case_id=str(case_id))
         try:
             resuelta = resolver(
-                objetivo, decision, motivo=motivo, quien=quien, valor=valor, nota=nota
+                objetivo,
+                decision,
+                motivo=motivo,
+                quien=quien,
+                valor=valor,
+                clase=clase,
+                nota=nota,
             )
         except ValueError as exc:
             # El conciliador valida decisión × estado × concepto y sus mensajes ya están
@@ -407,6 +423,21 @@ class ConciliacionService:
         respuestas = await self._repo.respuestas(case_id)
         caso = estado.caso if estado.caso is not None else self._caso_vacio(detail)
         return derivar_peticiones(estado.partidas, respuestas, caso, p=self._parametros(detail))
+
+    async def recomendaciones(self, case_id: UUID) -> Recomendaciones:
+        """Qué le ahorraría cada beneficio, esté o no pedido. Derivado, nunca almacenado.
+
+        Comparte todo con `peticiones` menos el filtro: la cola descarta lo ya contestado, y esto
+        recorre el catálogo completo. Es la diferencia entre "qué falta pedir" y "cuánta plata hay
+        en juego", y la segunda pregunta no tenía respuesta en ninguna pantalla.
+        """
+        estado = await self.estado(case_id)
+        detail = await self._detalle(case_id)
+        respuestas = await self._repo.respuestas(case_id)
+        caso = estado.caso if estado.caso is not None else self._caso_vacio(detail)
+        return derivar_recomendaciones(
+            estado.partidas, respuestas, caso, p=self._parametros(detail)
+        )
 
     async def respuestas(self, case_id: UUID) -> list[Respuesta]:
         """Lo que ya se contestó, para poder verlo y cambiarlo.
@@ -530,6 +561,39 @@ class ConciliacionService:
                 case_id=str(case_id),
             )
         return formulario_210(liquidacion, estado.caso)
+
+    async def comparacion_con_la_dian(self, case_id: UUID) -> Comparacion210:
+        """El borrador que la DIAN precargó contra el que sale del cálculo, casilla por casilla.
+
+        Es donde se ve qué aportó el trabajo con los documentos, y sobre todo lo contrario: una
+        casilla nuestra MENOR que la de la DIAN sin razón registrada es un ingreso que se perdió,
+        y es justo lo que la DIAN cruza sola.
+        """
+        detail = await self._detalle(case_id)
+        nuestras = await self.formulario(case_id)
+        return comparar(
+            nuestras,
+            _del_expediente(detail, DocumentType.SUGGESTED_RETURN),
+            Contra.BORRADOR_DE_LA_DIAN,
+        )
+
+    async def comparacion_con_lo_presentado(self, case_id: UUID) -> Comparacion210:
+        """El cálculo contra la declaración que de verdad se presentó ese año.
+
+        ES LA SEGUNDA OPINIÓN. En un año ya declarado, lo presentado es casi siempre el trabajo de
+        un contador, así que cada diferencia es una de dos cosas y hay que poder distinguirlas: un
+        beneficio que él no tomó (plata que el cliente dejó sobre la mesa) o un error nuestro.
+
+        En el año en curso no hay nada presentado y la comparación sale no disponible, que es lo
+        correcto: no existe todavía.
+        """
+        detail = await self._detalle(case_id)
+        nuestras = await self.formulario(case_id)
+        return comparar(
+            nuestras,
+            _del_expediente(detail, DocumentType.FILED_RETURN),
+            Contra.DECLARACION_PRESENTADA,
+        )
 
     async def cerrar_borrador(self, case_id: UUID) -> Case:
         """Da el borrador por listo. Se NIEGA si no se puede calcular, o si hay bloqueante.
@@ -1135,11 +1199,87 @@ def decisiones_posibles(partida: Partida) -> dict[str, list[str]]:
         valor = 0 if decision is Decision.USAR_OTRO else None
         motivos = []
         for motivo in Motivo:
-            try:
-                resolver(partida, decision, motivo=motivo, quien="sondeo", valor=valor)
-            except ValueError:
-                continue
-            motivos.append(motivo.value)
+            # `CLASIFICAR` exige clase, así que se sondea con cada una: el motivo es posible si
+            # alguna clase lo acompaña. Cuál va con cuál lo responde `clases_posibles`.
+            clases: tuple[ClaseDeIngreso | None, ...] = (
+                tuple(ClaseDeIngreso) if decision is Decision.CLASIFICAR else (None,)
+            )
+            if any(_acepta(partida, decision, motivo, valor, c) for c in clases):
+                motivos.append(motivo.value)
         if motivos:
             posibles[decision.value] = motivos
     return posibles
+
+
+# Lo que el concepto de la exógena implica sobre la clase, cuando implica algo.
+#
+# ESTO ES UNA SUGERENCIA Y NO PUEDE SER MÁS QUE ESO. Servicios y honorarios son, en la práctica
+# colombiana, el ingreso del independiente que va a rentas de trabajo; pero eso depende de un hecho
+# que no está en ningún documento (si imputa costos y si contrató dos o más trabajadores) y que
+# solo sabe el contribuyente. Aplicarla sola le daría el 25% exento a alguien que quizá no tiene
+# derecho, y eso es inexactitud: sanción del 100% del mayor impuesto más intereses de mora.
+#
+# `OTROS` no sugiere nada a propósito: es el cajón de sastre de la exógena y puede ser un arriendo,
+# un rendimiento o una venta. Adivinar ahí sería inventar.
+_CLASE_SUGERIDA: dict[Concepto, ClaseDeIngreso] = {
+    Concepto.HONORARIOS: ClaseDeIngreso.RENTA_DE_TRABAJO,
+    Concepto.SERVICIOS: ClaseDeIngreso.RENTA_DE_TRABAJO,
+}
+
+
+def clase_sugerida(partida: Partida) -> str | None:
+    """La clase que el concepto implica, cuando el renglón se puede clasificar y hay implicación."""
+    if partida.concepto is None or partida.concepto not in CONCEPTOS_FUERA_DEL_MOTOR:
+        return None
+    sugerida = _CLASE_SUGERIDA.get(partida.concepto)
+    return sugerida.value if sugerida is not None else None
+
+
+def clases_posibles(partida: Partida) -> dict[str, list[str]]:
+    """Qué clase de ingreso puede afirmar cada motivo de `CLASIFICAR`.
+
+    Va aparte de `decisiones_posibles` para no cambiarle el contrato (decisión → motivos), y se
+    deriva del mismo modo: preguntándole a `resolver`. La regla que protege es legal, no de forma —
+    `RENTA_DE_TRABAJO` da acceso al 25% exento del art. 206 num. 10 y solo se sostiene con el hecho
+    de no imputar costos ni tener dos o más trabajadores. Una copia de esa tabla en el front la
+    dejaría ofrecer la clase que más baja el impuesto con cualquier motivo.
+    """
+    por_motivo: dict[str, list[str]] = {}
+    for motivo in Motivo:
+        clases = [
+            clase.value
+            for clase in ClaseDeIngreso
+            if _acepta(partida, Decision.CLASIFICAR, motivo, None, clase)
+        ]
+        if clases:
+            por_motivo[motivo.value] = clases
+    return por_motivo
+
+
+def _acepta(
+    partida: Partida,
+    decision: Decision,
+    motivo: Motivo,
+    valor: int | None,
+    clase: ClaseDeIngreso | None,
+) -> bool:
+    """Si `resolver` acepta esa combinación. Puro y barato: un `model_copy` y un sha."""
+    try:
+        resolver(partida, decision, motivo=motivo, quien="sondeo", valor=valor, clase=clase)
+    except ValueError:
+        return False
+    return True
+
+
+def _del_expediente(detail: CaseDetail, tipo: DocumentType) -> DocumentReading | None:
+    """La lectura del documento de ese tipo que esté en el expediente, si se pudo leer.
+
+    Se toma el MÁS RECIENTE: la DIAN recalcula su borrador cuando un tercero corrige la exógena (su
+    propia documentación dice que se actualiza a mitad y a final de cada semana durante la
+    temporada), así que un expediente puede tener varios y el viejo compararía contra cifras que la
+    DIAN ya cambió. Con una declaración presentada aplica lo mismo si hubo corrección.
+    """
+    candidatos = [d for d in detail.documents if d.doc_type == tipo.value and d.reading is not None]
+    if not candidatos:
+        return None
+    return max(candidatos, key=lambda d: d.added_at).reading

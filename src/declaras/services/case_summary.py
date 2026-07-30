@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from declaras.documents.models import DocumentReading
 from declaras.domain.case import CaseDetail
+from declaras.parametros.casillas import casilla_en_palabras, nombre_de_casilla
 from declaras.tax.obligation import ObligationAssessment, ThresholdCode, assess
 
 _EXOGENA = "EXOGENA"
@@ -32,9 +33,21 @@ _THRESHOLD_FIELD_PREFIX = "tope_"
 
 
 class FormLineTotal(BaseModel):
-    """Lo que la exogena aporta a un renglon del formulario 210."""
+    """Lo que la exogena aporta a un renglon del formulario 210.
+
+    LLEVA DOS NOMBRES DEL MISMO RENGLON. `label` es el oficial del formulario ("Ingresos no
+    constitutivos de renta (rentas de trabajo)"), que es el correcto y el que un contador reconoce;
+    `en_palabras` es el mismo renglon dicho para quien declara una vez al ano ("Salud y pension que
+    te descontaron del sueldo").
+
+    Antes la pantalla mostraba "R100" y "R131" a secas. Poner el nombre oficial arreglo la mitad
+    del problema: el numero desaparecio, pero "Ingresos no constitutivos de renta" sigue siendo
+    una frase que solo entiende quien ya sabe lo que significa.
+    """
 
     line: int
+    label: str
+    en_palabras: str
     amount: int
     concept_count: int
 
@@ -215,7 +228,13 @@ def _aggregate_form_lines(exogena: DocumentReading) -> list[FormLineTotal]:
             totals[int(line)] += amount
             counts[int(line)] += 1
     return [
-        FormLineTotal(line=line, amount=totals[line], concept_count=counts[line])
+        FormLineTotal(
+            line=line,
+            label=nombre_de_casilla(line),
+            en_palabras=casilla_en_palabras(line),
+            amount=totals[line],
+            concept_count=counts[line],
+        )
         for line in sorted(totals)
     ]
 

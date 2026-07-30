@@ -89,6 +89,30 @@ class Decision(StrEnum):
     MARCAR_AJENO = "MARCAR_AJENO"
     CERRAR_SIN_SOPORTE = "CERRAR_SIN_SOPORTE"
     LLEVAR_A_MANO = "LLEVAR_A_MANO"
+    # Dice a qué cédula del 210 pertenece un ingreso que la exógena reporta con un concepto que el
+    # motor no sabe ubicar solo (servicios, honorarios, "otros"). Es la alternativa a LLEVAR_A_MANO:
+    # en vez de sacar el ingreso de la liquidación, lo mete por el camino que le corresponde.
+    CLASIFICAR = "CLASIFICAR"
+
+
+class ClaseDeIngreso(StrEnum):
+    """A qué cédula del 210 va un ingreso que hubo que clasificar a mano.
+
+    NO ES UNA ETIQUETA LIBRE: cada valor cambia el impuesto, porque cada cédula tiene sus propias
+    deducciones y su propia tarifa. Mandar un honorario a rentas de trabajo le da acceso al 25%
+    exento del art. 206 num. 10; mandarlo a rentas no laborales, no. Por eso la clase no se elige
+    "porque suena": se deriva del hecho que el motivo afirma, y ese hecho queda en el registro.
+    """
+
+    # Honorarios y servicios personales SIN costos imputados. El art. 336 num. 2 permite tratarlos
+    # como rentas de trabajo, y el par. 5 del art. 206 condiciona el 25% exento a no haber
+    # contratado dos o más trabajadores. Las dos condiciones las afirma quien resuelve, con el
+    # motivo, y quedan escritas en el aviso que acompaña la liquidación.
+    RENTA_DE_TRABAJO = "RENTA_DE_TRABAJO"
+    # Intereses, rendimientos financieros.
+    RENDIMIENTO = "RENDIMIENTO"
+    # Cánones de arrendamiento.
+    ARRIENDO = "ARRIENDO"
 
 
 class Motivo(StrEnum):
@@ -102,6 +126,15 @@ class Motivo(StrEnum):
     DECISION_DEL_CONTADOR = "DECISION_DEL_CONTADOR"
     # El soporte y la cifra existen; lo que falta es el motor (va con LLEVAR_A_MANO).
     FUERA_DEL_MOTOR = "FUERA_DEL_MOTOR"
+    # Los tres motivos de CLASIFICAR. No son adorno: son EL HECHO del que depende que la clase
+    # elegida sea correcta, y quedan en la `Fuente` que lee un auditor.
+    #
+    # `SIN_COSTOS_NI_EMPLEADOS` es el del freelancer: no imputa costos y no contrató dos o más
+    # trabajadores, así que sus honorarios pueden ir a rentas de trabajo con el 25% exento.
+    SIN_COSTOS_NI_EMPLEADOS = "SIN_COSTOS_NI_EMPLEADOS"
+    # El ingreso es de otra naturaleza y la exógena lo reportó con un concepto genérico ("otros"):
+    # un canon de arrendamiento o un rendimiento que quedó mal clasificado en el reporte.
+    NATURALEZA_DEL_INGRESO = "NATURALEZA_DEL_INGRESO"
     # El documento es la fuente autoritativa del hecho y la exógena NO puede corroborarlo,
     # porque el tercero lo reporta bajo otro NIT. Es el motivo del tercer automatismo (los
     # aportes obligatorios de un 220, ver `autorresolver`): no es "coinciden" —no hay nada
@@ -135,6 +168,8 @@ class Resolucion(_Modelo):
     decision: Decision
     valor: int
     motivo: Motivo
+    # Solo la lleva CLASIFICAR, y es obligatoria ahí: sin clase no hay a dónde mandar el ingreso.
+    clase: ClaseDeIngreso | None = None
     origen: Origen
     huella: str
     nota: str | None = None

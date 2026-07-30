@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
 from declaras.services.conciliacion.cruce import _con_nota
 from declaras.services.conciliacion.modelos import (
+    ClaseDeIngreso,
     Decision,
     EstadoPartida,
     Motivo,
@@ -87,13 +88,25 @@ CONCEPTOS_CON_DOCUMENTO_AUTORITATIVO = frozenset({Concepto.APORTES_SALUD, Concep
 # por estado; esta decisión es la única condicionada también por el concepto).
 _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
     EstadoPartida.COINCIDE: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.LLEVAR_A_MANO}
+        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.LLEVAR_A_MANO, Decision.CLASIFICAR}
     ),
     EstadoPartida.DISCREPANCIA: frozenset(
-        {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO, Decision.LLEVAR_A_MANO}
+        {
+            Decision.USAR_DOCUMENTO,
+            Decision.USAR_DIAN,
+            Decision.USAR_OTRO,
+            Decision.LLEVAR_A_MANO,
+            Decision.CLASIFICAR,
+        }
     ),
     EstadoPartida.SOLO_DIAN: frozenset(
-        {Decision.USAR_DIAN, Decision.MARCAR_AJENO, Decision.USAR_OTRO, Decision.LLEVAR_A_MANO}
+        {
+            Decision.USAR_DIAN,
+            Decision.MARCAR_AJENO,
+            Decision.USAR_OTRO,
+            Decision.LLEVAR_A_MANO,
+            Decision.CLASIFICAR,
+        }
     ),
     EstadoPartida.SOLO_DOCUMENTO: frozenset(
         {
@@ -101,6 +114,7 @@ _DECISIONES_POR_ESTADO: dict[EstadoPartida, frozenset[Decision]] = {
             Decision.USAR_OTRO,
             Decision.CERRAR_SIN_SOPORTE,
             Decision.LLEVAR_A_MANO,
+            Decision.CLASIFICAR,
         }
     ),
     # Sin concepto no se sabe a qué cédula del 210 iría el valor: no puede aportar hecho
@@ -138,6 +152,25 @@ _MOTIVOS_POR_DECISION: dict[Decision, frozenset[Motivo]] = {
         {Motivo.FALTA_DOCUMENTO, Motivo.NO_ES_MIO, Motivo.DECISION_DEL_CONTADOR}
     ),
     Decision.LLEVAR_A_MANO: frozenset({Motivo.FUERA_DEL_MOTOR}),
+    # Los dos motivos de CLASIFICAR son EL HECHO que sostiene la clase elegida, no una nota. Con
+    # `DECISION_DEL_CONTADOR` a secas, mandar un honorario a rentas de trabajo quedaría en el
+    # registro sin la condición legal de la que depende, y eso es lo que hay que poder defender.
+    Decision.CLASIFICAR: frozenset({Motivo.SIN_COSTOS_NI_EMPLEADOS, Motivo.NATURALEZA_DEL_INGRESO}),
+}
+
+
+# Qué motivo sostiene qué clase. Es la mitad legal de `CLASIFICAR`: el 25% exento del art. 206
+# num. 10 depende de no imputar costos y de no haber contratado dos o más trabajadores, así que
+# `RENTA_DE_TRABAJO` solo se puede afirmar con ese hecho. Al revés también: decir "es de otra
+# naturaleza" no habilita el 25%, habilita la cédula que corresponda.
+# Las decisiones que meten una cifra al caso. Sobre un concepto que el motor no sabe ubicar, ninguna
+# de estas puede aplicarse: la cifra entraría sin cédula y el ensamble revienta.
+_APORTAN_HECHO = frozenset({Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO})
+
+
+_CLASES_POR_MOTIVO: dict[Motivo, frozenset[ClaseDeIngreso]] = {
+    Motivo.SIN_COSTOS_NI_EMPLEADOS: frozenset({ClaseDeIngreso.RENTA_DE_TRABAJO}),
+    Motivo.NATURALEZA_DEL_INGRESO: frozenset({ClaseDeIngreso.RENDIMIENTO, ClaseDeIngreso.ARRIENDO}),
 }
 
 
@@ -167,6 +200,7 @@ def resolver(
     motivo: Motivo,
     quien: str,
     valor: int | None = None,
+    clase: ClaseDeIngreso | None = None,
     nota: str | None = None,
 ) -> Partida:
     """La decisión de una persona sobre una partida. Pura: devuelve una copia resuelta.
@@ -191,6 +225,25 @@ def resolver(
             f"todavía; {partida.concepto} sí tiene modelo en el caso y excluirlo lo "
             "subdeclararía."
         )
+    if partida.concepto in CONCEPTOS_FUERA_DEL_MOTOR and decision in _APORTAN_HECHO:
+        # HUECO MEDIDO, no defensivo: sobre un renglón de SERVICIOS, `USAR_DIAN` era una decisión
+        # válida por estado, y el ensamble reventaba después con NotImplementedError. Desde afuera
+        # se veía así: el contador aceptaba la cifra que la DIAN reportó, la interfaz decía "listo"
+        # y el caso quedaba sin armar, con el borrador en 409 y sin decir qué había pasado.
+        # Las tres salidas siguen ahí: CLASIFICAR lo mete en su cédula, LLEVAR_A_MANO lo saca con
+        # aviso bloqueante, y MARCAR_AJENO / CERRAR_SIN_SOPORTE lo cierran sin aportar hecho.
+        raise ValueError(
+            f"La decisión {decision} haría entrar un ingreso de {partida.concepto} al cálculo, y "
+            "el motor no sabe a qué cédula del 210 pertenece. Usa CLASIFICAR para decirle a cuál "
+            "va, o LLEVAR_A_MANO para sumarlo aparte."
+        )
+    if decision is Decision.CLASIFICAR:
+        _validar_clasificacion(partida, motivo, clase)
+    elif clase is not None:
+        raise ValueError(
+            f"La clase {clase} solo tiene sentido con la decisión CLASIFICAR; "
+            f"{decision} no ubica el ingreso en ninguna cédula."
+        )
     return _con_resolucion(
         partida,
         decision,
@@ -198,8 +251,42 @@ def resolver(
         quien=quien,
         origen=Origen.CONTADOR,
         valor=valor,
+        clase=clase,
         nota=nota,
     )
+
+
+def _validar_clasificacion(partida: Partida, motivo: Motivo, clase: ClaseDeIngreso | None) -> None:
+    """Las tres guardas de CLASIFICAR, y ninguna es ceremonia.
+
+    Cada una cierra una forma distinta de bajar el impuesto sin derecho: clasificar un ingreso que
+    el motor ya ubica (moverlo a la cédula que más convenga), clasificarlo sin decir a dónde, y
+    afirmar `RENTA_DE_TRABAJO` sin el hecho que habilita el 25% exento.
+    """
+    if partida.concepto not in CONCEPTOS_FUERA_DEL_MOTOR:
+        raise ValueError(
+            f"La decisión CLASIFICAR es solo para conceptos que el motor no sabe ubicar; "
+            f"{partida.concepto} ya tiene su cédula y reclasificarlo permitiría llevarlo a la "
+            "que más convenga."
+        )
+    if clase is None:
+        raise ValueError(
+            "CLASIFICAR necesita la clase de ingreso: sin ella no hay a qué cédula del 210 "
+            "mandar el valor."
+        )
+    # Un motivo que no es de CLASIFICAR NO se rechaza acá: lo rechaza `_con_resolucion` con el
+    # mensaje de motivo×decisión, que es el problema real. Sin este `get`, sondear la combinación
+    # (CLASIFICAR, COINCIDEN) reventaba con un KeyError en vez de dar el ValueError que
+    # `decisiones_posibles` espera, y eso tumbaba la lista de decisiones de TODOS los renglones.
+    permitidas = _CLASES_POR_MOTIVO.get(motivo)
+    if permitidas is None:
+        return
+    if clase not in permitidas:
+        posibles = ", ".join(sorted(permitidas))
+        raise ValueError(
+            f"La clase {clase} no se sostiene con el motivo {motivo}; con ese hecho las "
+            f"posibles son: {posibles}."
+        )
 
 
 def autorresolver(partidas: list[Partida]) -> list[Partida]:
@@ -361,6 +448,7 @@ def _con_resolucion(
     quien: str,
     origen: Origen,
     valor: int | None = None,
+    clase: ClaseDeIngreso | None = None,
     nota: str | None = None,
 ) -> Partida:
     if motivo not in _MOTIVOS_POR_DECISION[decision]:
@@ -379,6 +467,7 @@ def _con_resolucion(
         decision=decision,
         valor=_derivar_valor(partida, decision, valor),
         motivo=motivo,
+        clase=clase,
         origen=origen,
         huella=_huella(partida),
         nota=nota,
@@ -389,16 +478,37 @@ def _con_resolucion(
 
 
 def _derivar_valor(partida: Partida, decision: Decision, valor: int | None) -> int:
-    """El monto que la decisión hace valer. Solo USAR_OTRO lo trae explícito."""
+    """El monto que la decisión hace valer.
+
+    CLASIFICAR SÍ APORTA HECHO, así que no puede caer en el `return 0` del final con MARCAR_AJENO y
+    CERRAR_SIN_SOPORTE: eso metería el ingreso a su cédula valiendo cero, que es subdeclarar con la
+    apariencia de haberlo resuelto. Toma la cifra como USAR_DIAN, o la explícita si la traen.
+
+    Acepta `valor` opcional porque sobre una DISCREPANCIA hay que poder decir cuál cifra rige Y a
+    qué cédula va, y una partida tiene UNA resolución. Sin eso, clasificar un renglón con dos
+    versiones distintas era un callejón: había que elegir entre la cifra y la cédula.
+    """
     if decision is Decision.USAR_OTRO:
         if valor is None:
             raise ValueError("La decisión USAR_OTRO exige el valor que va a regir.")
         if valor < 0:
             raise ValueError("El valor de una resolución va en pesos; no puede ser negativo.")
         return valor
+    if decision is Decision.CLASIFICAR:
+        if valor is not None:
+            if valor < 0:
+                raise ValueError("El valor de una resolución va en pesos; no puede ser negativo.")
+            return valor
+        if partida.version_dian is not None:
+            return partida.version_dian.monto
+        if partida.version_documento is not None:
+            return partida.version_documento.monto
+        raise ValueError(
+            "La partida no tiene ninguna versión de dónde tomar el valor a clasificar."
+        )
     if valor is not None:
         raise ValueError(
-            "Solo la decisión USAR_OTRO acepta un valor explícito; "
+            "Solo USAR_OTRO y CLASIFICAR aceptan un valor explícito; "
             "las demás lo toman de la versión que escogen."
         )
     if decision is Decision.USAR_DIAN:

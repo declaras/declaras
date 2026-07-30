@@ -81,8 +81,10 @@ def test_pendientes_ordena_por_plata_en_juego():
 # (riesgo 2 de la ronda 2): CERRAR_SIN_SOPORTE también aplica a SOLO_DOCUMENTO, porque la
 # partida suelta sin NIT que duplica una ya conciliada tiene que poder cerrarse SIN aportar
 # hecho — con la tabla literal, sus únicas salidas metían la misma plata dos veces al caso.
-# LLEVAR_A_MANO (ronda de fixes 1) no se itera acá: su gate es por CONCEPTO además del
-# estado (solo conceptos fuera del alcance del motor) y tiene sus propios tests abajo.
+# LLEVAR_A_MANO (ronda de fixes 1) y CLASIFICAR no se iteran acá: su gate es por CONCEPTO además
+# del estado (las dos son salidas para conceptos que el motor no sabe ubicar) y tienen sus propios
+# tests abajo. Una de las dos saca el ingreso de la liquidación y la otra lo mete en su cédula, así
+# que iterarlas por estado fallaría con un mensaje que habla del concepto y no del estado.
 _CASOS_TABLA = [
     (partida_coincide, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN}),
     (partida_discrepancia, {Decision.USAR_DOCUMENTO, Decision.USAR_DIAN, Decision.USAR_OTRO}),
@@ -100,7 +102,7 @@ _CASOS_TABLA = [
 )
 def test_la_tabla_de_decisiones_se_aplica_completa(fabrica, permitidas):
     for decision in Decision:
-        if decision is Decision.LLEVAR_A_MANO:
+        if decision in (Decision.LLEVAR_A_MANO, Decision.CLASIFICAR):
             continue  # gate por concepto, no solo por estado: tests dedicados abajo
         argumentos = {"valor": 1_000_000} if decision is Decision.USAR_OTRO else {}
         if decision in permitidas:

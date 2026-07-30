@@ -39,6 +39,7 @@ _DESCRIPCIONES: dict[str, str] = {
     "actividad económica",
     "PRIOR_RETURN": "una declaración de renta ya presentada (formulario 210)",
     "SUGGESTED_RETURN": "la declaración sugerida que la DIAN le propone al contribuyente",
+    "FILED_RETURN": "la declaración de ese año gravable, ya presentada y firmada",
     "EINVOICE_SUMMARY": "resumen de facturación electrónica",
     "CERT_INGRESOS_220": "certificado de ingresos y retenciones del EMPLEADOR "
     "(formulario 220): salarios, prestaciones y aportes obligatorios",

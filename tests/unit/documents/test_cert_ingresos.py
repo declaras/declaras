@@ -282,6 +282,12 @@ SIN_LECTOR_TODAVIA = frozenset(
         # haber pagado 4x1000 sin tener rendimientos que la DIAN reporte, y entonces no hay
         # partida de rendimientos que dispare la petición del bancario.
         "CERT_GMF",
+        # La certificación del salario promedio de los últimos seis meses (art. 206 num. 4) no
+        # tiene formato: la escribe Gestión Humana en papel membreteado y cada empresa la redacta
+        # distinta. No hay parser determinista posible, así que el dato lo captura una persona.
+        # Es la única entrada de la exención de cesantías, y por eso está declarada acá y no
+        # tolerada en silencio: el día que haya un formato estándar, esta línea lo recuerda.
+        "CERT_PROMEDIO_CESANTIAS",
     }
 )
 
@@ -297,11 +303,11 @@ def test_todo_documento_que_el_catalogo_pide_se_sabe_leer_o_esta_declarado():
     trae pensiones.
     """
     from declaras.services.conciliacion.peticiones import (
-        _BENEFICIOS,
         _CERTIFICADO_POR_CONCEPTO,
+        BENEFICIOS,
     )
 
-    pedidos = {b.tipo_documento for b in _BENEFICIOS} | {
+    pedidos = {b.tipo_documento for b in BENEFICIOS} | {
         c.tipo_documento for c in _CERTIFICADO_POR_CONCEPTO.values()
     }
     sin_lector = pedidos - set(registry.supported_types()) - SIN_LECTOR_TODAVIA

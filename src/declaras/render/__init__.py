@@ -5,7 +5,12 @@ from declaras.render.formulario import (
     formulario_210,
 )
 from declaras.render.html import borrador_html
-from declaras.render.memoria import casillas, memoria_markdown
+from declaras.render.memoria import (
+    PasoDelCalculo,
+    casillas,
+    memoria_markdown,
+    tipo_de_valor,
+)
 from declaras.render.orden import ORDEN_CASILLAS
 
 __all__ = [
@@ -13,8 +18,10 @@ __all__ = [
     "CASILLAS_SIN_MAPEAR",
     "ORDEN_CASILLAS",
     "Casilla",
+    "PasoDelCalculo",
     "borrador_html",
     "casillas",
     "formulario_210",
     "memoria_markdown",
+    "tipo_de_valor",
 ]

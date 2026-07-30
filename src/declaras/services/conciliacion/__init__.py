@@ -39,6 +39,7 @@ from declaras.services.conciliacion.mapeo import (
     movimientos_de,
 )
 from declaras.services.conciliacion.modelos import (
+    ClaseDeIngreso,
     Decision,
     EstadoPartida,
     Lado,
@@ -84,6 +85,7 @@ __all__ = [
     "SEVERIDAD_BLOQUEANTE",
     "TIPO_A_CLAVE",
     "UMBRAL_AHORRO",
+    "ClaseDeIngreso",
     "Concepto",
     "Decision",
     "EstadoPartida",

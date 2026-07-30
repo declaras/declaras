@@ -40,14 +40,32 @@ from declaras.caso import (
     Patrimonio,
     Rendimiento,
 )
+from declaras.dinero import en_pesos
 from declaras.documents.models import DocumentReading
 from declaras.motor import Flag
 from declaras.services.conciliacion.conceptos import CONCEPTOS_FUERA_DEL_MOTOR, Concepto
-from declaras.services.conciliacion.modelos import Decision, Partida, Resolucion, Valor
+from declaras.services.conciliacion.modelos import (
+    ClaseDeIngreso,
+    Decision,
+    Partida,
+    Resolucion,
+    Valor,
+)
 from declaras.services.conciliacion.resolucion import pendientes
 
 # Las decisiones que hacen valer un monto en el caso; las otras tres cierran sin aportar.
-DECISIONES_CON_HECHO = frozenset({Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO})
+# Las decisiones que meten una cifra al caso.
+#
+# `CLASIFICAR` VA ACÁ, y olvidarlo costó un bug del peor tipo: sin ella, un ingreso clasificado
+# caía en la rama de "decisión sin hecho" y salía del caso con un aviso de EXCLUSIÓN. El
+# bloqueante desaparecía (ya no era LLEVAR_A_MANO) y el ingreso tampoco entraba, así que la
+# pantalla mostraba el renglón resuelto y el 210 sin la plata. Lo único que evitó que fuera
+# silencioso fue que la
+# arquitectura ya exige aviso para toda exclusión, así que quedó registro; pero era el aviso
+# equivocado. Medido contra el caso real: $5.623.876 fuera del cálculo con el renglón en verde.
+DECISIONES_CON_HECHO = frozenset(
+    {Decision.USAR_DIAN, Decision.USAR_DOCUMENTO, Decision.USAR_OTRO, Decision.CLASIFICAR}
+)
 
 # Códigos de los avisos del ensamble (los lee T6 al fusionarlos en la liquidación).
 PENSION_DISTRIBUIDA_UNIFORME = "PENSION_DISTRIBUIDA_UNIFORME"
@@ -57,6 +75,10 @@ INGRESO_LLEVADO_A_MANO = "INGRESO_LLEVADO_A_MANO"
 RETENCION_DESPLAZADA = "RETENCION_DESPLAZADA"
 POSIBLE_DOBLE_CONTEO = "POSIBLE_DOBLE_CONTEO"
 INGRESO_EXCLUIDO = "INGRESO_EXCLUIDO"
+# Un ingreso que alguien ubicó en su cédula a mano. NO es bloqueante: el ingreso sí entra al
+# cálculo. Es informativo y existe para que quede escrito bajo qué hecho se clasificó, que es lo
+# que hace defendible la declaración si la DIAN pregunta.
+INGRESO_CLASIFICADO = "INGRESO_CLASIFICADO"
 
 # Orden de ensamble por tercero. También es la prioridad con que la retención explícita
 # (las filas R132 del tercero) se asigna a UN ingreso: el laboral primero.
@@ -259,7 +281,7 @@ def _avisar_posible_doble_conteo(ensamble: _Ensamble, grupos: dict[str, list[Par
                             f"Las partidas {suelta.id} y {identificada.id} entraron las "
                             f"dos al caso con el mismo concepto, el mismo nombre "
                             f"({identificada.nombre_tercero}) y la misma cifra "
-                            f"({_resuelta(identificada).valor:,} pesos): pueden ser el "
+                            f"({en_pesos(_resuelta(identificada).valor)}): pueden ser el "
                             "mismo hecho contado dos veces. Si lo son, cerrar la suelta "
                             "sin NIT con CERRAR_SIN_SOPORTE."
                         ),
@@ -295,6 +317,25 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
         assert p.concepto is not None  # filtrado en _ensamblar
         por_concepto.setdefault(p.concepto, []).append(p)
 
+    # LOS CLASIFICADOS SALEN DE LA COLA DE "SIN MODELO" ANTES DE MIRARLA. Un ingreso que alguien
+    # ubicó en su cédula (`Decision.CLASIFICAR`) ya tiene a dónde ir, así que no es un concepto sin
+    # modelo: se saca acá para que el backstop siga vigilando solo lo que de verdad no se puede
+    # liquidar. Antes, cualquier partida de estos conceptos tumbaba el ensamble entero.
+    clasificados: list[Partida] = []
+    for concepto in list(por_concepto):
+        if concepto not in CONCEPTOS_FUERA_DEL_MOTOR:
+            continue
+        quedan = []
+        for p in por_concepto[concepto]:
+            if p.resolucion is not None and p.resolucion.decision is Decision.CLASIFICAR:
+                clasificados.append(p)
+            else:
+                quedan.append(p)
+        if quedan:
+            por_concepto[concepto] = quedan
+        else:
+            del por_concepto[concepto]
+
     sin_modelo = sorted(str(c) for c in por_concepto if c in CONCEPTOS_FUERA_DEL_MOTOR)
     if sin_modelo:
         # El backstop honesto y ruidoso del brief: un hecho de estos conceptos no tiene
@@ -322,6 +363,13 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
 
     salud = por_concepto.pop(Concepto.APORTES_SALUD, [])
     pension_obligatoria = por_concepto.pop(Concepto.APORTES_PENSION, [])
+    # Las cesantías son ingreso del año (art. 27 num. 3) pero con exención propia según el promedio
+    # salarial del semestre (art. 206 num. 4), así que el motor necesita saber cuánto de la nómina
+    # son. Van al mismo `IngresoLaboral` en su propio campo, no dentro de `salarios`.
+    cesantias = por_concepto.pop(Concepto.CESANTIAS, [])
+    # El promedio salarial NO es plata que se declare: es el insumo de esa exención. La DIAN lo
+    # reporta en el mismo formato 2276 que los pagos, y por eso antes se sumaba al sueldo.
+    promedios = por_concepto.pop(Concepto.PROMEDIO_SALARIAL, [])
     if (salud or pension_obligatoria) and Concepto.SALARIOS not in por_concepto:
         # El horror documentado en T4: un IngresoLaboral con 0 de salario y los aportes
         # completos. Aportes con hecho y salario sin hecho es una contradicción entre
@@ -389,9 +437,9 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                             codigo=RETENCION_DESPLAZADA,
                             mensaje=(
                                 f"La retención declarada para {nombre} salió de la fuente "
-                                f"explícita ({retencion_pendiente:,} pesos, "
+                                f"explícita ({en_pesos(retencion_pendiente)}, "
                                 f"{', '.join(x.id for x in retenciones)}) y desplazó la "
-                                f"que certifica la otra versión ({retencion:,} pesos): "
+                                f"que certifica la otra versión ({en_pesos(retencion)}): "
                                 "rige una sola fuente — verificar cuál es la real antes "
                                 "de presentar."
                             ),
@@ -401,10 +449,15 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                 retencion_pendiente = None
                 extras.append(f"retención de {', '.join(x.id for x in retenciones)}")
             if concepto is Concepto.SALARIOS:
+                # Todo lo que acompaña al sueldo del mismo tercero va con el PRIMER ingreso laboral
+                # suyo: son hechos del mismo vínculo, y repartirlos entre varios los duplicaría.
                 aportes = (salud, pension_obligatoria) if indice == 0 else ([], [])
+                del_vinculo = (cesantias, promedios) if indice == 0 else ([], [])
                 if any(aportes):
                     ids = [x.id for x in aportes[0] + aportes[1]]
                     extras.append(f"aportes de {', '.join(ids)}")
+                if del_vinculo[0]:
+                    extras.append(f"cesantías de {', '.join(x.id for x in del_vinculo[0])}")
                 ensamble.laborales.append(
                     IngresoLaboral(
                         empleador_nit=p.nit_tercero,
@@ -413,6 +466,8 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                         # exógena y el lado documento del 220 agregan igual): va completo en
                         # `salarios` y el motor solo consume `bruto`, que es su suma.
                         salarios=_resuelta(p).valor,
+                        cesantias_e_intereses=sum(_resuelta(x).valor for x in del_vinculo[0]),
+                        promedio_mensual_6m=_promedio_mensual(del_vinculo[1]),
                         aportes_salud=sum(_resuelta(x).valor for x in aportes[0]),
                         aportes_pension=sum(_resuelta(x).valor for x in aportes[1]),
                         retencion=retencion,
@@ -435,7 +490,7 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                         codigo=PENSION_DISTRIBUIDA_UNIFORME,
                         mensaje=(
                             f"La pensión de {pagador} entró como el total anual "
-                            f"({total:,} pesos) repartido en 12 mesadas iguales: correcto "
+                            f"({en_pesos(total)}) repartido en 12 mesadas iguales: correcto "
                             "si la mesada fue pareja, equivocado si hubo retroactivos o "
                             "reajustes — verificar contra los comprobantes del pagador."
                         ),
@@ -489,6 +544,19 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
                     )
                 )
 
+    # Los clasificados a mano entran DESPUÉS del loop por concepto, porque su destino no lo manda
+    # el concepto de la exógena sino la clase que alguien eligió.
+    #
+    # LA RETENCIÓN VIAJA CON ELLOS SI NADIE MÁS LA TOMÓ, y esto no es un detalle: en el caso real la
+    # retención de $254.400 de un tercero quedaba sin ingreso al que colgarse, porque su
+    # único ingreso de ese tercero era el clasificado y el loop de arriba ya había terminado.
+    # Resultado medido: el ingreso entraba a la declaración y su retención no, o sea $254.400 menos
+    # de saldo a favor. Plata del cliente, perdida en silencio.
+    for p in clasificados:
+        de_este = retencion_pendiente if retencion_pendiente is not None else 0
+        retencion_pendiente = None
+        _ensamblar_clasificado(p, ensamble, retencion=de_este)
+
     if retencion_pendiente is not None:
         # Declararla sola fabrica un saldo a favor sin ingreso que lo sostenga;
         # perderla en silencio regala plata del cliente. No entra, y queda a la vista.
@@ -497,13 +565,119 @@ def _ensamblar_tercero(ensamble: _Ensamble, partidas: list[Partida]) -> None:
             Flag(
                 codigo=RETENCION_SIN_INGRESO,
                 mensaje=(
-                    f"La retención reportada por {nombre} ({retencion_pendiente:,} pesos) "
+                    f"La retención reportada por {nombre} ({en_pesos(retencion_pendiente)}) "
                     "quedó resuelta sin ningún ingreso del mismo tercero en el caso: no se "
                     "declaró, porque una retención sin ingreso fabrica un saldo a favor "
                     "sin sustento. Revisar de qué ingreso viene."
                 ),
             )
         )
+
+
+# Cómo se dice cada clase en el aviso, y bajo qué norma entró. El texto lo lee un contador o un
+# auditor, así que cita el artículo: es la defensa de por qué ese ingreso está en esa cédula.
+_COMO_ENTRO: dict[ClaseDeIngreso, tuple[str, str]] = {
+    ClaseDeIngreso.RENTA_DE_TRABAJO: (
+        "rentas de trabajo",
+        "quien resolvió afirmó que no imputa costos ni contrató dos o más trabajadores "
+        "(art. 336 num. 2 y art. 206 par. 5 ET), que es la condición del 25% exento",
+    ),
+    ClaseDeIngreso.RENDIMIENTO: (
+        "rentas de capital",
+        "se clasificó por la naturaleza del ingreso: la exógena lo reportó con un concepto "
+        "genérico",
+    ),
+    ClaseDeIngreso.ARRIENDO: (
+        "rentas de capital, como canon de arrendamiento",
+        "se clasificó por la naturaleza del ingreso: la exógena lo reportó con un concepto "
+        "genérico",
+    ),
+}
+
+
+def _promedio_mensual(partidas: list[Partida]) -> int | None:
+    """El promedio salarial del semestre que reportó el tercero, o None si nadie lo reportó.
+
+    `None` NO es cero: el motor lo distingue y grava las cesantías completas cuando falta, en vez de
+    eximirlas sobre un dato que nadie afirmó (art. 206 num. 4).
+
+    Si llegan varias partidas se toma la MAYOR, que es la que menos exención concede: el promedio
+    más alto cae en un tramo de menor porcentaje exento (art. 206 num. 4). Elegir la que más
+    conviene sobre un hecho que nadie concilió sería bajar el impuesto por la vía de la fuente.
+
+    DENTRO de una partida el cruce ya resolvió lo mismo: las filas de este concepto no se suman, se
+    quedan con la mayor. Son las dos mitades de la misma regla, y hacen falta las dos porque el
+    promedio puede llegar por dos caminos (varias filas de un tercero, o varios terceros).
+    """
+    if not partidas:
+        return None
+    return max(_resuelta(x).valor for x in partidas)
+
+
+def _ensamblar_clasificado(p: Partida, ensamble: _Ensamble, *, retencion: int = 0) -> None:
+    """El ingreso que alguien ubicó a mano, en la cédula que le corresponde.
+
+    LA CLASE CAMBIA EL IMPUESTO, no es una etiqueta: rentas de trabajo da acceso al 25% exento del
+    art. 206 num. 10 y rentas de capital no. Por eso cada uno deja un aviso con el hecho que
+    sostiene la clasificación; sin él, la declaración tendría un ingreso en una cédula que le
+    conviene y nada que explique por qué.
+
+    LOS APORTES ENTRAN EN CERO Y ESO ES DELIBERADO: la exógena reporta lo que el tercero PAGÓ, no lo
+    que el independiente aportó a seguridad social por su cuenta. Inventar un 12,5% + 16% sobre un
+    IBC presunto sería fabricar una deducción sin soporte. El certificado se pide aparte.
+
+    LA RETENCIÓN SÍ ENTRA, cuando el tercero la reportó y ningún otro ingreso de ese tercero la
+    tomó. Sin eso el ingreso se declaraba y su retención no, que es la mitad mala del trato: la
+    renta suma al impuesto y el crédito que la compensa se queda por fuera.
+    """
+    assert p.resolucion is not None and p.resolucion.clase is not None
+    clase = p.resolucion.clase
+    nombre = p.nombre_tercero or p.nit_tercero
+    valor = _resuelta(p).valor
+    donde, por_que = _COMO_ENTRO[clase]
+
+    if clase is ClaseDeIngreso.RENTA_DE_TRABAJO:
+        ensamble.laborales.append(
+            IngresoLaboral(
+                empleador_nit=p.nit_tercero,
+                empleador_nombre=p.nombre_tercero,
+                salarios=valor,
+                aportes_salud=0,
+                aportes_pension=0,
+                retencion=retencion,
+                fuente=_fuente(p, [f"clasificado como {donde}"]),
+            )
+        )
+    elif clase is ClaseDeIngreso.RENDIMIENTO:
+        ensamble.rendimientos.append(
+            Rendimiento(
+                entidad=nombre,
+                valor=valor,
+                retencion=retencion,
+                fuente=_fuente(p, [f"clasificado como {donde}"]),
+            )
+        )
+    else:
+        ensamble.arriendos.append(
+            Arriendo(
+                inmueble=nombre,
+                canon_total=valor,
+                retencion=retencion,
+                fuente=_fuente(p, [f"clasificado como {donde}"]),
+            )
+        )
+
+    ensamble.avisos.append(
+        Flag(
+            codigo=INGRESO_CLASIFICADO,
+            severidad="advertencia",
+            mensaje=(
+                f"El ingreso de {nombre} por {p.concepto} ({en_pesos(valor)}) entró como "
+                f"{donde} porque {por_que}. Si el supuesto no se cumple, la cédula es otra y "
+                "el impuesto cambia."
+            ),
+        )
+    )
 
 
 def _aviso_exclusion(p: Partida) -> Flag:
@@ -549,9 +723,9 @@ def _cifras_conocidas(p: Partida) -> str:
     dian = p.version_dian.monto if p.version_dian is not None else None
     documento = p.version_documento.monto if p.version_documento is not None else None
     if dian is not None and documento is not None and dian != documento:
-        return f"{dian:,} pesos según la DIAN, {documento:,} según el documento"
+        return f"{en_pesos(dian)} según la DIAN, {en_pesos(documento)} según el documento"
     cifra = dian if dian is not None else documento
-    return f"{cifra:,} pesos" if cifra is not None else "sin cifra registrada"
+    return en_pesos(cifra) if cifra is not None else "sin cifra registrada"
 
 
 def _resuelta(p: Partida) -> Resolucion:

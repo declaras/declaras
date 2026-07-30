@@ -319,9 +319,9 @@ def test_el_ahorro_son_pesos_de_impuesto_no_de_base_gravable():
 
     # Y es impuesto, no base: comparado contra la reducción real de la base, es una fracción.
     from declaras.optimizador import optimizar
-    from declaras.services.conciliacion.peticiones import _BENEFICIOS
+    from declaras.services.conciliacion.peticiones import BENEFICIOS
 
-    beneficio = next(b for b in _BENEFICIOS if b.pregunta == "DEPENDIENTES")
+    beneficio = next(b for b in BENEFICIOS if b.pregunta == "DEPENDIENTES")
     baja_de_base = optimizar(caso, P).liquidacion.valor("RLG_GENERAL") - optimizar(
         beneficio.hipotesis(caso, P), P
     ).liquidacion.valor("RLG_GENERAL")

@@ -28,14 +28,13 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from declaras.caso import (
-    Beneficios,
     CasoTributario,
     Dependiente,
     Fuente,
     IngresoLaboral,
     MontoDeclarado,
 )
-from declaras.dinero import porcentaje
+from declaras.dinero import en_pesos, porcentaje
 from declaras.motor import Flag
 from declaras.optimizador import ahorro_marginal, optimizar
 from declaras.parametros import ParametrosAnio, cargar
@@ -65,10 +64,17 @@ _FUENTE_HIPOTESIS = Fuente.manual("hipótesis de ahorro")
 
 
 class _Ahorro(NamedTuple):
+    # `medido` distingue las dos razones por las que un ahorro puede ser cero, y hace falta una
+    # BANDERA y no el texto: la razón está escrita en español para que la lea una persona, y quien
+    # tenga que ramificar sobre ella no puede hacerlo buscando subcadenas. Un cero medido significa
+    # "el beneficio no baja el impuesto" (no vale la pena pedir el documento); un cero sin medir
+    # significa "no sabemos" (no se puede concluir nada). Colapsarlas era el bug: la pantalla decía
+    # "ningún beneficio te ahorra nada" cuando la verdad era que no se pudo calcular ninguno.
     """Lo que devuelve `_ahorro`, con nombres para que no se confunda el orden."""
 
     pesos: int
     por_que: str | None
+    medido: bool
 
 
 class Peticion(_Modelo):
@@ -113,6 +119,13 @@ class Peticion(_Modelo):
 # "Invisible" es literal: no aparece en la exógena ni en ningún documento que el portal
 # entregue, así que si nadie pregunta, esa plata se pierde. El catálogo es la razón de ser
 # del producto y por eso los textos viven acá, en una tabla, y no improvisados por llamada.
+#
+# `BENEFICIOS`, `ahorro_de` y `en_pesos` NO llevan underscore porque no son privados: los usa
+# también `recomendaciones.py`, que recorre el catálogo completo en vez de la cola de pendientes.
+# Dos implementaciones del mismo ahorro terminarían diciendo cifras distintas para el mismo
+# beneficio, y ganaría la que se vea primero. Idealmente el catálogo viviría en su propio módulo del
+# que importaran los dos; no se movió porque son cuatrocientas líneas de tabla y el cambio de nombre
+# ya deja claro qué es compartido.
 
 
 @dataclass(frozen=True)
@@ -125,7 +138,12 @@ class _Beneficio:
     pregunta_previa: str
     copy_sugerido: str
     # ¿Ya está capturado en el caso? Si sí, el certificado llegó y no hay nada que pedir.
-    presente: Callable[[Beneficios], bool]
+    #
+    # RECIBE EL CASO COMPLETO, no solo `beneficios`, y eso amplió lo que el catálogo puede expresar:
+    # el certificado del promedio salarial de las cesantías no vive en `Beneficios` sino en cada
+    # `IngresoLaboral`, así que con la firma anterior ese beneficio no cabía en la tabla y habría
+    # tenido que manejarse por fuera, con su propia forma de calcular el ahorro.
+    presente: Callable[[CasoTributario], bool]
     # El caso con el beneficio en su TECHO legal, o None cuando el techo no se puede
     # afirmar sin inventar plata del cliente (ahí el ahorro se reporta como no estimable).
     # Todo lo que salga de acá es un techo, nunca una medición: lo marca `ahorro_es_techo`.
@@ -145,11 +163,6 @@ def _con_beneficios(caso: CasoTributario, **cambios: object) -> CasoTributario:
     return caso.model_copy(update={"beneficios": beneficios})
 
 
-def _en_pesos(valor: int) -> str:
-    """Una cifra de plata como la escribe una persona en Colombia: $1.234.567."""
-    return f"${valor:,.0f}".replace(",", ".")
-
-
 def _monto(valor: int) -> MontoDeclarado:
     return MontoDeclarado(valor=valor, fuente=_FUENTE_HIPOTESIS)
 
@@ -164,6 +177,7 @@ ETIQUETAS_DE_PREGUNTA = {
     "ICETEX": "crédito educativo del ICETEX",
     "GMF": "gravamen a los movimientos financieros",
     "DONACION_ESAL": "donaciones a entidades sin ánimo de lucro",
+    "PROMEDIO_CESANTIAS": "la certificación del promedio salarial de tus cesantías",
 }
 
 
@@ -183,7 +197,7 @@ def etiqueta_de_pregunta(pregunta: str) -> str:
     return pregunta.replace("_", " ").lower()
 
 
-_BENEFICIOS: tuple[_Beneficio, ...] = (
+BENEFICIOS: tuple[_Beneficio, ...] = (
     _Beneficio(
         pregunta="PREPAGADA",
         tipo_documento="CERT_PREPAGADA",
@@ -198,7 +212,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "aseguradora (Colsanitas, Sura, Coomeva, Medplus...). Es una deducción que la "
             "DIAN no ve sola y puede bajarte bastante el impuesto."
         ),
-        presente=lambda b: b.medicina_prepagada is not None,
+        presente=lambda c: c.beneficios.medicina_prepagada is not None,
         hipotesis=lambda caso, p: _con_beneficios(
             caso, medicina_prepagada=_monto(p.uvt_pesos(p.prepagada_tope_uvt_anio))
         ),
@@ -224,7 +238,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "civil (o el certificado de estudio / la certificación médica según el caso). "
             "Es uno de los beneficios más grandes y la DIAN nunca lo sabe sola."
         ),
-        presente=lambda b: bool(b.dependientes),
+        presente=lambda c: bool(c.beneficios.dependientes),
         hipotesis=lambda caso, p: _con_beneficios(
             caso, dependientes=[Dependiente(tipo="hijo_menor", fuente=_FUENTE_HIPOTESIS)]
         ),
@@ -244,7 +258,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "(lo descargas desde la banca en línea). Los intereses son deducibles hasta "
             "{tope}."
         ),
-        presente=lambda b: b.intereses_vivienda is not None,
+        presente=lambda c: c.beneficios.intereses_vivienda is not None,
         hipotesis=lambda caso, p: _con_beneficios(
             caso, intereses_vivienda=_monto(p.uvt_pesos(p.intereses_vivienda_tope_uvt))
         ),
@@ -263,7 +277,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "ICETEX, mándame el certificado de intereses del año. Son deducibles hasta "
             "{tope}."
         ),
-        presente=lambda b: b.intereses_icetex is not None,
+        presente=lambda c: c.beneficios.intereses_icetex is not None,
         hipotesis=lambda caso, p: _con_beneficios(
             caso, intereses_icetex=_monto(p.uvt_pesos(p.icetex_tope_uvt))
         ),
@@ -284,7 +298,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "un fondo de pensiones voluntarias, mándame el certificado anual de la "
             "entidad. Son renta exenta hasta el 30% de tu ingreso."
         ),
-        presente=lambda b: bool(b.aportes_afc_fvp),
+        presente=lambda c: bool(c.beneficios.aportes_afc_fvp),
         # Sin hipótesis a propósito: el techo legal (30% del ingreso, 3.800 UVT) no es una
         # estimación sino el máximo que la ley permite, y usarlo pondría esta petición
         # primera en la lista con una cifra que depende SOLO de cuánto depositó el cliente
@@ -304,7 +318,7 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "organización sin ánimo de lucro, mándame el certificado de la donación. "
             "Da un descuento del 25% del valor donado."
         ),
-        presente=lambda b: bool(b.donaciones_esal),
+        presente=lambda c: bool(c.beneficios.donaciones_esal),
         # Sin hipótesis: cuánto donó es un dato del cliente, no un tope de ley.
         hipotesis=None,
     ),
@@ -321,11 +335,59 @@ _BENEFICIOS: tuple[_Beneficio, ...] = (
             "(gravamen a los movimientos financieros) del año, que lo descargas de la "
             "banca en línea. La mitad de lo que pagaste es deducible."
         ),
-        presente=lambda b: b.gmf_pagado is not None,
+        presente=lambda c: c.beneficios.gmf_pagado is not None,
         # Sin hipótesis: depende de cuánto se movió en las cuentas.
         hipotesis=None,
     ),
+    _Beneficio(
+        pregunta="PROMEDIO_CESANTIAS",
+        tipo_documento="CERT_PROMEDIO_CESANTIAS",
+        razon=(
+            "El auxilio de cesantías es exento si el ingreso mensual promedio de los últimos "
+            "seis meses de vinculación no pasó de {tope} (art. 206 num. 4); por encima queda "
+            "exento un porcentaje. Ese promedio suele venir en la exógena, pero este empleador "
+            "no lo reportó, así que sin la certificación las cesantías entran gravadas completas."
+        ),
+        pregunta_previa=(
+            "¿Te pagaron o te consignaron cesantías este año? Si sí, el empleador puede "
+            "certificar tu salario promedio de los últimos seis meses."
+        ),
+        copy_sugerido=(
+            "Hola. Para tu declaración de renta: si te pagaron o consignaron cesantías, "
+            "pídele a tu empleador (o a Gestión Humana) una certificación con tu salario "
+            "promedio de los últimos seis meses. Con ese dato las cesantías pueden quedar "
+            "exentas hasta {tope} al mes de promedio, y eso baja el impuesto."
+        ),
+        # No es un beneficio de `Beneficios`: es un dato que le falta a un ingreso que ya está. Por
+        # eso `presente` mira `laborales`, que es lo que el cambio de firma habilitó. Si nadie tiene
+        # cesantías, no hay nada que pedir y cuenta como presente.
+        presente=lambda c: all(
+            x.promedio_mensual_6m is not None for x in c.laborales if x.cesantias_e_intereses
+        ),
+        # La hipótesis es el mejor caso legal: un promedio en el tope de la exención total, que es
+        # lo máximo que este certificado puede llegar a ahorrar. Cuánto ganaba de verdad lo sabe el
+        # cliente, así que la cifra se marca como techo igual que las demás.
+        hipotesis=lambda caso, p: _con_promedio_de_cesantias(
+            caso, p.uvt_pesos(p.cesantias_exentas_tope_uvt_mes)
+        ),
+        tope=lambda p: p.uvt_pesos(p.cesantias_exentas_tope_uvt_mes),
+    ),
 )
+
+
+def _con_promedio_de_cesantias(caso: CasoTributario, promedio: int) -> CasoTributario:
+    """El caso suponiendo ese promedio salarial en los vínculos a los que les falta.
+
+    Los que ya tienen el dato no se tocan: su exención ya está medida y sobrescribirla inflaría el
+    ahorro que se le atribuye al certificado que falta.
+    """
+    laborales = [
+        x.model_copy(update={"promedio_mensual_6m": promedio})
+        if x.cesantias_e_intereses and x.promedio_mensual_6m is None
+        else x
+        for x in caso.laborales
+    ]
+    return caso.model_copy(update={"laborales": laborales})
 
 
 # ─────────────────────────── el catálogo de certificados de tercero ───────────────────────────
@@ -542,7 +604,7 @@ def _de_partidas(
         if clave in apagadas:
             continue
         nombre = partida.nombre_tercero or partida.nit_tercero or "el tercero que reportó"
-        medida = _ahorro(caso, _hipotesis_de_partida(caso, partida), p, del_cruce)
+        medida = ahorro_de(caso, _hipotesis_de_partida(caso, partida), p, del_cruce)
         candidatas.append(
             _Candidata(
                 id=clave,
@@ -633,14 +695,14 @@ def _de_beneficios(
     beneficio ya está en el caso, el certificado llegó: no hay nada que pedir.
     """
     candidatas: list[_Candidata] = []
-    for beneficio in _BENEFICIOS:
-        if beneficio.pregunta in apagadas or beneficio.presente(caso.beneficios):
+    for beneficio in BENEFICIOS:
+        if beneficio.pregunta in apagadas or beneficio.presente(caso):
             continue
         hipotesis = beneficio.hipotesis(caso, p) if beneficio.hipotesis is not None else None
-        medida = _ahorro(caso, hipotesis, p, del_cruce)
+        medida = ahorro_de(caso, hipotesis, p, del_cruce)
         # El tope se dice en pesos del año. El `copy_sugerido` se le manda al cliente por
         # WhatsApp y una UVT no significa nada para quien lo lee.
-        tope = _en_pesos(beneficio.tope(p)) if beneficio.tope is not None else ""
+        tope = en_pesos(beneficio.tope(p)) if beneficio.tope is not None else ""
         candidatas.append(
             _Candidata(
                 id=beneficio.pregunta,
@@ -661,7 +723,7 @@ def _de_beneficios(
     return candidatas
 
 
-def _ahorro(
+def ahorro_de(
     caso: CasoTributario,
     hipotesis: CasoTributario | None,
     p: ParametrosAnio,
@@ -689,7 +751,9 @@ def _ahorro(
     """
     if hipotesis is None:
         return _Ahorro(
-            0, "no se puede estimar sin inventar cifras: depende de cuánto haya pagado el cliente"
+            0,
+            "no se puede estimar sin inventar cifras: depende de cuánto haya pagado el cliente",
+            medido=False,
         )
     try:
         pesos = max(0, ahorro_marginal(caso, hipotesis, p, flags_previos=del_cruce))
@@ -700,15 +764,17 @@ def _ahorro(
         # resolverlos. Volcar el texto del motor filtraba codigos internos a la pantalla.
         # Sin nombrar el cruce, que es vocabulario de contador: lo que importa es que hay algo
         # antes en la fila, y eso vale igual para las dos personas.
-        return _Ahorro(0, "todavía no se puede calcular: falta resolver lo de arriba")
+        return _Ahorro(0, "todavía no se puede calcular: falta resolver lo de arriba", medido=False)
     except NotImplementedError:
         # El caso no se puede armar (p. ej. ingresos de independientes, fuera del alcance).
         # Reportar 0 sin decirlo haria pensar que el beneficio no sirve, cuando lo que pasa es
         # que todavia no hay con que medirlo.
-        return _Ahorro(0, "no se puede calcular: el cálculo todavía no cubre este caso")
+        return _Ahorro(
+            0, "no se puede calcular: el cálculo todavía no cubre este caso", medido=False
+        )
 
     if pesos:
-        return _Ahorro(pesos, None)
+        return _Ahorro(pesos, None, medido=True)
 
     # Cero medido: el beneficio existe y NO baja el impuesto. Hay que decir por que, porque la
     # conclusion practica es distinta —no vale la pena pedirle el documento al cliente— y sin la
@@ -716,15 +782,20 @@ def _ahorro(
     try:
         impuesto = optimizar(caso, p, flags_previos=del_cruce).liquidacion.valor("IMPUESTO_NETO")
     except (ValueError, NotImplementedError):
-        return _Ahorro(0, "no se puede calcular todavía")
+        return _Ahorro(0, "no se puede calcular todavía", medido=False)
     if impuesto == 0:
-        return _Ahorro(0, "no baja nada: con lo que ya hay registrado no queda impuesto que bajar")
+        return _Ahorro(
+            0,
+            "no baja nada: con lo que ya hay registrado no queda impuesto que bajar",
+            medido=True,
+        )
     return _Ahorro(
         0,
         (
             "no baja nada: lo que ya está registrado copa el límite legal de deducciones, "
             "así que una más no mueve el impuesto"
         ),
+        medido=True,
     )
 
 

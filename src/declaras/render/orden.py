@@ -11,6 +11,7 @@ ORDEN_CASILLAS: list[str] = [
     "CAP_40",
     "DEDUCCIONES_LIMITADAS",
     "EXENTA_25",
+    "EXENTA_CESANTIAS",
     "APLICADO_40",
     "EXTRA_LIMITE",
     "RLG_GENERAL",

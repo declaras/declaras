@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -20,7 +20,9 @@ from declaras.domain.case import (
     Client,
     FlagSeverity,
 )
+from declaras.domain.errors import ValidationError
 from declaras.domain.models import IdDocumentKind, TaxpayerRef
+from declaras.tax.vencimientos import dos_ultimos_digitos, vencimiento_de
 
 
 class OpenCaseRequest(BaseModel):
@@ -143,11 +145,35 @@ class CaseSummaryResponse(BaseModel):
     updated_at: datetime
 
 
+class PlazoResponse(BaseModel):
+    """Cuándo vence esta declaración y cuánto falta.
+
+    VA EN EL EXPEDIENTE Y NO EN UN ENDPOINT APARTE porque es lo primero que hay que saber: antes de
+    cuánto se paga, cuándo. Una declaración presentada un día tarde cuesta la sanción mínima
+    ($524.000 en 2026, 10 UVT), que es varias veces el precio del producto.
+
+    `dias_restantes` puede ser NEGATIVO y eso no se esconde: significa que el plazo ya pasó y que
+    hay sanción corriendo. Recortarlo a cero haría ver una declaración en mora como si estuviera
+    al día.
+    """
+
+    vence: date
+    dias_restantes: int
+    vencido: bool
+    # Los dos dígitos del documento que determinan la fecha (Decreto 2229 de 2023). Se devuelven
+    # para que la pantalla pueda explicar POR QUÉ es esa fecha y no otra: sin eso, el cliente que
+    # compara con la fecha de un amigo cree que una de las dos está mal.
+    digitos: int
+
+
 class CaseDetailResponse(BaseModel):
     """El expediente completo: es lo que pinta la vista de detalle en la consola."""
 
     id: UUID
     tax_year: int
+    # `None` cuando el documento del cliente no permite calcularlo (un NIT con dígito de
+    # verificación, un pasaporte). No se inventa una fecha: se dice que no se sabe.
+    plazo: PlazoResponse | None
     status: CaseStatus
     created_at: datetime
     updated_at: datetime
@@ -162,6 +188,7 @@ class CaseDetailResponse(BaseModel):
         return cls(
             id=detail.case.id,
             tax_year=detail.case.tax_year,
+            plazo=_plazo(detail),
             status=detail.case.status,
             created_at=detail.case.created_at,
             updated_at=detail.case.updated_at,
@@ -176,3 +203,22 @@ class CaseDetailResponse(BaseModel):
             open_flags_count=len(detail.open_flags),
             events=[CaseEventResponse.from_domain(e) for e in detail.events],
         )
+
+
+def _plazo(detail: CaseDetail) -> PlazoResponse | None:
+    """El vencimiento de este expediente, o None si el documento no permite calcularlo.
+
+    Se calcula acá y no se guarda: depende de la fecha de hoy (`dias_restantes`), así que un valor
+    persistido envejecería en cada consulta. El cálculo es puro y barato.
+    """
+    try:
+        vence = vencimiento_de(detail.client.id_number, detail.case.tax_year)
+        digitos = dos_ultimos_digitos(detail.client.id_number)
+    except ValidationError:
+        # Un pasaporte o un documento con dígito de verificación no permiten leer el par de dígitos
+        # del decreto. Decir "no se sabe" es correcto; adivinar una fecha, no.
+        return None
+    restantes = (vence - date.today()).days
+    return PlazoResponse(
+        vence=vence, dias_restantes=restantes, vencido=restantes < 0, digitos=digitos
+    )

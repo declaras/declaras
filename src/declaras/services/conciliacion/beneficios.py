@@ -31,6 +31,7 @@ from declaras.caso import (
     Fuente,
     MontoDeclarado,
 )
+from declaras.dinero import en_pesos
 from declaras.documents.models import DocumentReading
 from declaras.motor.traza import Flag
 
@@ -217,12 +218,13 @@ def _un_solo_monto(
         return MontoDeclarado(valor=aportes[0].valor, fuente=aportes[0].fuente)
 
     total = sum(a.valor for a in aportes)
-    detalle = ", ".join(f"{a.entidad} {a.valor:,}" for a in aportes)
+    detalle = ", ".join(f"{a.entidad} {en_pesos(a.valor)}" for a in aportes)
     avisos.append(
         Flag(
             codigo="BENEFICIO_DE_VARIOS_CERTIFICADOS",
             mensaje=(
-                f"El renglón lleva {total:,} sumando {len(aportes)} certificados: {detalle}. "
+                f"El renglón lleva {en_pesos(total)} sumando {len(aportes)} "
+                f"certificados: {detalle}. "
                 "Hay que verificar que ninguno esté repetido."
             ),
         )

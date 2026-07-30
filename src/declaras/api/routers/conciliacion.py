@@ -31,7 +31,9 @@ from declaras.api.conciliacion_schemas import (
     RespuestaRegistradaResponse,
 )
 from declaras.api.deps import ApiKeyDep, ContainerDep
+from declaras.services.comparacion_210 import Comparacion210
 from declaras.services.conciliacion.peticiones import costo_de_cerrar
+from declaras.services.conciliacion.recomendaciones import Recomendaciones
 
 router = APIRouter(prefix="/v1/cases/{case_id}", tags=["conciliacion"])
 
@@ -82,6 +84,7 @@ async def resolver_partida(
         motivo=payload.motivo,
         quien=payload.quien,
         valor=payload.valor,
+        clase=payload.clase,
         nota=payload.nota,
     )
     return ResolverPartidaResponse.from_resultado(partida, estado)
@@ -97,6 +100,65 @@ async def ver_peticiones(
 ) -> list[PeticionResponse]:
     peticiones = await container.conciliacion_service.peticiones(case_id)
     return [PeticionResponse.from_peticion(p) for p in peticiones]
+
+
+@router.get(
+    "/recomendaciones",
+    response_model=Recomendaciones,
+    summary="Cuánto impuesto le ahorraría cada beneficio, esté o no pedido",
+)
+async def ver_recomendaciones(
+    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+) -> Recomendaciones:
+    """El catálogo completo de beneficios con lo que cada uno baja el impuesto, en pesos.
+
+    A diferencia de `/peticiones`, no descarta lo que ya se contestó: un "no tengo prepagada"
+    apagaba la petición y con ella la única cifra que decía cuánta plata se estaba dejando en la
+    mesa. Aquí el beneficio descartado sigue apareciendo, con lo que habría ahorrado.
+    """
+    recomendaciones: Recomendaciones = await container.conciliacion_service.recomendaciones(case_id)
+    return recomendaciones
+
+
+@router.get(
+    "/comparacion-con-la-dian",
+    response_model=Comparacion210,
+    summary="El borrador que la DIAN precargó contra el nuestro, casilla por casilla",
+)
+async def ver_comparacion_con_la_dian(
+    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+) -> Comparacion210:
+    """Dónde difiere lo que se va a radicar de lo que la DIAN precargó.
+
+    La DIAN precrea un borrador con lo que los terceros le reportaron y se puede firmar tal cual.
+    Se ve oficial pero es una sugerencia, y su propia documentación lo dice. Las diferencias son el
+    valor del trabajo con documentos; y una casilla nuestra MENOR que la suya sin razón registrada
+    es un ingreso que se perdió, que es lo que la DIAN cruza sola.
+    """
+    comparacion: Comparacion210 = await container.conciliacion_service.comparacion_con_la_dian(
+        case_id
+    )
+    return comparacion
+
+
+@router.get(
+    "/comparacion-con-lo-presentado",
+    response_model=Comparacion210,
+    summary="El cálculo contra la declaración que de verdad se presentó ese año",
+)
+async def ver_comparacion_con_lo_presentado(
+    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+) -> Comparacion210:
+    """La segunda opinión sobre un año ya declarado.
+
+    Lo presentado en un año viejo es casi siempre el trabajo de un contador. Cada diferencia es un
+    beneficio que él no tomó (plata que el cliente dejó sobre la mesa) o un error nuestro, y las dos
+    lecturas importan. En el año en curso sale no disponible porque todavía no hay nada presentado.
+    """
+    comparacion: Comparacion210 = (
+        await container.conciliacion_service.comparacion_con_lo_presentado(case_id)
+    )
+    return comparacion
 
 
 @router.get(

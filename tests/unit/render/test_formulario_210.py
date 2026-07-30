@@ -79,15 +79,19 @@ def test_las_cifras_del_formulario_son_las_mismas_del_motor():
 
 
 def test_el_saldo_va_a_pagar_o_a_favor_pero_nunca_a_las_dos():
-    """El 210 tiene dos casillas y son excluyentes: 138 a pagar, 139 a favor. Poner cifra en las
-    dos es un formulario que no cuadra."""
+    """El 210 tiene dos casillas y son excluyentes: 136 a pagar, 137 a favor. Poner cifra en las
+    dos es un formulario que no cuadra.
+
+    Y son la 136 y la 137, no la 138 y la 139: esas son el número de dependientes económicos y la
+    adición por dependientes. Se transcribieron mal la primera vez.
+    """
     for hacer in (g1, g2, g3):
         c = _casillas(hacer)
-        assert not (c[138] and c[139]), f"{hacer.__name__} llenó las dos casillas de saldo"
+        assert not (c[136] and c[137]), f"{hacer.__name__} llenó las dos casillas de saldo"
         # Y la que se llene tiene que ser del tamaño del saldo que calculó el motor.
         saldo = optimizar(hacer(), P).liquidacion.valor("SALDO")
-        assert c[138] == max(saldo, 0)
-        assert c[139] == max(-saldo, 0)
+        assert c[136] == max(saldo, 0)
+        assert c[137] == max(-saldo, 0)
 
 
 def test_cada_casilla_lleva_su_nombre_oficial():

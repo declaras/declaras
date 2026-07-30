@@ -48,6 +48,38 @@ _RENGLON_RETENCIONES = 132
 _RENGLON_PATRIMONIO = 29
 _RENGLON_DEUDAS = 30
 _RENGLONES_PATRIMONIALES = frozenset({29, 30, 31})
+# Los renglones de INCRNGO del 210, uno por cédula: R33 rentas de trabajo, R44 honorarios,
+# R59 rentas de capital, R76 no laborales, R100 pensiones. Una fila que la DIAN manda a uno de
+# estos es un ingreso NO CONSTITUTIVO de renta: RESTA de la base, no suma.
+#
+# Los aportes obligatorios de salud y pensión llegan marcados con varios de ellos a la vez
+# (el de pensión con [33, 59, 76]), porque el mismo aporte se imputa a la cédula donde esté el
+# ingreso que lo generó. Con cualquiera basta para saber que la fila no es ingreso.
+_RENGLONES_INCRNGO = frozenset({33, 44, 59, 76, 100})
+# R36 y sus equivalentes por cédula: "otras rentas exentas". La DIAN manda ahí las cesantías y
+# el promedio salarial del semestre, que es el insumo de su exención.
+_RENGLONES_EXENTAS = frozenset({36, 48, 64, 81})
+# R32: "Ingresos brutos (rentas de trabajo)". Es donde la DIAN manda los pagos de nómina.
+_RENGLON_INGRESO_TRABAJO = 32
+
+# Cómo se distingue, DENTRO del formato 2276, un aporte de salud de uno de pensión y el dato del
+# promedio salarial. El renglón dice que la fila es INCRNGO pero no cuál de los dos aportes es, y
+# esa diferencia importa: el motor los suma juntos como INCRNGO pero el 220 los certifica por
+# separado, así que tienen que emparejar con la partida correcta.
+#
+# Se busca en el TEXTO del concepto porque es lo único que los separa. Los patrones son de la
+# redacción oficial de la DIAN, verificada contra un reporte real:
+#   "Aportes obligatorios a salud a cargo Trabajador"
+#   "Aporte obligatorio fondos pensiones y solidaridad a cargo del trabajador"
+#   "Valor ingreso laboral promedio de los últimos seis meses"
+#   "Cesantías e intereses de cesantías pagadas al empleado"
+#   "Cesantías consignadas al fondo de cesantías"
+_TEXTO_A_CONCEPTO: tuple[tuple[re.Pattern[str], Concepto], ...] = (
+    (re.compile(r"aporte.*salud", re.I), Concepto.APORTES_SALUD),
+    (re.compile(r"aporte.*pensi", re.I), Concepto.APORTES_PENSION),
+    (re.compile(r"ingreso laboral promedio", re.I), Concepto.PROMEDIO_SALARIAL),
+    (re.compile(r"cesant", re.I), Concepto.CESANTIAS),
+)
 _RENGLON_RE = re.compile(r"\bR(\d{1,3})\b")
 
 
@@ -285,7 +317,20 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
                 nota=nota,
             ),
         )
-        grupo.monto += _entero(valores.get("amount"))
+        # UN PROMEDIO NO SE SUMA, y es el único concepto de la exógena que no es una cantidad de
+        # plata acumulable. "Valor ingreso laboral promedio de los últimos seis meses" es una
+        # magnitud por vínculo: dos filas del mismo tercero (dos vínculos en el año, una
+        # corrección del reporte) sumadas dan un número que no significa nada. Medido: dos filas
+        # de $3.500.000 y de 400 UVT daban un promedio de $23.419.600, o sea 470 UVT, un tramo de
+        # exención que ninguna de las dos afirma.
+        #
+        # Rige la MAYOR, que es la que menos exención concede (art. 206 num. 4 baja el porcentaje
+        # exento a medida que sube el promedio). Quedarse con la menor sería elegir la fuente que
+        # más conviene sobre un hecho que nadie concilió.
+        if concepto is Concepto.PROMEDIO_SALARIAL:
+            grupo.monto = max(grupo.monto, _entero(valores.get("amount")))
+        else:
+            grupo.monto += _entero(valores.get("amount"))
         if valores.get("retencion") is not None:
             # Solo cuenta como reportada si la fila trae un VALOR: el XLSX real no tiene
             # columna de retención, y el lector emite None para celdas ausentes por
@@ -322,6 +367,36 @@ def _concepto_de_fila(
     if del_codigo is not None:
         return del_codigo, None
 
+    # EL TEXTO, SOLO DESPUÉS DEL CÓDIGO. Identifica los conceptos que ningún código distingue (los
+    # siete del formato 2276), y va detrás a propósito: consultado ANTES pisaba códigos que sí están
+    # bien mapeados. Medido cuando lo puse primero: "Activos aportes parafiscales, salud, pensión y
+    # cesantías" (código 2214, que es PATRIMONIO) caía en APORTES_SALUD por decir "salud", y
+    # "Activos laborales reales consolidados trabajador sin cesantías" (2215) caía en CESANTIAS por
+    # decir "cesantías". Los dos son saldos al 31 de diciembre: convertirlos en aportes del año
+    # habría inventado una deducción de $6.430.250.
+    del_texto = _concepto_del_texto(valores)
+    if del_texto is not None:
+        return del_texto, None
+
+    # La DIAN dice que la fila es INCRNGO. Es un ingreso no constitutivo de renta, así que resta de
+    # la base en vez de sumar; sin clasificarlo, entra como ingreso y la base sale inflada dos veces
+    # (por lo que suma y por lo que deja de restar).
+    #
+    # Cae acá el aporte que el texto no nombró; los que sí (salud o pensión) ya salieron arriba con
+    # su concepto propio, porque el 220 los certifica por separado y tienen que emparejar.
+    if renglones & _RENGLONES_INCRNGO:
+        return Concepto.APORTES_SALUD, None
+
+    # R32 es "Ingresos brutos (rentas de trabajo)", y ahí manda la DIAN los pagos de nómina que
+    # reporta en el formato 2276: "Pagos por salarios" y "Pagos por prestaciones sociales",
+    # verificados los dos en un reporte real. Sin esta regla quedaban CONCEPTO_DESCONOCIDO al sacar
+    # el 2276 del mapeo por código, y el salario entero desaparecía del caso.
+    #
+    # Se exige que R32 sea el ÚNICO renglón de la fila: una que toque R32 y algo más es otra cosa
+    # (las cesantías consignadas van a R29 y R36) y no se clasifica a la ligera.
+    if renglones == {_RENGLON_INGRESO_TRABAJO}:
+        return Concepto.SALARIOS, None
+
     # Sin código mapeado, el veredicto de la DIAN alcanza para clasificar por NATURALEZA, que es
     # lo que decide si la fila es una decisión o no. Tres clases, y solo la primera es trabajo:
     #
@@ -340,6 +415,22 @@ def _concepto_de_fila(
         es_solo_deuda = renglones == {_RENGLON_DEUDAS}
         return (Concepto.DEUDA if es_solo_deuda else Concepto.PATRIMONIO), None
     return None, None
+
+
+def _concepto_del_texto(valores: dict[str, object]) -> Concepto | None:
+    """El concepto que el TEXTO de la fila identifica, cuando el código no alcanza.
+
+    Solo se consulta para los conceptos que ningún código distingue (los del formato 2276). No es
+    una heurística general sobre el texto: es una tabla de patrones de la redacción oficial de la
+    DIAN, y lo que no coincide sigue el camino normal del código y del renglón.
+    """
+    texto = str(valores.get("concept") or "")
+    if not texto:
+        return None
+    for patron, concepto in _TEXTO_A_CONCEPTO:
+        if patron.search(texto):
+            return concepto
+    return None
 
 
 def _renglones(valores: dict[str, object]) -> set[int]:

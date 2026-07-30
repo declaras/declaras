@@ -205,7 +205,20 @@ _NO_SE_EJECUTA = ("adapters/dian/flows/", "adapters/dian/browser.py", "adapters/
 # Ademas rendiria poco: la regex de abajo solo ve el mensaje cuando es el PRIMER argumento del
 # `raise`, y en `extraccion/` va detras del motivo (`Extraccion220InvalidaError(Motivo220.X, "…")`),
 # asi que quitar el prefijo dejaria expuesto un mensaje de los tres, no los tres.
-_NUCLEO_DE_CALCULO = ("motor/", "optimizador/", "parametros/", "render/", "caso/", "extraccion/")
+#
+# `calendario.py` entra por la misma razon que `motor/`: es calculo determinista puro y sus
+# `ValueError` son contratos de programacion ("pediste el dia habil numero 25 de febrero"), no
+# frases que alguien lea. Lo que si le habla al usuario del calendario es `tax/vencimientos.py`
+# (el NIT con digito de verificacion), y ESE se queda bajo la comprobacion a proposito.
+_NUCLEO_DE_CALCULO = (
+    "motor/",
+    "optimizador/",
+    "parametros/",
+    "render/",
+    "caso/",
+    "extraccion/",
+    "calendario.py",
+)
 
 
 def _mensajes_escritos_a_mano():
@@ -242,3 +255,45 @@ def test_las_capas_que_le_hablan_al_usuario_siguen_revisadas():
     """
     revisadas = {archivo.split("/")[0] for archivo, _ in _mensajes_escritos_a_mano()}
     assert revisadas >= {"adapters", "api", "documents", "services", "domain"}
+
+
+# ── la plata se escribe como en Colombia ──────────────────────────────────────────────────────────
+
+# `4,240,000`: separador de miles del ingles en un texto que lee una persona en Colombia, donde el
+# punto separa los miles y la coma los decimales. Ahi eso se lee como cuatro pesos y pico.
+_MILES_EN_INGLES = re.compile(r"\d{1,3}(?:,\d{3})+")
+
+# Los modulos cuyos textos terminan en pantalla o en un WhatsApp al cliente. No se listan los del
+# motor porque su traza es para el contador y va en la memoria de calculo.
+_MODULOS_CON_TEXTO_DE_USUARIO = (
+    "declaras/services/conciliacion/mapeo.py",
+    "declaras/services/conciliacion/peticiones.py",
+    "declaras/services/conciliacion/recomendaciones.py",
+    "declaras/services/conciliacion/beneficios.py",
+)
+
+
+@pytest.mark.parametrize("modulo", _MODULOS_CON_TEXTO_DE_USUARIO)
+def test_ningun_texto_de_usuario_escribe_la_plata_en_formato_ingles(modulo: str) -> None:
+    """Pasó: ocho avisos del cruce decían "4,240,000 pesos" y otros ya decían "$5.000.000".
+
+    Los dos formatos convivían en la misma pantalla. `dinero.en_pesos` es el único que debe
+    escribir plata para una persona; un `f"{x:,}"` en un mensaje visible es este bug otra vez.
+    """
+    from pathlib import Path
+
+    import declaras
+
+    ruta = Path(declaras.__file__).parent.parent / modulo
+    fuente = ruta.read_text(encoding="utf-8")
+    # Solo dentro de literales de texto: un `{x:,}` en un f-string es justo lo que se busca.
+    culpables = [
+        linea.strip()
+        for linea in fuente.splitlines()
+        if (":," in linea or _MILES_EN_INGLES.search(linea)) and ('"' in linea or "'" in linea)
+    ]
+    assert not culpables, (
+        f"{modulo} escribe plata con el separador del inglés en un texto de usuario:\n  "
+        + "\n  ".join(culpables[:6])
+        + "\nUsa `en_pesos()` de declaras.dinero."
+    )

@@ -129,7 +129,7 @@ def test_dos_certificados_del_mismo_beneficio_y_entidades_distintas_suman_y_lo_a
     assert beneficios.medicina_prepagada is not None
     assert beneficios.medicina_prepagada.valor == 6_000_000
     assert [a.codigo for a in avisos] == ["BENEFICIO_DE_VARIOS_CERTIFICADOS"]
-    assert "6,000,000" in avisos[0].mensaje
+    assert "$6.000.000" in avisos[0].mensaje
 
 
 def test_el_mismo_certificado_dos_veces_no_duplica_el_beneficio():

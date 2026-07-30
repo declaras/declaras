@@ -31,6 +31,14 @@ class DocumentType(StrEnum):
     EXOGENA = "EXOGENA"
     PRIOR_RETURN = "PRIOR_RETURN"
     SUGGESTED_RETURN = "SUGGESTED_RETURN"
+    # La declaración ya PRESENTADA del mismo año gravable del expediente. No es lo mismo que
+    # PRIOR_RETURN, que es la del año ANTERIOR y sirve de insumo (patrimonio inicial, arrastres):
+    # esta es el resultado, y existe para poder comparar contra ella.
+    #
+    # Solo existe en años ya declarados, así que en el año en curso no está y eso es normal. Su
+    # razón de ser es rehacer un año viejo y ver en qué difiere lo que el sistema calcula de lo que
+    # se presentó de verdad, que casi siempre es lo que hizo un contador.
+    FILED_RETURN = "FILED_RETURN"
     EINVOICE_SUMMARY = "EINVOICE_SUMMARY"
     EVIDENCE = "EVIDENCE"
     CLIENT_DOCUMENT = "CLIENT_DOCUMENT"
@@ -42,6 +50,7 @@ DOCUMENT_TYPE_LABELS: dict[str, str] = {
     DocumentType.EXOGENA: "la información exógena",
     DocumentType.PRIOR_RETURN: "la declaración del año anterior",
     DocumentType.SUGGESTED_RETURN: "el borrador sugerido por la DIAN",
+    DocumentType.FILED_RETURN: "la declaración que se presentó ese año",
     DocumentType.EINVOICE_SUMMARY: "el resumen de facturas electrónicas",
     DocumentType.EVIDENCE: "la evidencia de auditoría",
     DocumentType.CLIENT_DOCUMENT: "un documento del cliente",

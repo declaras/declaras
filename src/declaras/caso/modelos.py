@@ -19,6 +19,23 @@ class IngresoLaboral(_Modelo):
     empleador_nombre: str
     salarios: int = Monto
     cesantias_e_intereses: int = Field(default=0, ge=0)
+    # Ingreso mensual promedio de los SEIS últimos meses de vinculación, que es el dato del que
+    # depende cuánto de las cesantías queda exento (art. 206 num. 4).
+    #
+    # SÍ VIENE EN LA EXÓGENA, y creer lo contrario costó una implementación al revés. El formato
+    # 2276 lo reporta como una fila más ("Valor ingreso laboral promedio de los últimos seis
+    # meses"), así que en la mayoría de los casos entra solo y nadie tiene que pedir nada. La
+    # primera versión de este campo daba por hecho que había que pedírselo al empleador, y encima
+    # esa fila se estaba sumando al sueldo como si fuera un pago.
+    #
+    # El certificado del empleador sigue siendo la salida cuando el reporte no lo trae, que es lo
+    # que la DIAN lista en sus documentos ("cálculo del promedio de salario recibido en los últimos
+    # seis meses anteriores a la fecha del pago de las cesantías").
+    #
+    # `None` NO significa cero: significa "no se sabe". El motor entonces grava las cesantías
+    # completas —la dirección que nunca subdeclara— y avisa, con la plata en juego, que falta el
+    # dato. Poner un default numérico haría desaparecer esa distinción.
+    promedio_mensual_6m: int | None = Field(default=None, ge=0)
     prima: int = Field(default=0, ge=0)
     bonificaciones: int = Field(default=0, ge=0)
     aportes_salud: int = Monto

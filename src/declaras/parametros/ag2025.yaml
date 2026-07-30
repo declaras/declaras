@@ -8,6 +8,17 @@ limite_general_pct: 0.40
 limite_general_uvt: 1340
 exenta_laboral_pct: 0.25
 exenta_laboral_tope_uvt: 790
+# Art. 206 num. 4: el auxilio de cesantía y sus intereses son exentos si el ingreso mensual
+# promedio de los últimos 6 meses de vinculación no excede 350 UVT. Por encima, la parte no
+# gravada baja por tramos. La tabla es literal del Estatuto: "Entre 350 UVT y 410 UVT, el 90%".
+cesantias_exentas_tope_uvt_mes: 350
+cesantias_gradualidad:
+  - {hasta_uvt_mes: 410, exento_pct: 0.90}
+  - {hasta_uvt_mes: 470, exento_pct: 0.80}
+  - {hasta_uvt_mes: 530, exento_pct: 0.60}
+  - {hasta_uvt_mes: 590, exento_pct: 0.40}
+  - {hasta_uvt_mes: 650, exento_pct: 0.20}
+  - {hasta_uvt_mes: null, exento_pct: 0.0}
 dependiente_uvt: 72
 dependientes_max: 4
 ded_387_pct: 0.10

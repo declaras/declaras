@@ -35,6 +35,16 @@ class Concepto(StrEnum):
     # aparte. Pedirle a alguien que decida que hacer con "77 millones de movimientos en cuentas"
     # es pedirle una decision que no existe.
     SOLO_PARA_TOPE = "SOLO_PARA_TOPE"
+    # El auxilio de cesantías y sus intereses. Es INGRESO del año (art. 27 num. 3: se realiza al
+    # pagarse al trabajador o al consignarse al fondo) pero con tratamiento propio: queda exento
+    # según el promedio salarial del semestre (art. 206 num. 4). Separado de SALARIOS porque el
+    # motor necesita saber CUÁNTO de la nómina son cesantías para aplicarles su exención.
+    CESANTIAS = "CESANTIAS"
+    # "Valor ingreso laboral promedio de los últimos seis meses". NO ES PLATA QUE SE DECLARE: es el
+    # dato del que depende cuánto de las cesantías queda exento. La DIAN lo reporta en el formato
+    # 2276 igual que los pagos, así que sin distinguirlo se sumaba al sueldo como si fuera ingreso
+    # (medido: $3.500.000 de ingreso inventado en un caso real).
+    PROMEDIO_SALARIAL = "PROMEDIO_SALARIAL"
 
 
 # Tabla INCREMENTAL: solo los códigos verificados contra reportes reales de la exógena y el
@@ -54,11 +64,25 @@ _CODIGO_A_CONCEPTO: dict[str, Concepto] = {
     "5016": Concepto.OTROS,
     # ── verificados contra un reporte real, citando lo que la DIAN dice de cada uno ──
     #
-    # "Pagos por salarios" → "Tope 1: Ingresos brutos | R32 Ingresos brutos por rentas de
-    # trabajo (art. 103 E.T.)". El mismo renglón que el 5001. Sin este mapeo el salario del
-    # contribuyente nace CONCEPTO_DESCONOCIDO y el impuesto sale en cero: medido, $63.925.000
-    # de ingreso laboral invisibles.
-    "2276": Concepto.SALARIOS,
+    # ── EL 2276 NO ESTÁ ACÁ, Y ES DELIBERADO ──
+    #
+    # 2276 no es un concepto: es el FORMATO de reporte de rentas de trabajo y pensiones, y dentro
+    # trae siete cosas distintas. Medido en un reporte real de un solo empleador:
+    #
+    #     $49.250.000  Pagos por salarios                          → R32, ingreso
+    #      $4.771.000  Pagos por prestaciones sociales              → R32, ingreso
+    #        $179.000  Cesantías e intereses pagadas al empleado    → R32, ingreso exento
+    #      $2.285.000  Cesantías consignadas al fondo              → R29 y R36
+    #      $1.970.000  Aporte obligatorio pensión y solidaridad     → R33, INCRNGO (RESTA)
+    #      $1.970.000  Aportes obligatorios a salud del trabajador  → R33, INCRNGO (RESTA)
+    #      $3.500.000  Valor ingreso laboral promedio 6 meses       → dato, NO es plata
+    #
+    # Mapear el código entero a SALARIOS sumaba las siete como sueldo: $63.925.000 donde el ingreso
+    # real era $56.485.000, y encima los $3.940.000 de aportes sumaban en vez de restar. La base
+    # quedaba inflada en $11.380.000 y la casilla 33 en cero, que es justo la que la DIAN cruza.
+    #
+    # La clasificación de estas filas la hace `_concepto_de_fila` con el renglón que la DIAN les
+    # asigna, que es la única fuente que las distingue de verdad.
     # "Activos Proveedores" / "Activos aportes parafiscales, salud, pensión y cesantías" /
     # "Activos laborales reales consolidados" → todos "Tope 2: Patrimonio | R29 Patrimonio
     # Bruto". Son saldos al 31 de diciembre, no renta del año.

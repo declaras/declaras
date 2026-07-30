@@ -36,6 +36,20 @@ def _fila(nit, codigo, monto, retencion=0, reportado_a="1234567", nombre="ACME S
     }
 
 
+def _sin_veredicto(fila):
+    """La misma fila, pero sin que la DIAN diga a qué renglón va.
+
+    HACE FALTA DESDE QUE EL CLASIFICADOR LEE EL VEREDICTO DE RENGLÓN. `_fila` pone por defecto
+    "R32 Ingresos brutos", que era decorativo mientras solo el código mandaba; ahora significa algo
+    (R32 es nómina), así que una fila con código desconocido Y R32 no es una fila desconocida: es
+    una fila contradictoria que la exógena real no produce.
+
+    Se usa un renglón que existe pero que el motor todavía no cubre (R112, ganancias ocasionales)
+    para que sea "no lo sabemos" y no "no dice nada", que es un caso distinto (`SOLO_PARA_TOPE`).
+    """
+    return {**fila, "suggested_use": "R112 Ingresos por ganancias ocasionales", "form_lines": [112]}
+
+
 def _cert_220(nit, salarios, retencion=0):
     campos = {
         "empleador_nit": nit,
@@ -117,7 +131,7 @@ def test_reportado_a_otra_identificacion_no_se_cruza():
 
 
 def test_concepto_desconocido_no_se_asume():
-    [p] = abrir(_exogena(_fila("900111222", "9999", 5_000_000)))
+    [p] = abrir(_exogena(_sin_veredicto(_fila("900111222", "9999", 5_000_000))))
     assert p.estado == EstadoPartida.CONCEPTO_DESCONOCIDO
     assert p.concepto is None
     assert p.codigos_crudos == ["9999"]
@@ -243,13 +257,16 @@ def test_ajenas_a_personas_distintas_no_se_suman():
 def test_conceptos_distintos_sin_codigo_no_se_fusionan():
     """`concept_code` es `str | None` de verdad: dos conceptos sin código del mismo
     tercero no son el mismo hecho y no se pueden sumar."""
-    salud = _fila("900111222", "", 3_500_000)
-    salud["concept"] = "Aportes obligatorios a salud"
-    salud["concept_code"] = None
-    consignaciones = _fila("900111222", "", 41_000_000)
+    # Dos textos que NINGUNA tabla reconoce: lo que se prueba acá es que no se fusionan, no la
+    # clasificación. Con un texto conocido ("aportes a salud") el clasificador por texto sí lo
+    # ubica, y eso lo cubre `test_el_texto_del_2276_distingue_los_siete_conceptos`.
+    primera = _sin_veredicto(_fila("900111222", "", 3_500_000))
+    primera["concept"] = "Concepto sin catalogar A"
+    primera["concept_code"] = None
+    consignaciones = _sin_veredicto(_fila("900111222", "", 41_000_000))
     consignaciones["concept"] = "Consignaciones bancarias"
     consignaciones["concept_code"] = None
-    partidas = abrir(_exogena(salud, consignaciones))
+    partidas = abrir(_exogena(primera, consignaciones))
     assert len(partidas) == 2
     assert {p.estado for p in partidas} == {EstadoPartida.CONCEPTO_DESCONOCIDO}
     assert sorted(p.version_dian.monto for p in partidas) == [3_500_000, 41_000_000]
@@ -260,7 +277,7 @@ def test_un_texto_igual_a_un_concepto_no_se_cuela_en_la_partida_mapeada():
     una fila sin código cuyo texto sea exactamente "SALARIOS" no puede caer en la misma
     partida que el 5001 (quedaría una sola partida cuyo concepto y estado dependen del
     orden, y con concepto=None es lo que a_caso de T5 rechaza)."""
-    disfrazada = _fila("900111222", "", 41_000_000)
+    disfrazada = _sin_veredicto(_fila("900111222", "", 41_000_000))
     disfrazada["concept"] = "SALARIOS"
     disfrazada["concept_code"] = None
     partidas = abrir(_exogena(_fila("900111222", "5001", 50_000_000), disfrazada))

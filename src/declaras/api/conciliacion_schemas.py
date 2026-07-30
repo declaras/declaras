@@ -15,8 +15,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from declaras.api.case_schemas import CaseDetailResponse
-from declaras.motor import Flag, Liquidacion
+from declaras.motor import Flag, Liquidacion, Nodo
+from declaras.parametros.en_palabras import en_palabras
+from declaras.render import tipo_de_valor
 from declaras.services.conciliacion import (
+    ClaseDeIngreso,
     Decision,
     LiquidacionVersionada,
     Motivo,
@@ -30,6 +33,8 @@ from declaras.services.conciliacion_service import (
     ArchivoIncorporado,
     Estado,
     Liquidaciones,
+    clase_sugerida,
+    clases_posibles,
     decisiones_posibles,
 )
 
@@ -44,13 +49,17 @@ class _Entrada(BaseModel):
 class ResolverPartidaRequest(_Entrada):
     """La decisión del contador sobre un renglón del cruce.
 
-    `valor` SOLO lo acepta `USAR_OTRO`; las demás decisiones toman la cifra de la versión
-    que escogen, y un valor ignorado en silencio sería una decisión del contador que se
+    `valor` lo aceptan `USAR_OTRO` y `CLASIFICAR`; las demás decisiones toman la cifra de la
+    versión que escogen, y un valor ignorado en silencio sería una decisión del contador que se
     pierde (el conciliador lo rechaza, no lo descarta).
+
+    `clase` SOLO la acepta `CLASIFICAR`, y ahí es obligatoria: dice a qué cédula del 210 va el
+    ingreso, y eso cambia el impuesto.
     """
 
     decision: Decision
     motivo: Motivo
+    clase: ClaseDeIngreso | None = None
     valor: int | None = Field(default=None, ge=0)
     nota: str | None = None
     quien: str = Field(default="contador", min_length=1, max_length=200)
@@ -94,6 +103,7 @@ class ResolucionResponse(BaseModel):
     decision: Decision
     valor: int
     motivo: Motivo
+    clase: ClaseDeIngreso | None
     origen: str
     nota: str | None
     quien: str
@@ -132,6 +142,12 @@ class PartidaResponse(BaseModel):
     # renglón tiene (p. ej. LLEVAR_A_MANO, que solo aplica a los conceptos que el motor
     # todavía no liquida).
     decisiones_posibles: dict[str, list[str]]
+    # Qué clase de ingreso sostiene cada motivo de `CLASIFICAR`. Vacío en los renglones que el
+    # motor ya sabe ubicar, que son casi todos.
+    clases_posibles: dict[str, list[str]]
+    # La clase que el sistema sugiere, cuando el concepto de la exógena la implica. Es una
+    # sugerencia, no una decisión: quien resuelve tiene que confirmar el hecho del que depende.
+    clase_sugerida: str | None
 
     @classmethod
     def from_partida(cls, partida: Partida) -> PartidaResponse:
@@ -154,6 +170,8 @@ class PartidaResponse(BaseModel):
             plata_en_juego=_plata_en_juego(partida),
             resolucion=_resolucion(partida),
             decisiones_posibles=decisiones_posibles(partida),
+            clases_posibles=clases_posibles(partida),
+            clase_sugerida=clase_sugerida(partida),
         )
 
 
@@ -178,6 +196,7 @@ def _resolucion(partida: Partida) -> ResolucionResponse | None:
         decision=r.decision,
         valor=r.valor,
         motivo=r.motivo,
+        clase=r.clase,
         origen=r.origen.value,
         nota=r.nota,
         quien=r.quien,
@@ -313,14 +332,36 @@ class LiquidacionResponse(BaseModel):
 
 
 class NodoResponse(BaseModel):
-    """Una casilla del borrador con su fórmula: la trazabilidad que el contador audita."""
+    """Una casilla del borrador con su fórmula: la trazabilidad que el contador audita.
+
+    Lleva DOS nombres del mismo paso. `etiqueta` es el del contador ("INCRNGO aportes obligatorios
+    salud/pensión"), que es el correcto y el que va en la memoria que se anexa; `en_palabras` es el
+    mismo paso dicho para quien declara una vez al año. Quien pinta elige según a quién le habla, y
+    traducir destruyendo el original dejaría al contador sin el nombre con que defiende la cifra.
+    """
 
     codigo: str
     etiqueta: str
+    en_palabras: str
+    # `si_no` o `pesos`: OBLIGADO_DECLARAR vale 1 y no es un peso.
+    tipo: str
     valor: int
     formula: str
     insumos: list[str]
     regla: str | None
+
+    @classmethod
+    def from_nodo(cls, n: Nodo) -> NodoResponse:
+        return cls(
+            codigo=n.codigo,
+            etiqueta=n.etiqueta,
+            en_palabras=en_palabras(n.codigo, n.etiqueta),
+            tipo=tipo_de_valor(n.codigo),
+            valor=n.valor,
+            formula=n.formula,
+            insumos=list(n.insumos),
+            regla=n.regla,
+        )
 
 
 def _casillas(liquidacion: Liquidacion) -> list[NodoResponse]:
@@ -329,14 +370,7 @@ def _casillas(liquidacion: Liquidacion) -> list[NodoResponse]:
     from declaras.render import ORDEN_CASILLAS
 
     return [
-        NodoResponse(
-            codigo=n.codigo,
-            etiqueta=n.etiqueta,
-            valor=n.valor,
-            formula=n.formula,
-            insumos=list(n.insumos),
-            regla=n.regla,
-        )
+        NodoResponse.from_nodo(n)
         for codigo in ORDEN_CASILLAS
         if (n := liquidacion.nodos.get(codigo)) is not None
     ]

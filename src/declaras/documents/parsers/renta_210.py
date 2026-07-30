@@ -53,6 +53,7 @@ from declaras.documents.models import (
 )
 from declaras.domain.errors import DocumentUnreadableError
 from declaras.observability import get_logger
+from declaras.parametros.casillas import NOMBRES_DE_CASILLA
 
 log = get_logger(__name__)
 
@@ -141,22 +142,11 @@ _ID_NUMBER_Y = 615.5
 # numero (unos 11 puntos), asi que un salto mas grande marca donde termina la cedula.
 _DIGIT_GAP = 13.0
 
-# Nombre de cada casilla tal como lo imprime el formulario, para que la lectura se explique
-# sola y la interfaz nunca tenga que mostrar un numero de casilla a secas.
-BOX_LABELS: dict[int, str] = {
-    28: "Uno por ciento (1%) de compras con factura electrónica",
-    29: "Total patrimonio bruto",
-    30: "Deudas",
-    31: "Total patrimonio líquido",
-    91: "Renta líquida cédula general",
-    92: "Rentas exentas y deducciones imputables (limitadas)",
-    93: "Renta líquida ordinaria cédula general",
-    94: "Compensación de pérdidas año 2018 y anteriores",
-    95: "Compensación por exceso de renta presuntiva",
-    96: "Rentas gravables",
-    97: "Renta líquida gravable cédula general",
-    98: "Renta presuntiva",
-}
+# Los nombres oficiales viven en `parametros.casillas`, que es la única fuente: los necesitan
+# también el que arma el formulario a radicar y el resumen del expediente, y con el mapa repetido
+# una corrección en uno dejaba a los otros diciendo otra cosa.
+BOX_LABELS: dict[int, str] = dict(NOMBRES_DE_CASILLA)
+
 
 # Las filas de la cedula general repiten el mismo concepto en las cuatro columnas, asi que
 # la etiqueta se arma sola: concepto de la fila mas nombre de la columna.

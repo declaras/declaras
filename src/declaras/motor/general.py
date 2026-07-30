@@ -129,13 +129,15 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
         regla="art. 206 num. 10 ET",
     )
 
+    exenta_cesantias = _exenta_cesantias(caso, p, t)
+
     cap = t.nodos["CAP_40"].valor
     aplicado = t.nodo(
         "APLICADO_40",
         "Exentas + deducciones aplicadas (tras el límite)",
-        min(deducciones + exenta_25, cap),
-        f"min({deducciones:,} + {exenta_25:,}, cap {cap:,})",
-        insumos=["DEDUCCIONES_LIMITADAS", "EXENTA_25", "CAP_40"],
+        min(deducciones + exenta_25 + exenta_cesantias, cap),
+        f"min({deducciones:,} + 25% {exenta_25:,} + cesantías {exenta_cesantias:,}, cap {cap:,})",
+        insumos=["DEDUCCIONES_LIMITADAS", "EXENTA_25", "EXENTA_CESANTIAS", "CAP_40"],
         regla="art. 336 num. 3",
     )
 
@@ -162,4 +164,83 @@ def rlg_general(caso: CasoTributario, p: ParametrosAnio, e: Elecciones, t: Traza
         f"{netos:,} − costos {costos:,} − aplicado {aplicado:,} − extra {extra:,}",
         insumos=["ING_NETOS_GENERAL", "COSTOS_ARRIENDOS", "APLICADO_40", "EXTRA_LIMITE"],
         regla="art. 336 ET",
+    )
+
+
+def _pct_exento_cesantias(promedio_mes: int, p: ParametrosAnio) -> float:
+    """Qué fracción de las cesantías queda exenta, según el promedio mensual (art. 206 num. 4).
+
+    Hasta 350 UVT/mes es todo exento; de ahí baja por tramos hasta 0% desde 650 UVT. La tabla vive
+    en el YAML del año porque está escrita en UVT y la UVT cambia cada año.
+    """
+    if promedio_mes <= p.uvt_pesos(p.cesantias_exentas_tope_uvt_mes):
+        return 1.0
+    for tramo in p.cesantias_gradualidad:
+        if tramo.hasta_uvt_mes is None or promedio_mes <= p.uvt_pesos(tramo.hasta_uvt_mes):
+            return tramo.exento_pct
+    # La tabla del YAML termina en un tramo sin techo, así que esto no se alcanza; si alguien lo
+    # quita, gravar todo es la salida que no subdeclara.
+    return 0.0  # pragma: no cover
+
+
+def _exenta_cesantias(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> int:
+    """La parte exenta del auxilio de cesantías y sus intereses (art. 206 num. 4).
+
+    DEPENDE DEL INGRESO MENSUAL PROMEDIO de los últimos seis meses de vinculación, que la exógena
+    sí reporta (una fila del formato 2276) y que en su defecto certifica el empleador.
+
+    Cuando falta, las cesantías se gravan COMPLETAS y queda un aviso con la plata en juego. Es la
+    misma decisión que con los dividendos sin desagregar: asumir la exención sin el soporte bajaría
+    el impuesto sobre una afirmación que nadie hizo, y eso es inexactitud. Al revés solo cuesta que
+    el cliente pague de más mientras consigue el papel, y el aviso le dice cuánto.
+
+    ESTÁ SUJETA AL LÍMITE DEL 40%: el art. 336 num. 3 solo exceptúa los 72 UVT por dependiente y el
+    1% de facturas, así que esta exención entra al mismo cap que el 25% laboral.
+    """
+    con_cesantias = [l for l in caso.laborales if l.cesantias_e_intereses]
+    total = sum(l.cesantias_e_intereses for l in con_cesantias)
+    if not total:
+        return t.nodo(
+            "EXENTA_CESANTIAS",
+            "Renta exenta cesantías e intereses",
+            0,
+            "sin cesantías reportadas",
+            regla="art. 206 num. 4 ET",
+        )
+
+    # El promedio es por vínculo laboral: dos empleadores pueden tener promedios distintos, y la
+    # norma habla de "los seis últimos meses de vinculación", o sea de cada vinculación.
+    exento = 0
+    sin_dato: list[str] = []
+    detalles: list[str] = []
+    for laboral in con_cesantias:
+        if laboral.promedio_mensual_6m is None:
+            sin_dato.append(laboral.empleador_nombre)
+            continue
+        pct = _pct_exento_cesantias(laboral.promedio_mensual_6m, p)
+        exento += porcentaje(laboral.cesantias_e_intereses, pct)
+        detalles.append(f"{laboral.empleador_nombre} {pct:.0%}")
+
+    if sin_dato:
+        gravado = sum(
+            l.cesantias_e_intereses for l in con_cesantias if l.promedio_mensual_6m is None
+        )
+        t.flag(
+            "CESANTIAS_SIN_PROMEDIO_SALARIAL",
+            f"Las cesantías de {', '.join(sin_dato)} ({gravado:,}) entraron GRAVADAS porque falta "
+            "el promedio mensual de los últimos seis meses de vinculación, que es el dato del que "
+            "depende la exención (art. 206 num. 4). Con la certificación del empleador, hasta ese "
+            "monto puede quedar exento y el impuesto baja.",
+        )
+
+    return t.nodo(
+        "EXENTA_CESANTIAS",
+        "Renta exenta cesantías e intereses",
+        exento,
+        (
+            f"parte no gravada por promedio salarial: {', '.join(detalles)}"
+            if detalles
+            else f"0: falta el promedio salarial de {len(sin_dato)} vínculo(s)"
+        ),
+        regla="art. 206 num. 4 ET",
     )

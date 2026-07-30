@@ -18,6 +18,18 @@ class Tramo(BaseModel):
     constante_uvt: int
 
 
+class TramoCesantias(BaseModel):
+    """Un tramo de la gradualidad del art. 206 num. 4.
+
+    `hasta_uvt_mes` en None es el último tramo ("De 650 UVT, el 0%"), sin techo.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hasta_uvt_mes: int | None
+    exento_pct: float
+
+
 class ParametrosAnio(BaseModel):
     # Una clave desconocida revienta en vez de descartarse: si el YAML de un año trae un
     # parámetro que el motor no lee (renombrado, nuevo, con typo), el motor liquidaría
@@ -34,6 +46,8 @@ class ParametrosAnio(BaseModel):
     limite_general_uvt: int
     exenta_laboral_pct: float
     exenta_laboral_tope_uvt: int
+    cesantias_exentas_tope_uvt_mes: int
+    cesantias_gradualidad: list[TramoCesantias]
     dependiente_uvt: int
     dependientes_max: int
     ded_387_pct: float

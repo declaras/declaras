@@ -1,5 +1,8 @@
+from typing import TypedDict
+
 from declaras.caso import CasoTributario
 from declaras.motor import Liquidacion, Nodo
+from declaras.parametros.en_palabras import en_palabras
 from declaras.render.orden import ORDEN_CASILLAS
 
 # Casillas que son un sí/no del motor, no una cifra: "Valor: 1" no es auditable.
@@ -20,6 +23,15 @@ def _md_texto(x: object) -> str:
     memoria — y luego escapa los metacaracteres.
     """
     return " ".join(str(x).split()).translate(_MD_ESPECIALES)
+
+
+def tipo_de_valor(codigo: str) -> str:
+    """`si_no` o `pesos`. Sin esto, quien pinta tiene que adivinar si un `1` es un peso o un sí.
+
+    Vive aquí porque `_BOOLEANAS` vive aquí, y duplicar esa lista en el API es garantizar que las
+    dos se separen: OBLIGADO_DECLARAR se veía como "$ 1".
+    """
+    return "si_no" if codigo in _BOOLEANAS else "pesos"
 
 
 def _valor_texto(n: Nodo) -> str:
@@ -43,8 +55,30 @@ def _verificar_pareja(liq: Liquidacion, caso: CasoTributario) -> None:
         )
 
 
-def casillas(liq: Liquidacion) -> list[dict]:
-    filas = []
+class PasoDelCalculo(TypedDict):
+    """Un paso del cálculo tal como sale hacia afuera.
+
+    Tiene forma declarada porque el API lo serializa: es un contrato con el front, no un dict
+    interno. Sin esto, agregar o renombrar una llave aquí rompe la interfaz en silencio.
+    """
+
+    codigo: str
+    etiqueta: str
+    # El mismo paso dicho para el titular. Viaja junto a la etiqueta técnica, no en vez de ella:
+    # el contador necesita "INCRNGO" para defender la cifra y el titular necesita no leerlo.
+    en_palabras: str
+    valor: int
+    valor_texto: str
+    # Qué clase de valor es. Sin esto, quien pinta la memoria tiene que adivinar si un `1` son
+    # un peso o un sí, y OBLIGADO_DECLARAR se veía como "$1".
+    tipo: str
+    formula: str
+    insumos: list[str]
+    regla: str | None
+
+
+def casillas(liq: Liquidacion) -> list[PasoDelCalculo]:
+    filas: list[PasoDelCalculo] = []
     for codigo in ORDEN_CASILLAS:
         if codigo in liq.nodos:
             n = liq.nodos[codigo]
@@ -52,8 +86,10 @@ def casillas(liq: Liquidacion) -> list[dict]:
                 {
                     "codigo": n.codigo,
                     "etiqueta": n.etiqueta,
+                    "en_palabras": en_palabras(n.codigo, n.etiqueta),
                     "valor": n.valor,
                     "valor_texto": _valor_texto(n),
+                    "tipo": tipo_de_valor(n.codigo),
                     "formula": n.formula,
                     "insumos": n.insumos,
                     "regla": n.regla,
