@@ -80,15 +80,24 @@ Medido contra la Supabase real: **~24 consultas por request** (un `GET /concilia
 estado, los renglones, la huella y la liquidación). La latencia de red se multiplica por ese
 número.
 
-| Desde | Ida y vuelta | Un request |
-|---|---|---|
-| Railway en `us-west`, junto a la base | 1–5 ms | ~0,1 s |
-| Railway en Virginia | ~70 ms | ~1,7 s |
-| Una máquina en Colombia (medido) | 352 ms | **8,4 s** |
+| Desde | Ida y vuelta | Un request | |
+|---|---|---|---|
+| Railway `us-east4` + Supabase `us-east-1` | 1–3 ms | **~0,05 s** | mismo metro: Ashburn |
+| Railway `us-east4` + Supabase `us-east-2` | ~12 ms | ~0,3 s | Ohio, 500 km |
+| Costas cruzadas (Railway este, base oeste) | ~70 ms | ~1,7 s | |
+| Base en São Paulo, Railway en EE. UU. | ~120 ms | ~2,9 s | la peor: la co-ubicación pesa 24× |
+| Medido desde Colombia a `us-east-1` | 240 ms | **5,8 s** | |
+| Medido desde Colombia a `us-west-2` | 352 ms | 8,4 s | |
 
-Los 8,4 segundos son reales y los medí; no son un defecto del código, son la distancia. Pero
-dejan claro el margen: **el servicio de Railway y el proyecto de Supabase van en la misma
-región.** Si quedan en costas distintas, cada pantalla del contador tarda casi dos segundos.
+Las dos últimas filas son reales y las medí; no son un defecto del código, son la distancia desde
+un portátil. Lo que importa es la primera: **el servicio de Railway y el proyecto de Supabase van
+en la misma región**, y el par elegido es `us-east4` con `us-east-1` porque el identificador de
+Railway (`us-east4-eqdc4a`, Equinix DC4) está en Ashburn, el mismo área metropolitana que AWS
+`us-east-1`.
+
+Y la fila de São Paulo explica por qué no se pone la base cerca del usuario: la latencia a la
+base se multiplica por 24 y la del navegador se paga UNA vez. Acercar la base al cliente y
+alejarla de la aplicación cambia 50 ms por tres segundos.
 
 (Y de paso: 24 consultas para un `GET` es mucho. No es urgente con 5 ms de ida y vuelta, pero
 es deuda: el día que haya que apretar, ahí está el margen.)
