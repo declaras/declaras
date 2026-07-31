@@ -84,10 +84,29 @@ sesión, lo que puede sacar la cuenta del plan de $5.
 
 ## El front
 
-En desarrollo, el proxy de Vite inyecta la llave del API y el navegador nunca la tiene. **Ese
-proxy no existe en producción.** Publicar el front como estático manda la llave al navegador,
-donde cualquiera la lee. La salida más barata es desplegarlo como servicio de Node conservando
-ese mismo proxy; la alternativa es una función de borde que reenvíe.
+Es un **segundo servicio de Railway**, desde el repo `declaras/declaras-front` (rama `dev`).
+
+En desarrollo el proxy de Vite inyecta la llave y el navegador nunca la tiene; ese proxy no
+existe al publicar. `server.mjs` cumple ese papel en producción: sirve `dist/` y reenvía `/api`
+al backend agregando `X-API-Key`. Sin dependencias — es un intermediario que toca datos
+tributarios y cada paquete es superficie que auditar.
+
+Sus dos variables:
+
+```
+DECLARAS_API_URL=https://<el-servicio-del-back>.up.railway.app
+DECLARAS_API_KEY=<la MISMA de DECLARAS_API_KEYS del back>
+```
+
+Verificado en local contra el backend real: la llave no aparece ni en el HTML ni en el bundle,
+la subida de documentos pasa por el proxy y se lee (es lo que un proxy mal hecho rompe, porque
+el cuerpo va como flujo), las rutas de la aplicación resuelven, y un intento de salir de `dist`
+con `..` devuelve el index en vez de un archivo del contenedor.
+
+**Lo que NO es:** autenticación de usuarios. Cualquiera que alcance esa URL usa el backend con
+la llave, porque la consola todavía no distingue personas — y el `quien` de cada resolución va
+fijo en "contador". Alcanza para operar el demo; el día que entre un contribuyente a ver SU
+declaración, la identidad va en la aplicación, no en el proxy.
 
 ## Consumo medido
 
