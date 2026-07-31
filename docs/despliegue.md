@@ -9,7 +9,7 @@ que cuestan una noche cada una. Están todas acá, con la razón.
 |---|---|---|
 | Proyecto de Supabase | supabase.com | Postgres. El plan gratis alcanza (500 MB) |
 | Proyecto de Railway | railway.com | La aplicación. ~$2/mes de consumo medido |
-| Llave de Anthropic | console.anthropic.com | Los diez extractores con modelo |
+| Llave de Gemini | aistudio.google.com | Los diez extractores con modelo |
 
 **Ninguna de las tres se escribe en el repositorio.** Van a las variables de Railway.
 
@@ -24,7 +24,7 @@ DECLARAS_STORAGE_BACKEND=local          # ver "los documentos" abajo
 DECLARAS_STORAGE_LOCAL_ROOT=/data/documents
 DECLARAS_DIAN_ADAPTER=http              # sin Chromium; ver "el navegador" abajo
 DECLARAS_WORKER_ENABLED=true
-ANTHROPIC_API_KEY=<la llave>
+GEMINI_API_KEY=<la llave>
 ```
 
 ## Las cuatro trampas
@@ -75,6 +75,26 @@ compitiendo por la misma cola (hay lease, pero es trabajo desperdiciado y conten
 si algún día se prende el "app sleep" de Railway, un servicio dormido **deja de sacar trabajos
 de la cola**: las consultas a la DIAN se quedan encoladas sin que nadie sepa por qué.
 
+## El proveedor de extracción, verificado contra el API real
+
+Los diez extractores hablan con Gemini (`gemini-3.6-flash`) desde un solo sitio,
+`extraccion/_base.py`. Cambiar de proveedor es ese archivo y el doble de las pruebas; los diez
+esquemas, los diez prompts y los guards de cada certificado no se tocan.
+
+Verificado con una llave de verdad sobre un 220 sintético, no solo con el doble:
+
+| Caso | Resultado |
+|---|---|
+| Certificado correcto | Lee los diez campos exactos, incluido el NIT sin dígito de verificación |
+| Total impreso que no cuadra | Rechaza: "los campos suman 87.400.000 y el certificado dice 95.000.000" |
+| Certificado de otro año | Rechaza nombrando los dos años |
+| Certificado que trae pensiones | Rechaza y dice que van como `IngresoPension` |
+
+Los tres rechazos importan más que la lectura correcta: son la razón por la que cambiar de
+proveedor es de bajo riesgo. Cada extractor reconcilia lo que el modelo leyó contra un total
+impreso en el propio documento, así que un modelo que lea peor no produce una cifra equivocada
+— produce un rechazo, que es visible. Para repetirlo: `scripts/probar_extractor.py`.
+
 ## El navegador de la DIAN
 
 El conector entra por REST y usa Chromium solo como respaldo. Con `DECLARAS_DIAN_ADAPTER=http`
@@ -118,8 +138,8 @@ Medido en local sobre el proceso real, no estimado:
 | CPU | 0,1–0,2% en reposo | $20/vCPU/mes | ~$0,20–0,60 |
 
 El tier gratis de Railway ($1 de crédito) **no alcanza**: la RAM sola se lo come. El plan Hobby
-de $5 sobra. El costo que sí escala con el uso es el de las lecturas con modelo, que factura
-Anthropic aparte y es independiente de esto.
+de $5 sobra. El costo que sí escala con el uso es el de las lecturas con modelo, que factura Google
+aparte y es independiente de esto.
 
 Y Supabase gratis **pausa el proyecto tras una semana sin actividad**: si la demostración es
 esporádica, hay que despertarlo antes.

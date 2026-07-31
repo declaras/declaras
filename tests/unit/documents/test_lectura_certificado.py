@@ -84,16 +84,16 @@ def test_a_un_lector_deterministico_no_se_le_ata_nada():
 # `extraer_220` levanta `ValueError` con el detalle tecnico, que es su contrato con quien
 # programa. Ese texto no puede salir tal cual: la lectura la consume el expediente (que
 # convierte una falla de lectura en una alerta que lee el contador) y la API. Un
-# `stop_reason=refusal` ahi no dice nada y expone como esta hecho el sistema.
+# el motivo crudo del proveedor ahi no dice nada y expone como esta hecho el sistema.
 
 
 def test_una_falla_del_extractor_cruza_como_falla_de_dominio_sin_texto_tecnico():
-    cliente = ClienteFalso(None, stop_reason="refusal")
+    cliente = ClienteFalso(None, sin_salida_por="refusal")
     with pytest.raises(DocumentUnreadableError) as exc:
         certificados.leer_220(b"%PDF-x", client=cliente)
     mensaje = exc.value.message
     assert "refusal" not in mensaje
-    assert "stop_reason" not in mensaje
+    assert "refusal" not in mensaje and "estado=" not in mensaje
     assert exc.value.details["parser"] == certificados.PARSER_220
 
 
@@ -116,7 +116,7 @@ def test_un_archivo_que_no_es_un_pdf_se_reporta_ilegible_sin_llamar_al_modelo():
     cliente = ClienteFalso(EXTRACCION)
     with pytest.raises(DocumentUnreadableError):
         certificados.leer_220(b"soy un JPG cualquiera", client=cliente)
-    assert cliente.messages.llamadas == []  # el pre-flight del extractor sigue vigente
+    assert cliente.interactions.llamadas == []  # el pre-flight del extractor sigue vigente
 
 
 def test_el_certificado_del_anio_equivocado_no_se_lee():
@@ -167,7 +167,7 @@ MIXTO = EXTRACCION.model_copy(
     ("caso", "fragmento"),
     [
         ({"content": b"soy un JPG"}, "no es un PDF"),
-        ({"parsed": None, "stop_reason": "refusal"}, "escaneado"),
+        ({"parsed": None, "sin_salida_por": "refusal"}, "escaneado"),
         ({"parsed": EXTRACCION.model_copy(update={"numero_de_certificados": 2})}, "más de un"),
         ({"anio_esperado": 2024}, "otro año"),
         ({"parsed": EXTRACCION.model_copy(update={"salarios": 50_000_000})}, "total"),
@@ -177,7 +177,7 @@ MIXTO = EXTRACCION.model_copy(
 )
 def test_la_pista_corresponde_a_la_causa(caso, fragmento):
     cliente = ClienteFalso(
-        caso.get("parsed", EXTRACCION), stop_reason=caso.get("stop_reason", "end_turn")
+        caso.get("parsed", EXTRACCION), sin_salida_por=caso.get("sin_salida_por")
     )
     with pytest.raises(DocumentUnreadableError) as exc:
         certificados.leer_220(

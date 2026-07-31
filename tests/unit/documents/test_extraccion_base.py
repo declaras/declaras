@@ -69,41 +69,43 @@ def test_rechaza_bytes_que_no_son_pdf_sin_llamar_al_api():
     cliente = ClienteFalso(MINIMA)
     with pytest.raises(ValueError, match="no parece un PDF") as exc:
         _extraer(b"no-es-pdf", cliente=cliente)
-    assert cliente.messages.llamadas == []  # pre-flight: no gasta una llamada
+    assert cliente.interactions.llamadas == []  # pre-flight: no gasta una llamada
     assert exc.value.motivo is MotivoExtraccion.NO_ES_PDF
 
 
 def test_revienta_sin_salida_estructurada():
-    cliente = ClienteFalso(None, stop_reason="refusal")
-    with pytest.raises(ValueError, match="stop_reason") as exc:
+    cliente = ClienteFalso(None, sin_salida_por="refusal")
+    with pytest.raises(ValueError, match="no produjo salida estructurada") as exc:
         _extraer(cliente=cliente)
-    # El dato de depuración llega al mensaje: sin el stop_reason no se distingue un refusal
+    # El dato de depuración llega al mensaje: sin el motivo del proveedor no se distingue un rechazo
     # de los clasificadores de un JSON truncado por presupuesto.
     assert "refusal" in str(exc.value)
     assert exc.value.motivo is MotivoExtraccion.SIN_SALIDA
 
 
-def test_arma_la_llamada_con_el_modelo_el_presupuesto_y_el_esquema_que_le_pasaron():
+def test_arma_la_llamada_con_el_modelo_el_esquema_y_el_prompt_que_le_pasaron():
     cliente = ClienteFalso(MINIMA)
     _extraer(cliente=cliente)
-    llamada = cliente.messages.llamadas[0]
-    assert llamada["model"] == MODELO == "claude-opus-5"
-    # Ancla contra regresión de truncado: thinking y respuesta comparten el presupuesto.
-    assert llamada["max_tokens"] == 16000
-    # Extracción mecánica: effort medium a propósito, no por descuido.
-    assert llamada["output_config"] == {"effort": "medium"}
-    # El esquema y el prompt son del extractor, no de la base: llegan tal cual.
-    assert llamada["output_format"] is ExtraccionMinima
-    contenido = llamada["messages"][0]["content"]
-    assert contenido[0]["type"] == "document"
-    assert contenido[0]["source"]["media_type"] == "application/pdf"
-    assert contenido[0]["source"]["data"] == base64.standard_b64encode(PDF).decode()
-    assert contenido[1]["text"] == PROMPT
+    llamada = cliente.interactions.llamadas[0]
+    assert llamada["model"] == MODELO == "gemini-3.6-flash"
+    # El esquema que se le PIDE al proveedor tiene que ser el MISMO que se valida al recibir:
+    # si divergieran, una respuesta válida para el proveedor fallaría al validar acá.
+    assert llamada["response_format"]["schema"] == ExtraccionMinima.model_json_schema()
+    assert llamada["response_format"]["mime_type"] == "application/json"
+    # El prompt es del extractor, no de la base: llega tal cual.
+    entrada = llamada["input"]
+    assert entrada[0]["type"] == "document"
+    assert entrada[0]["mime_type"] == "application/pdf"
+    assert entrada[0]["data"] == base64.standard_b64encode(PDF).decode()
+    assert entrada[1]["text"] == PROMPT
 
 
 def test_devuelve_el_modelo_validado_y_el_id_del_documento():
     modelo, doc_id = _extraer()
-    assert modelo is MINIMA
+    # No es `is MINIMA`: el proveedor devuelve TEXTO y la base lo valida contra el esquema, así
+    # que lo que sale es un modelo nuevo con los mismos valores. Ese round-trip es justamente lo
+    # que garantiza que lo declarado en el esquema es lo que llega al caso.
+    assert modelo == MINIMA
     assert doc_id == id_documento(PDF) == hashlib.sha256(PDF).hexdigest()[:12]
 
 
@@ -177,7 +179,7 @@ def test_todo_motivo_de_la_base_tiene_lugar_en_el_vocabulario_del_220():
     ("pdf", "cliente", "motivo"),
     [
         (b"no-es-pdf", ClienteFalso(None), Motivo220.NO_ES_PDF),
-        (PDF, ClienteFalso(None, stop_reason="refusal"), Motivo220.SIN_SALIDA),
+        (PDF, ClienteFalso(None, sin_salida_por="refusal"), Motivo220.SIN_SALIDA),
     ],
     ids=["no-es-pdf", "sin-salida"],
 )

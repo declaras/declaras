@@ -7,16 +7,27 @@ cambia de uno a otro es el esquema, el prompt y los guards de negocio propios.
 
 Acá vive lo que no cambia. Sin este módulo, la mecánica se copia diez veces, y con ella se copian
 las tres decisiones que no son obvias y que cuestan un rato descubrir: que el pre-flight va antes
-de la llamada (un JPG no se extrae, y pagarlo para enterarse es peor), que el presupuesto de
-tokens tiene que ser amplio porque el thinking y la respuesta lo comparten, y que una respuesta
-sin salida estructurada hay que atajarla antes de leerle el primer campo. El arreglo de un
-descuido en una de esas tres llegaría a nueve copias y se olvidaría en la décima.
+de la llamada (un JPG no se extrae, y pagarlo para enterarse es peor), que el esquema que se le
+pide al proveedor tiene que ser el mismo que se valida al recibir, y que una respuesta sin salida
+estructurada hay que atajarla antes de leerle el primer campo. El arreglo de un descuido en una de
+esas tres llegaría a nueve copias y se olvidaría en la décima.
 
 LOS MENSAJES DE ACÁ SON EL CONTRATO CON QUIEN PROGRAMA
 
-Dicen `stop_reason` porque es exactamente lo que hay que ver al depurar. Quien tenga que
-mostrárselos a una persona los traduce: eso pasa una sola vez, en
-`documents/parsers/certificados.py`, que es la frontera.
+Traen el detalle técnico —qué dijo el proveedor cuando no devolvió salida— porque es exactamente
+lo que hay que ver al depurar. Quien tenga que mostrárselos a una persona los traduce: eso pasa
+una sola vez, en `documents/parsers/certificados.py`, que es la frontera.
+
+EL PROVEEDOR VIVE ACÁ Y EN NINGÚN OTRO SITIO
+
+Los diez extractores llaman a `extraer` y no saben con qué modelo hablan. Cambiar de proveedor
+es este archivo y el doble de las pruebas; los diez esquemas, los diez prompts y los guards de
+negocio de cada certificado no se tocan. Eso no es casualidad: es la razón por la que la
+mecánica se centralizó antes de escribir el segundo extractor.
+
+Y hay algo que hace el cambio de proveedor menos riesgoso de lo que parece: cada extractor
+reconcilia lo que el modelo leyó contra un total impreso en el propio documento. Un modelo que
+lea peor no produce una cifra equivocada — produce un rechazo, que es visible.
 """
 
 from __future__ import annotations
@@ -28,12 +39,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-MODELO = "claude-opus-5"
-
-# En claude-opus-5 el thinking es adaptativo por defecto (se deja así: es lo recomendado) y
-# max_tokens topa thinking + respuesta JUNTOS, así que un presupuesto corto trunca el JSON de un
-# certificado escaneado y el parse falla.
-MAX_TOKENS = 16000
+MODELO = "gemini-3.6-flash"
 
 # Lo que los diez prompts dicen igual. Va SIN el encabezado ("Reglas que no puedes violar:") para
 # que cada extractor ponga primero las suyas —las específicas son las que más pesan— y cierre con
@@ -115,44 +121,49 @@ def extraer[T: BaseModel](
         )
 
     if client is None:  # import perezoso: los tests no necesitan el SDK real
-        import anthropic
+        from google import genai
 
-        client = anthropic.Anthropic()
+        # Sin argumentos: la llave sale de GEMINI_API_KEY. Que falte no se ataja acá — sube como
+        # cualquier otra falla del lector y la frontera la traduce a "el lector no está
+        # disponible", que es lo cierto: el archivo no tiene nada malo.
+        client = genai.Client()
 
-    data = base64.standard_b64encode(pdf_bytes).decode()
-    respuesta = client.messages.parse(
+    respuesta = client.interactions.create(
         model=MODELO,
-        max_tokens=MAX_TOKENS,
-        # Esto es transcripción mecánica de casillas, no razonamiento abierto: effort "medium"
-        # gasta menos thinking sin cambiar el contrato del parse.
-        output_config={"effort": "medium"},
-        messages=[
+        input=[
             {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": data,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
+                "type": "document",
+                "data": base64.standard_b64encode(pdf_bytes).decode(),
+                "mime_type": "application/pdf",
+            },
+            {"type": "text", "text": prompt},
         ],
-        output_format=schema,
+        # El esquema se manda como el JSON Schema del propio modelo de pydantic, así que la
+        # forma que se le pide al modelo y la que se valida al recibir son LA MISMA. Si
+        # divergieran, una respuesta perfectamente válida para el proveedor fallaría al validar.
+        response_format={
+            "type": "text",
+            "mime_type": "application/json",
+            "schema": schema.model_json_schema(),
+        },
     )
-    extraccion: T | None = respuesta.parsed_output
-    if extraccion is None:
-        # Sin salida estructurada: refusal de los clasificadores, max_tokens, u otro
-        # stop_reason sin texto. Error de dominio explícito en vez del AttributeError
-        # que saldría al leer el primer campo de None.
+
+    texto = getattr(respuesta, "output_text", None)
+    if not texto:
+        # Sin salida: rechazo de los clasificadores de seguridad, presupuesto agotado, o un
+        # error del proveedor. Error de dominio explícito en vez del fallo que daría validar una
+        # cadena vacía, y con el detalle que el proveedor haya dado.
+        estado = getattr(respuesta, "status", None)
+        detalle = getattr(estado, "message", None) or estado
         raise ExtraccionInvalidaError(
             MotivoExtraccion.SIN_SALIDA,
-            f"La extracción no produjo salida estructurada (stop_reason={respuesta.stop_reason}).",
+            f"La extracción no produjo salida estructurada (estado={detalle}).",
         )
+
+    # `model_validate_json` levanta `pydantic.ValidationError`, que ES un `ValueError`: la
+    # frontera lo atrapa junto con los guards y no hace falta una rama aparte. Un JSON que no
+    # cumple el esquema es un documento ilegible, no un error del programa.
+    extraccion: T = schema.model_validate_json(texto)
 
     if anio_esperado is not None:
         _verificar_anio(extraccion, anio_esperado)

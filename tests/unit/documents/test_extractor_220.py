@@ -53,16 +53,12 @@ def test_mapea_extraccion_a_ingreso_laboral():
 def test_envia_pdf_como_documento_base64():
     cliente = ClienteFalso(EXTRACCION)
     extraer_220(PDF, client=cliente)
-    llamada = cliente.messages.llamadas[0]
-    contenido = llamada["messages"][0]["content"]
-    assert contenido[0]["type"] == "document"
-    assert contenido[0]["source"]["media_type"] == "application/pdf"
-    assert llamada["output_format"] is Extraccion220
-    assert llamada["model"] == "claude-opus-5"
-    # Ancla contra regresión de truncado: thinking y respuesta comparten el presupuesto.
-    assert llamada["max_tokens"] >= 16000
-    # Extracción mecánica: effort medium a propósito, no por descuido.
-    assert llamada["output_config"] == {"effort": "medium"}
+    llamada = cliente.interactions.llamadas[0]
+    entrada = llamada["input"]
+    assert entrada[0]["type"] == "document"
+    assert entrada[0]["mime_type"] == "application/pdf"
+    assert llamada["response_format"]["schema"] == Extraccion220.model_json_schema()
+    assert llamada["model"] == "gemini-3.6-flash"
 
 
 # Un valor DISTINTO por campo: si el constructor cruza dos campos (p. ej. salud con
@@ -106,10 +102,10 @@ def test_fuente_ref_es_el_hash_del_pdf():
 
 
 def test_falla_con_error_de_dominio_si_no_hay_salida_estructurada():
-    cliente = ClienteFalso(None, stop_reason="refusal")
+    cliente = ClienteFalso(None, sin_salida_por="refusal")
     with pytest.raises(ValueError, match="no produjo salida estructurada") as exc:
         extraer_220(PDF, client=cliente)
-    assert "refusal" in str(exc.value)  # el stop_reason llega al mensaje
+    assert "refusal" in str(exc.value)  # el motivo del proveedor llega al mensaje
 
 
 # --- guards ruidosos: el extractor alimenta un formulario tributario ---
@@ -119,7 +115,7 @@ def test_rechaza_bytes_que_no_son_pdf_sin_llamar_al_api():
     cliente = ClienteFalso(EXTRACCION)
     with pytest.raises(ValueError, match="no parece un PDF"):
         extraer_220(b"soy un JPG cualquiera", client=cliente)
-    assert cliente.messages.llamadas == []  # pre-flight: no gasta una llamada
+    assert cliente.interactions.llamadas == []  # pre-flight: no gasta una llamada
 
 
 def test_rechaza_pdf_con_varios_certificados():
