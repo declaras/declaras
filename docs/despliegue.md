@@ -138,29 +138,31 @@ sesión, lo que puede sacar la cuenta del plan de $5.
 
 ## El front
 
-Es un **segundo servicio de Railway**, desde el repo `declaras/declaras-front` (rama `dev`).
+Vive en **Vercel**, no en Railway: son cinco páginas prerenderizadas para buscadores y un CDN,
+y un contenedor no aporta nada ahí. Proyecto `declaras` en la cuenta `sergiosteam`,
+`https://declaras.vercel.app`.
 
-En desarrollo el proxy de Vite inyecta la llave y el navegador nunca la tiene; ese proxy no
-existe al publicar. `server.mjs` cumple ese papel en producción: sirve `dist/` y reenvía `/api`
-al backend agregando `X-API-Key`. Sin dependencias — es un intermediario que toca datos
-tributarios y cada paquete es superficie que auditar.
-
-Sus dos variables:
+El proxy que inyecta la llave es una función, `api/proxy.js`, con un rewrite explícito en
+`vercel.json` (`/api/(.*)` → `/api/proxy?ruta=$1`). Sus dos variables:
 
 ```
-DECLARAS_API_URL=https://<el-servicio-del-back>.up.railway.app
+DECLARAS_API_URL=https://back-production-a062.up.railway.app
 DECLARAS_API_KEY=<la MISMA de DECLARAS_API_KEYS del back>
 ```
 
-Verificado en local contra el backend real: la llave no aparece ni en el HTML ni en el bundle,
-la subida de documentos pasa por el proxy y se lee (es lo que un proxy mal hecho rompe, porque
-el cuerpo va como flujo), las rutas de la aplicación resuelven, y un intento de salir de `dist`
-con `..` devuelve el index en vez de un archivo del contenedor.
+Verificado en producción: la llave no aparece en el HTML ni en el bundle, el circuito completo
+responde por el proxy (conciliación, peticiones, liquidación, borrador, y la **subida de un
+documento**), y las cinco páginas sirven ~4.000 palabras sin ejecutar JavaScript.
 
-**Lo que NO es:** autenticación de usuarios. Cualquiera que alcance esa URL usa el backend con
-la llave, porque la consola todavía no distingue personas — y el `quien` de cada resolución va
-fijo en "contador". Alcanza para operar el demo; el día que entre un contribuyente a ver SU
-declaración, la identidad va en la aplicación, no en el proxy.
+**El límite que hay que conocer:** una función de Vercel acepta 4,5 MB de cuerpo y devuelve 413
+al pasarlo. Un 220 exportado por una nómina pesa ~100 KB; uno **escaneado** puede pesar 5-10 MB,
+y son justo los que más necesitan al extractor. No se tapa con un reintento. La salida de verdad
+es que el navegador le hable al backend directo, lo que exige autenticar al **usuario** y no a un
+servicio: el día que exista el login del contribuyente, esa función se borra.
+
+**El auto-deploy no está conectado.** La cuenta de Vercel no tiene acceso a la org `declaras` en
+GitHub, así que hay que autorizar su app de GitHub para esa org. Mientras, se despliega con
+`vercel --prod --scope sergiosteam`.
 
 ## Consumo medido
 
