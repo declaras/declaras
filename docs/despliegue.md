@@ -1,6 +1,6 @@
 # Despliegue: Supabase (base) + Railway (aplicación)
 
-Este documento existe porque el despliegue tiene cuatro trampas que no se ven en el código y
+Este documento existe porque el despliegue tiene cinco trampas que no se ven en el código y
 que cuestan una noche cada una. Están todas acá, con la razón.
 
 ## Lo que hay que tener
@@ -27,7 +27,7 @@ DECLARAS_WORKER_ENABLED=true
 GEMINI_API_KEY=<la llave>
 ```
 
-## Las cuatro trampas
+## Las cinco trampas
 
 ### 1. El pooler de Supabase contra asyncpg
 
@@ -42,9 +42,15 @@ El síntoma es un error de sentencia duplicada o inexistente **que no menciona e
 parece un bug de la aplicación.
 
 Ya está resuelto en `adapters/persistence/engine.py`: con `+asyncpg` la caché de sentencias se
-apaga y el pool de SQLAlchemy se desactiva (`NullPool`), porque el pooler ya agrupa y dos capas
-de pool multiplican conexiones ociosas contra un límite que no es nuestro. **Verificado contra
-Postgres real**, no solo contra la suite (que corre en SQLite).
+apaga. **Verificado contra la Supabase real**, no solo contra la suite (que corre en SQLite):
+conecta, crea las 11 tablas y el flujo completo pasa.
+
+Y **sí hay pool del lado del cliente**, aunque el pooler también agrupe. Estuvo con `NullPool`
+—que es lo correcto en serverless, donde el proceso muere entre requests— y medido contra
+Supabase eso costaba 3 segundos por request en handshakes: sin pool, cada operación abre una
+conexión nueva, y este servicio hace ~24 idas a la base por request. Esto corre en un contenedor
+de vida larga y ahí reutilizarlas es el punto. El pool se deja chico porque el límite de
+conexiones del proyecto no es nuestro.
 
 ### 2. El esquema se crea, pero NO se migra
 
@@ -68,7 +74,26 @@ los PDF que subió el cliente. Dos salidas:
 
 Mientras se decida, el volumen sirve; lo que no sirve es dejarlo en el disco por defecto.
 
-### 4. Una sola réplica
+### 4. La región NO es una preferencia: multiplica por cien
+
+Medido contra la Supabase real: **~24 consultas por request** (un `GET /conciliacion` lee el
+estado, los renglones, la huella y la liquidación). La latencia de red se multiplica por ese
+número.
+
+| Desde | Ida y vuelta | Un request |
+|---|---|---|
+| Railway en `us-west`, junto a la base | 1–5 ms | ~0,1 s |
+| Railway en Virginia | ~70 ms | ~1,7 s |
+| Una máquina en Colombia (medido) | 352 ms | **8,4 s** |
+
+Los 8,4 segundos son reales y los medí; no son un defecto del código, son la distancia. Pero
+dejan claro el margen: **el servicio de Railway y el proyecto de Supabase van en la misma
+región.** Si quedan en costas distintas, cada pantalla del contador tarda casi dos segundos.
+
+(Y de paso: 24 consultas para un `GET` es mucho. No es urgente con 5 ms de ida y vuelta, pero
+es deuda: el día que haya que apretar, ahí está el margen.)
+
+### 5. Una sola réplica
 
 El worker de jobs corre **dentro del mismo proceso** del API. Con dos réplicas hay dos workers
 compitiendo por la misma cola (hay lease, pero es trabajo desperdiciado y contención inútil), y
