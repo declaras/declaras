@@ -11,6 +11,9 @@ dependencies = [
     "playwright>=1.49",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    # asyncpg NO es opcional: era un extra y un despliegue que no lo instalara arrancaba
+    # y no conectaba. El destino es Postgres (Supabase), asi que va en la base.
+    "asyncpg>=0.30",
     "structlog>=24.4",
     "tenacity>=9.0",
     "httpx>=0.28",
@@ -25,7 +28,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgres = ["asyncpg>=0.30"]
 gcs = ["google-cloud-storage>=2.19"]
 
 [dependency-groups]

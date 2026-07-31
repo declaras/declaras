@@ -450,6 +450,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anthropic" },
+    { name = "asyncpg" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -470,9 +471,6 @@ dependencies = [
 gcs = [
     { name = "google-cloud-storage" },
 ]
-postgres = [
-    { name = "asyncpg" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -489,7 +487,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anthropic", specifier = ">=0.100" },
-    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30" },
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=2.19" },
     { name = "httpx", specifier = ">=0.28" },
@@ -506,7 +504,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
-provides-extras = ["postgres", "gcs"]
+provides-extras = ["gcs"]
 
 [package.metadata.requires-dev]
 dev = [
