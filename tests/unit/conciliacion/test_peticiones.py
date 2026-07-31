@@ -257,6 +257,29 @@ def test_un_concepto_nuevo_sin_decision_revienta_en_vez_de_callarse(monkeypatch)
         derivar_peticiones(partidas, [], CASO)
 
 
+def test_todo_concepto_esta_en_una_de_las_dos_mitades():
+    """La partición de `Concepto` tiene que ser TOTAL, y fijada acá y no solo en ejecución.
+
+    El guard de `_certificado_de` existía y funcionó: cuando alguien agregó `CESANTIAS` y
+    `PROMEDIO_SALARIAL` al hacer el desglose del 2276 y no los clasificó, reventó con un
+    mensaje exacto. Pero reventó EN PRODUCCIÓN, con un 500 en `GET /peticiones` y en la subida
+    de documentos —que llama a peticiones al final— mientras la suite entera seguía verde.
+
+    Un chequeo en ejecución no protege de esto: protege de que la cifra sea equivocada, no de
+    que el despliegue se caiga. Esta prueba mueve el fallo al sitio donde cuesta un minuto.
+    """
+    from declaras.services.conciliacion import peticiones
+
+    sin_clasificar = (
+        set(Concepto) - set(peticiones._CERTIFICADO_POR_CONCEPTO) - set(peticiones._SIN_CERTIFICADO)
+    )
+    assert not sin_clasificar, (
+        f"{sorted(c.value for c in sin_clasificar)} no está en ninguna de las dos mitades: "
+        "o se le da un certificado que pedir, o se declara explícitamente que no se pide nada. "
+        "Sin eso, cualquier caso con una partida de ese concepto devuelve 500."
+    )
+
+
 def test_los_conceptos_fuera_del_motor_estan_declarados_sin_certificado():
     """Si mañana el motor cubre independientes, sacarlos de un frozenset tiene que
     obligar a decidir su certificado en el mismo commit."""

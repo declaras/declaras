@@ -481,6 +481,12 @@ _CERTIFICADO_POR_CONCEPTO: dict[Concepto, _Certificado] = {
 #   RETENCION            la DIAN ya la reportó: no hay documento que agregue nada.
 #   APORTES_SALUD        vienen DENTRO del 220 del empleador, que ya se pide por SALARIOS.
 #   APORTES_PENSION      igual.
+#   CESANTIAS            igual: son ingreso del año con exención propia (art. 206 num. 4), pero
+#                        el papel que las certifica es el mismo 220 del empleador. Pedirlas
+#                        aparte le mostraría al contador dos solicitudes del mismo documento.
+#   PROMEDIO_SALARIAL    tampoco: NO es plata que se declare —es el insumo del que depende
+#                        cuánta cesantía queda exenta— y viaja en ese mismo 220. Si falta, el
+#                        motor no calla: levanta CESANTIAS_SIN_PROMEDIO_SALARIAL.
 #   HONORARIOS/SERVICIOS/OTROS  el motor no los liquida (CONCEPTOS_FUERA_DEL_MOTOR): el
 #                        certificado no los haría entrar al 210, y la salida de esas
 #                        partidas es LLEVAR_A_MANO en la cola de pendientes.
@@ -497,6 +503,8 @@ _SIN_CERTIFICADO: frozenset[Concepto] = (
             Concepto.RETENCION,
             Concepto.APORTES_SALUD,
             Concepto.APORTES_PENSION,
+            Concepto.CESANTIAS,
+            Concepto.PROMEDIO_SALARIAL,
             Concepto.PATRIMONIO,
             Concepto.DEUDA,
             Concepto.SOLO_PARA_TOPE,
