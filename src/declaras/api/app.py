@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from declaras import __version__
 from declaras.api.container import Container
@@ -56,6 +57,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs",
         openapi_url="/openapi.json",
     )
+    # ── CORS ────────────────────────────────────────────────────────────────────────────────
+    #
+    # HACE FALTA DESDE QUE SE FUE EL PROXY. Antes el navegador pedia a `/api` del mismo dominio y
+    # un intermediario reenviaba; ahora le habla directo a este servicio, que esta en otro dominio,
+    # y el navegador exige permiso explicito antes de mandar la peticion.
+    #
+    # `allow_credentials=True` con `allow_origins=["*"]` es una combinacion que los navegadores
+    # RECHAZAN, y con razon: seria dejar que cualquier pagina que alguien visite llame a esta API
+    # con la sesion del contador puesta. Por eso `cors_origins` se enumera y su default es vacio.
+    #
+    # Sin origenes configurados no se instala el middleware: un CORS con lista vacia responde
+    # cabeceras que confunden mas que la ausencia total, y en un despliegue sin front —el worker,
+    # las pruebas— no hay navegador al que darle permiso.
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            # `Authorization` es la unica que el front agrega y sin ella el preflight falla.
+            # `Content-Type` la exige subir JSON y archivos.
+            allow_headers=["Authorization", "Content-Type"],
+            # El navegador necesita poder LEER el nombre del archivo al descargar un documento.
+            expose_headers=["Content-Disposition"],
+            max_age=600,
+        )
+
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(extractions.router)

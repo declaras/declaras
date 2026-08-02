@@ -748,10 +748,10 @@ async def test_una_decision_invalidada_deja_rastro_permanente(client):
     assert len(eventos) == 1, "una vez, ni cero ni una por reconstrucción"
     assert eventos[0]["payload"]["partida_id"] == "890903938:RENDIMIENTOS"
     assert eventos[0]["payload"]["valor"] == 7_777_777
-    # El rastro nombra a quien se autenticó —acá la llave de servicio, porque estas pruebas entran
-    # con `X-API-Key`— y NO lo que venía en el cuerpo. Que diga "servicio:" y no un correo es parte
-    # de lo que se afirma: una decisión tomada por un script no puede disfrazarse de persona.
-    assert eventos[0]["payload"]["quien"] == "servicio:test-key"
+    # El rastro nombra a quien se autenticó —el contador cuyo token trae el cliente de pruebas— y NO
+    # lo que venía en el cuerpo, que es lo que se manda arriba a propósito para comprobar que se
+    # ignora.
+    assert eventos[0]["payload"]["quien"] == "contador@declaras.co"
     assert "yo-me-firmo-solo" not in str(eventos[0]["payload"])
     alertas = [f for f in detalle["flags"] if f["code"] == "RESOLUCION_DESCARTADA"]
     assert len(alertas) == 1
@@ -1223,9 +1223,9 @@ async def test_un_concepto_que_el_motor_no_liquida_bloquea_el_preliminar_con_su_
         ("get", "/memoria"),
     ],
 )
-async def test_todo_el_router_exige_llave_de_api(client, metodo, ruta):
-    respuesta = await getattr(client, metodo)(
-        f"/v1/cases/00000000-0000-0000-0000-000000000000{ruta}", headers={"X-API-Key": ""}
+async def test_todo_el_router_exige_haber_ingresado(client_sin_sesion, metodo, ruta):
+    respuesta = await getattr(client_sin_sesion, metodo)(
+        f"/v1/cases/00000000-0000-0000-0000-000000000000{ruta}"
     )
     assert respuesta.status_code == 401
     assert respuesta.json()["code"] == "UNAUTHORIZED"

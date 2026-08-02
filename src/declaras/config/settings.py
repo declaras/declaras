@@ -38,8 +38,19 @@ class Settings(BaseSettings):
 
     env: Environment = Environment.LOCAL
     log_level: str = "INFO"
-    # NoDecode: se leen como texto separado por comas, no como JSON.
-    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["dev-key-cambiar"])
+
+    # ── Origenes que pueden llamar a la API desde un navegador ──────────────────────────────
+    #
+    # Hace falta desde que el front le habla DIRECTO al backend: antes pasaba por un proxy del
+    # mismo dominio y el navegador no preguntaba nada. Ahora son dominios distintos, asi que el
+    # navegador pide permiso primero y sin esta lista lo niega.
+    #
+    # NoDecode: texto separado por comas, no JSON.
+    #
+    # Vacia => ningun navegador puede llamar. No se pone `*` como default ni "para desarrollo": con
+    # credenciales habilitadas el comodin permitiria que CUALQUIER pagina que alguien visite haga
+    # peticiones a esta API con la sesion del contador. Los origenes se enumeran.
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # ── Auth de personas (Supabase Auth) ────────────────────────────────────────────────────
     #
@@ -82,11 +93,11 @@ class Settings(BaseSettings):
     worker_lease_ttl_s: int = Field(default=900, ge=60)
     worker_max_attempts: int = Field(default=3, ge=1)
 
-    @field_validator("api_keys", mode="before")
+    @field_validator("cors_origins", mode="before")
     @classmethod
-    def _parse_api_keys(cls, value: object) -> object:
+    def _parse_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
         return value
 
     @field_validator("contadores", mode="before")

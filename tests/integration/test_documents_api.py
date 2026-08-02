@@ -76,12 +76,11 @@ async def test_un_documento_corrupto_se_distingue_de_uno_sin_lector(client):
     assert response.json()["code"] == "DOCUMENT_UNREADABLE"
 
 
-async def test_requiere_llave_de_api(client):
-    response = await client.post(
+async def test_requiere_haber_ingresado(client_sin_sesion):
+    response = await client_sin_sesion.post(
         "/v1/documents/read",
         data={"doc_type": "EXOGENA"},
         files={"file": ("x.xlsx", build_exogena_xlsx(), "application/octet-stream")},
-        headers={"X-API-Key": "invalida"},
     )
     assert response.status_code == 401
 

@@ -127,11 +127,10 @@ async def test_lista_de_clientes_y_sus_expedientes(client):
     assert {c["tax_year"] for c in expedientes.json()} == {2024, 2025}
 
 
-async def test_requiere_llave_de_api(client):
-    response = await client.post(
+async def test_requiere_haber_ingresado(client_sin_sesion):
+    response = await client_sin_sesion.post(
         "/v1/cases",
         json={"id_number": "1020304050", "tax_year": 2025},
-        headers={"X-API-Key": "invalida"},
     )
     assert response.status_code == 401
 

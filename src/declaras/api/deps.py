@@ -5,25 +5,24 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, Request, Security
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from declaras.api.auth.principal import Principal, TipoDePrincipal
+from declaras.api.auth.principal import Principal
 from declaras.api.auth.token import emisor_de, principal_del_token
 from declaras.api.container import Container
 from declaras.domain.errors import DeclarasError
 from declaras.services.extraction import ExtractionService
 
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-# `auto_error=False` para que la ausencia de token no sea un 401 automatico de FastAPI: la
-# decision de que falta y con que mensaje la toma `require_principal`, que es quien conoce los
-# dos caminos. Con `auto_error=True` una peticion con llave y sin token moriria antes de llegar.
+# `auto_error=False` para que la ausencia de token no sea un 401 automatico de FastAPI: el mensaje
+# y el codigo los decide `require_principal`, que es contrato publico de la API —el cliente
+# ramifica por `code`— y no algo que deba redactar el framework.
 _bearer = HTTPBearer(auto_error=False)
 
 
 class UnauthorizedError(DeclarasError):
     code = "UNAUTHORIZED"
     http_status = 401
-    default_message = "Falta la llave de API o no es válida."
+    default_message = "Necesitas haber ingresado para usar esto."
 
 
 def get_container(request: Request) -> Container:
@@ -34,68 +33,64 @@ def get_container(request: Request) -> Container:
 ContainerDep = Annotated[Container, Depends(get_container)]
 
 
-def require_api_key(
-    container: ContainerDep,
-    api_key: Annotated[str | None, Security(_api_key_header)] = None,
-) -> str:
-    if not api_key or api_key not in container.settings.api_keys:
-        raise UnauthorizedError()
-    return api_key
-
-
 async def require_principal(
     container: ContainerDep,
-    api_key: Annotated[str | None, Security(_api_key_header)] = None,
     bearer: Annotated[HTTPAuthorizationCredentials | None, Security(_bearer)] = None,
 ) -> Principal:
     """Quien esta haciendo esta peticion. Es el unico portero de la API.
 
-    ═══ POR QUE ACEPTA LAS DOS COSAS, Y POR QUE ESO ES TEMPORAL ═══
+    ═══ SOLO TOKENS DE PERSONA. LA LLAVE DE SERVICIO SE FUE ═══
 
-    Un token de persona (Supabase) o una llave de servicio. Las dos juntas porque la migracion es
-    por etapas y cada etapa tiene que quedar desplegable: hoy el front todavia habla por el proxy
-    con la llave, y las pruebas y los scripts entran asi. Si esto exigiera token desde el primer
-    commit, el despliegue quedaria roto hasta que el front terminara de cambiar.
+    Hubo una `X-API-Key` compartida, y el problema no fue la llave sino a QUIEN autenticaba: a un
+    servicio. Como el navegador no podia tenerla, hubo que poner un proxy que la aplicara — y ese
+    proxy quedo siendo un portero que le abria a cualquiera Y ADEMAS ponia la credencial de su
+    bolsillo. Medido contra el despliegue publico antes de arreglarlo:
 
-    El token va PRIMERO. Con las dos credenciales presentes gana la persona: es mas especifica
-    —dice quien— y dejar que la llave le gane produciria un rastro que dice "servicio" cuando
-    habia alguien identificado del otro lado.
+        curl https://declaras.vercel.app/api/v1/clients  ->  200, con cedulas y correos
 
-    ═══ EL DIA QUE ESTO SE SIMPLIFIQUE ═══
+    El rodeo era circular: se necesitaba la llave por no saber quien era el usuario, la llave no
+    podia ir al navegador, hacia falta un servidor que la pusiera... y si ya hay un servidor en el
+    camino, ahi mismo se autentica a la PERSONA y la llave sobra. Eso es esto.
 
-    Cuando el front hable directo con `Authorization: Bearer`, la rama de la llave se borra y con
-    ella el proxy de Vercel y el middleware. Lo que queda es esta funcion sin el segundo camino.
+    Lo que se gana no es solo cerrar esa puerta: la credencial ahora representa a alguien, asi que
+    la bitacora puede nombrarlo, y revocar el acceso de una persona no saca a las demas.
+
+    ═══ SIN CONFIGURACION NO ENTRA NADIE, Y ESO ES DELIBERADO ═══
+
+    `auth_de_usuario_activo` exige proyecto de Supabase Y lista de contadores. Sin las dos no hay
+    forma de autenticar a nadie y la API rechaza todo. No hay camino alterno a proposito: un
+    respaldo "por si el auth no esta configurado" es exactamente la puerta que acabamos de cerrar.
+
+    La consecuencia operativa hay que conocerla: desplegar esto sin esas variables deja la API
+    inservible, no permisiva. Es el lado correcto en el que fallar.
     """
-    if bearer is not None and bearer.credentials:
-        ajustes = container.settings
-        # `auth_de_usuario_activo` exige proyecto Y lista. Sin las dos, un token no se puede
-        # evaluar: con proyecto y sin lista, todo token valido entraria. Se rechaza en vez de
-        # caerse a la llave, porque quien mando un token espera que se juzgue el token.
-        if not ajustes.auth_de_usuario_activo or container.llaves is None:
-            raise UnauthorizedError("El acceso con cuenta de usuario no está habilitado.")
-        return await principal_del_token(
-            bearer.credentials,
-            cache=container.llaves,
-            emisor=emisor_de(str(ajustes.supabase_url)),
-            contadores=ajustes.contadores,
-        )
+    ajustes = container.settings
+    if not ajustes.auth_de_usuario_activo or container.llaves is None:
+        # 503 y no 401: no es que a quien pregunta le falte una credencial —es que este despliegue
+        # no puede validar ninguna. Un 401 mandaria a la consola a pedir que entre otra vez, en un
+        # bucle que nadie puede resolver escribiendo bien la clave.
+        raise AuthNoConfiguradoError()
 
-    if api_key and api_key in container.settings.api_keys:
-        # El subject es un prefijo de la llave, NO la llave. Va a la bitacora y a los logs, y una
-        # credencial completa en un rastro que se guarda y se exporta es una credencial filtrada.
-        # Ocho caracteres alcanzan para distinguir cual de varias llaves se uso.
-        return Principal(
-            subject=api_key[:8],
-            tipo=TipoDePrincipal.SERVICIO,
-        )
+    if bearer is None or not bearer.credentials:
+        raise UnauthorizedError()
 
-    raise UnauthorizedError()
+    return await principal_del_token(
+        bearer.credentials,
+        cache=container.llaves,
+        emisor=emisor_de(str(ajustes.supabase_url)),
+        contadores=ajustes.contadores,
+    )
+
+
+class AuthNoConfiguradoError(DeclarasError):
+    code = "AUTH_NO_CONFIGURADO"
+    http_status = 503
+    default_message = "El ingreso no está configurado en este despliegue."
 
 
 def get_extraction_service(container: ContainerDep) -> ExtractionService:
     return container.extraction
 
 
-ApiKeyDep = Annotated[str, Depends(require_api_key)]
 AutenticadoDep = Annotated[Principal, Depends(require_principal)]
 ExtractionDep = Annotated[ExtractionService, Depends(get_extraction_service)]

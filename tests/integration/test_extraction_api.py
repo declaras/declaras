@@ -133,8 +133,8 @@ async def test_job_inexistente_devuelve_404(client):
     assert response.json()["code"] == "JOB_NOT_FOUND"
 
 
-async def test_la_api_exige_llave(client):
-    response = await client.post(BASE, json=payload("ok"), headers={"X-API-Key": "invalida"})
+async def test_la_api_exige_haber_ingresado(client_sin_sesion):
+    response = await client_sin_sesion.post(BASE, json=payload("ok"))
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHORIZED"
 

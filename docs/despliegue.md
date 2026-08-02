@@ -18,7 +18,9 @@ que cuestan una noche cada una. Están todas acá, con la razón.
 ```
 DECLARAS_ENV=production
 DECLARAS_LOG_LEVEL=INFO
-DECLARAS_API_KEYS=<una llave larga y nueva; NO la de desarrollo>
+DECLARAS_SUPABASE_URL=https://<ref>.supabase.co   # contra quien se validan los tokens
+DECLARAS_CONTADORES=<correo@dominio,otro@dominio>  # QUIEN puede entrar; vacia = nadie
+DECLARAS_CORS_ORIGINS=https://declaras.co,https://www.declaras.co
 DECLARAS_DATABASE_URL=postgresql+asyncpg://postgres.<ref>:<pass>@<region>.pooler.supabase.com:6543/postgres
 DECLARAS_STORAGE_BACKEND=local          # ver "los documentos" abajo
 DECLARAS_STORAGE_LOCAL_ROOT=/data/documents
@@ -142,23 +144,32 @@ Vive en **Vercel**, no en Railway: son cinco páginas prerenderizadas para busca
 y un contenedor no aporta nada ahí. Proyecto `declaras` en la cuenta `sergiosteam`,
 `https://declaras.vercel.app`.
 
-El proxy que inyecta la llave es una función, `api/proxy.js`, con un rewrite explícito en
-`vercel.json` (`/api/(.*)` → `/api/proxy?ruta=$1`). Sus dos variables:
+Sus variables:
 
 ```
-DECLARAS_API_URL=https://back-production-a062.up.railway.app
-DECLARAS_API_KEY=<la MISMA de DECLARAS_API_KEYS del back>
+VITE_API_URL=https://back-production-a062.up.railway.app
+VITE_SUPABASE_URL=https://<ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<la llave anonima del proyecto>
 ```
 
-Verificado en producción: la llave no aparece en el HTML ni en el bundle, el circuito completo
-responde por el proxy (conciliación, peticiones, liquidación, borrador, y la **subida de un
-documento**), y las cinco páginas sirven ~4.000 palabras sin ejecutar JavaScript.
+**Van ANTES de construir, no después.** Vite reemplaza `import.meta.env` por literales al
+construir: sin las dos de Supabase, la rama que crea el cliente queda estáticamente muerta y **el
+SDK no entra al paquete** — se comprobó que ningún chunk contiene `signInWithPassword`. Ponerlas en
+el panel después del build no revive nada, y el síntoma no es un error: `/login` dice tranquilamente
+que el ingreso no está configurado. El build avisa cuando faltan.
 
-**El límite que hay que conocer:** una función de Vercel acepta 4,5 MB de cuerpo y devuelve 413
-al pasarlo. Un 220 exportado por una nómina pesa ~100 KB; uno **escaneado** puede pesar 5-10 MB,
-y son justo los que más necesitan al extractor. No se tapa con un reintento. La salida de verdad
-es que el navegador le hable al backend directo, lo que exige autenticar al **usuario** y no a un
-servicio: el día que exista el login del contribuyente, esa función se borra.
+**Ya no hay proxy ni llave de API.** Hubo un `api/proxy.js` que inyectaba una `X-API-Key`
+compartida, más un `middleware.js` con clave compartida delante. Los dos se borraron cuando el auth
+de personas entró: la credencial que viaja ahora es el token de quien entró, que le pertenece, así
+que no hay nada que esconderle al navegador y nadie tiene que ir en medio.
+
+Con eso se fueron dos problemas de una: el proxy era un portero que le abría a cualquiera y además
+ponía la credencial —un `curl` sin autenticar devolvía cédulas y correos— y su límite de 4,5 MB de
+cuerpo impedía subir un 220 escaneado, que son justo los que más necesitan al extractor.
+
+Lo que hay que recordar a cambio: el front y el backend son dominios distintos, así que el navegador
+pide permiso. Sin `DECLARAS_CORS_ORIGINS` con el dominio del front, las respuestas llegan bien y el
+navegador las descarta.
 
 **El auto-deploy no está conectado.** La cuenta de Vercel no tiene acceso a la org `declaras` en
 GitHub, así que hay que autorizar su app de GitHub para esa org. Mientras, se despliega con

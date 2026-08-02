@@ -10,9 +10,18 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from declaras.api.app import create_app
+from declaras.api.auth.jwks import _Entrada
 from declaras.config.settings import DianAdapterKind, Environment, Settings, StorageBackend
+from tests.unit.auth.tokens_falsos import CORREO, EMISOR, EmisorFalso
 
-API_KEY = "test-key"
+# El proyecto de Supabase que finge el emisor de `tokens_falsos`. `EMISOR` es la URL del emisor
+# (`.../auth/v1`), y los ajustes piden la del proyecto, que es su raiz.
+SUPABASE_URL = EMISOR.removesuffix("/auth/v1")
+
+# Un emisor por sesion de pruebas: generar una llave EC cuesta unos milisegundos y hacerlo por cada
+# prueba multiplicaba eso por cientos. La llave no lleva estado entre pruebas —solo firma—, asi que
+# compartirla no las acopla.
+_emisor = EmisorFalso()
 
 
 @pytest.fixture
@@ -20,7 +29,8 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         env=Environment.LOCAL,
         log_level="WARNING",
-        api_keys=[API_KEY],
+        supabase_url=SUPABASE_URL,
+        contadores=[CORREO],
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         storage_backend=StorageBackend.LOCAL,
         storage_local_root=tmp_path / "documents",
@@ -40,18 +50,60 @@ async def app(settings: Settings):
     return create_app(settings)
 
 
+def sembrar_llaves(app) -> None:
+    """Deja la llave publica del emisor falso en la cache del contenedor.
+
+    POR QUE SE SIEMBRA Y NO SE DEJA QUE LA BAJE. Bajarla es una peticion HTTPS al proyecto de
+    Supabase: convertiria cada prueba de integracion en una prueba que depende de internet y del
+    estado de un tercero. La bajada tiene sus propias pruebas en `tests/unit/auth`, con la logica de
+    verdad —vencimiento, candado, rotacion, cupo— y sin red.
+
+    `vence_en=inf` porque en una prueba el reloj no avanza lo suficiente para que importe, y un
+    vencimiento realista solo agregaria una razon de falla intermitente.
+    """
+    cache = app.state.container.llaves
+    assert cache is not None, "los ajustes de prueba configuran Supabase, deberia haber cache"
+    cache._llaves = {_emisor.kid: _Entrada(llave=_emisor.jwk_publica, vence_en=float("inf"))}
+
+
 @pytest.fixture
 async def client(app) -> AsyncIterator[AsyncClient]:
+    """Cliente autenticado como el contador habilitado.
+
+    ═══ POR QUE UN TOKEN DE VERDAD Y NO UNA DEPENDENCIA SOBREESCRITA ═══
+
+    FastAPI permite reemplazar `require_principal` con algo que devuelva un principal de mentira, y
+    seria menos codigo. No se hace: eso saca al portero del camino que ejercitan las 1300 pruebas, y
+    entonces nada comprueba que el portero este puesto: la prueba de que un endpoint pide credencial
+    dejaria de probar algo el dia que alguien le quite la dependencia.
+
+    Con un token firmado de verdad, cada peticion de cada prueba pasa por la verificacion completa
+    —firma, emisor, audiencia, vencimiento, lista de contadores— igual que en produccion.
+    """
     transport = ASGITransport(app=app)
-    async with (
-        app.router.lifespan_context(app),
-        AsyncClient(
+    async with app.router.lifespan_context(app):
+        sembrar_llaves(app)
+        async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            headers={"X-API-Key": API_KEY},
-        ) as http,
-    ):
-        yield http
+            headers={"Authorization": f"Bearer {_emisor.token()}"},
+        ) as http:
+            yield http
+
+
+@pytest.fixture
+async def client_sin_sesion(app) -> AsyncIterator[AsyncClient]:
+    """Cliente SIN credencial, para probar que la puerta esta cerrada.
+
+    Es una fixture propia y no `client` con la cabecera vaciada, porque httpx FUSIONA las cabeceras
+    de la peticion con las del cliente: mandarle una credencial mala a `client` deja la buena puesta
+    y la peticion entra. Fue exactamente lo que paso al quitar la llave de API — cuatro pruebas que
+    decian "exige credencial" pasaban porque el cliente ya traia una valida.
+    """
+    async with app.router.lifespan_context(app):
+        sembrar_llaves(app)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+            yield http
 
 
 @pytest.fixture
@@ -119,12 +171,11 @@ async def client_con_reintentos(settings: Settings) -> AsyncIterator[AsyncClient
     """Cliente con reintentos habilitados, para probar la ruta de reencolado."""
     settings = settings.model_copy(update={"worker_max_attempts": 2})
     app = create_app(settings)
-    async with (
-        app.router.lifespan_context(app),
-        AsyncClient(
+    async with app.router.lifespan_context(app):
+        sembrar_llaves(app)
+        async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            headers={"X-API-Key": API_KEY},
-        ) as http,
-    ):
-        yield http
+            headers={"Authorization": f"Bearer {_emisor.token()}"},
+        ) as http:
+            yield http

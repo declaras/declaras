@@ -1,8 +1,8 @@
 """El portero de la API, visto desde afuera: quién entra por HTTP y quién no.
 
-Las pruebas de `tests/unit/auth/test_token.py` cubren la verificación del token. Acá se prueba lo
-que **solo se ve armado**: que las dos credenciales convivan durante la migración, cuál gana
-cuando llegan las dos, y que nada de esto abra un camino que antes no existía.
+`tests/unit/auth/test_token.py` cubre la verificación del token. Acá se prueba lo que **solo se ve
+armado**: que no quede ningún camino alterno, que la puerta vieja esté cerrada, y que un despliegue
+sin configurar falle del lado correcto.
 """
 
 from __future__ import annotations
@@ -13,13 +13,12 @@ from httpx import ASGITransport, AsyncClient
 from declaras.api.app import create_app
 from declaras.api.auth.jwks import _Entrada
 from declaras.api.container import Container
-from tests.conftest import API_KEY
-from tests.unit.auth.tokens_falsos import CORREO, EmisorFalso
+from tests.conftest import SUPABASE_URL
+from tests.unit.auth.tokens_falsos import EmisorFalso
 
 pytestmark = pytest.mark.anyio
 
 RUTA = "/v1/clients"
-SUPABASE_URL = "https://proyecto.supabase.co"
 
 
 @pytest.fixture
@@ -29,124 +28,142 @@ def emisor() -> EmisorFalso:
 
 @pytest.fixture
 def app_con_auth(settings, emisor):
-    """La app con auth de personas configurado. Las llaves las siembra `pedir`."""
-    ajustes = settings.model_copy(update={"supabase_url": SUPABASE_URL, "contadores": [CORREO]})
-    return create_app(ajustes)
+    """La app configurada, pero con un emisor propio de esta prueba.
 
-
-async def pedir(app, emisor: EmisorFalso | None = None, **cabeceras) -> int:
-    """Una petición contra la app, con las llaves públicas ya en caché si se pasa el emisor.
-
-    El contenedor solo existe DESPUÉS del lifespan, así que la caché se siembra acá adentro y no
-    en la fixture — que fue el primer intento y falló con `State has no attribute 'container'`.
-
-    Se siembra en vez de dejar que salga a la red: la bajada la prueban las pruebas de la caché, y
-    una prueba de integración que dependa de internet falla los martes por razones ajenas.
+    No reusa el de `conftest` para que cada caso pueda firmar tokens raros sin ensuciar el emisor
+    compartido que usan las otras 1300 pruebas.
     """
-    async with (
-        app.router.lifespan_context(app),
-        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http,
-    ):
-        if emisor is not None:
+    app = create_app(settings)
+    app.state.emisor_de_prueba = emisor
+    return app
+
+
+async def pedir(app, sembrar=True, **cabeceras):
+    async with app.router.lifespan_context(app):
+        if sembrar:
             cache = app.state.container.llaves
-            assert cache is not None, "con supabase_url configurado tiene que haber caché"
+            emisor = app.state.emisor_de_prueba
             cache._llaves = {emisor.kid: _Entrada(llave=emisor.jwk_publica, vence_en=float("inf"))}
-        return (await http.get(RUTA, headers=cabeceras)).status_code
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+            return await http.get(RUTA, headers=cabeceras)
 
 
-# ─────────────────────────── sin credencial, nada ───────────────────────────
+# ─────────────────────────── una sola puerta ───────────────────────────
 
 
-async def test_sin_credencial_no_se_entra(app_con_auth, emisor):
-    assert await pedir(app_con_auth, emisor) == 401
-
-
-async def test_una_llave_que_no_existe_no_entra(app_con_auth, emisor):
-    assert await pedir(app_con_auth, emisor, **{"X-API-Key": "inventada"}) == 401
-
-
-# ─────────────────────────── la migración por etapas ───────────────────────────
-
-
-async def test_la_llave_de_servicio_sigue_sirviendo(app_con_auth, emisor):
-    """La etapa 1 tiene que quedar desplegable.
-
-    Hoy el front habla por el proxy con la llave, y los scripts y las pruebas entran así. Si el
-    auth de personas hubiera reemplazado la llave de golpe, el despliegue quedaría roto hasta que
-    el front terminara de cambiar — y esa ventana es justo donde se toman atajos.
-    """
-    assert await pedir(app_con_auth, emisor, **{"X-API-Key": API_KEY}) == 200
+async def test_sin_credencial_no_se_entra(app_con_auth):
+    respuesta = await pedir(app_con_auth)
+    assert respuesta.status_code == 401
+    assert respuesta.json()["code"] == "UNAUTHORIZED"
 
 
 async def test_un_token_de_persona_habilitada_entra(app_con_auth, emisor):
-    assert await pedir(app_con_auth, emisor, Authorization=f"Bearer {emisor.token()}") == 200
+    respuesta = await pedir(app_con_auth, Authorization=f"Bearer {emisor.token()}")
+    assert respuesta.status_code == 200
+
+
+async def test_la_llave_de_api_ya_no_sirve(app_con_auth):
+    """Regresión: la puerta vieja está cerrada.
+
+    Existió una `X-API-Key` compartida, y con ella un proxy público que la aplicaba para cualquiera
+    —una URL sin autenticar que devolvía cédulas y correos. Se quitó. Esta prueba existe para que no
+    vuelva por descuido: cualquier reintroducción de un camino que no sea un token de persona la
+    rompe.
+    """
+    respuesta = await pedir(app_con_auth, **{"X-API-Key": "cualquier-cosa"})
+    assert respuesta.status_code == 401
 
 
 async def test_un_token_de_alguien_que_no_esta_en_la_lista_da_403(app_con_auth, emisor):
-    token = emisor.token(email="cualquiera@gmail.com")
-    assert await pedir(app_con_auth, emisor, Authorization=f"Bearer {token}") == 403
-
-
-async def test_un_token_invalido_da_401(app_con_auth, emisor):
-    token = emisor.token(vence_en=-10)
-    assert await pedir(app_con_auth, emisor, Authorization=f"Bearer {token}") == 401
-
-
-# ─────────────────────────── cuál gana cuando llegan las dos ───────────────────────────
-
-
-async def test_con_token_y_llave_manda_el_token(app_con_auth, emisor):
-    """El token es más específico: dice QUIÉN.
-
-    Si la llave le ganara, una persona identificada dejaría un rastro que dice "servicio" — y el
-    rastro es la razón de ser de todo esto.
-    """
-    token = emisor.token()
-    assert (
-        await pedir(app_con_auth, emisor, Authorization=f"Bearer {token}", **{"X-API-Key": API_KEY})
-        == 200
+    respuesta = await pedir(
+        app_con_auth, Authorization=f"Bearer {emisor.token(email='x@gmail.com')}"
     )
+    assert respuesta.status_code == 403
+    assert respuesta.json()["code"] == "NO_AUTORIZADO"
 
 
-async def test_un_token_malo_no_se_salva_con_una_llave_buena(app_con_auth, emisor):
-    """El caso que convertiría la llave en un escape.
-
-    Si al fallar el token se cayera a la llave, cualquiera con la llave del proxy podría mandar
-    tokens ajenos y entrar de todas formas — y el 403 de la lista de permitidos no valdría nada.
-    Quien manda un token espera que se juzgue el token.
-    """
-    ajeno = emisor.token(email="cualquiera@gmail.com")
-    assert (
-        await pedir(app_con_auth, emisor, Authorization=f"Bearer {ajeno}", **{"X-API-Key": API_KEY})
-        == 403
-    )
+async def test_un_token_vencido_da_401(app_con_auth, emisor):
+    respuesta = await pedir(app_con_auth, Authorization=f"Bearer {emisor.token(vence_en=-10)}")
+    assert respuesta.status_code == 401
+    assert respuesta.json()["code"] == "TOKEN_INVALIDO"
 
 
 # ─────────────────────────── sin configurar, cerrado ───────────────────────────
 
 
-async def test_sin_proyecto_configurado_un_token_no_entra(settings, emisor):
-    """El estado de hoy en producción: no hay Supabase configurado todavía.
+async def test_sin_proyecto_configurado_la_api_no_deja_pasar_a_nadie(settings, emisor):
+    """Desplegar sin las variables deja la API INSERVIBLE, no permisiva.
 
-    Un token no se puede evaluar sin proyecto contra el que validarlo, así que se rechaza. Lo que
-    NO puede pasar es que se ignore el token y se deje pasar por otra vía: el peor resultado sería
-    aceptar un token que nadie verificó.
+    Es el lado correcto en el que fallar, y es una decisión: no hay respaldo "por si el auth no está
+    configurado", porque un respaldo así es exactamente la puerta que se acabó de cerrar.
+
+    Se responde 503 y no 401: a quien pregunta no le falta una credencial, es este despliegue el que
+    no puede validar ninguna. Un 401 mandaría a la consola a pedir que entre de nuevo, en un bucle
+    que nadie resuelve escribiendo bien la clave.
     """
-    # Se comprueba sobre el contenedor construido a mano: `app.state.container` no existe hasta
-    # que corre el lifespan, y lo que importa afirmar es el porqué —sin proyecto no hay llaves que
-    # cachear— además del 401.
-    assert Container.build(settings).llaves is None
-    app = create_app(settings)
-    assert await pedir(app, Authorization=f"Bearer {emisor.token()}") == 401
+    ajustes = settings.model_copy(update={"supabase_url": None, "contadores": []})
+    assert Container.build(ajustes).llaves is None
+    app = create_app(ajustes)
+    app.state.emisor_de_prueba = emisor
+
+    respuesta = await pedir(app, sembrar=False, Authorization=f"Bearer {emisor.token()}")
+    assert respuesta.status_code == 503
+    assert respuesta.json()["code"] == "AUTH_NO_CONFIGURADO"
 
 
-async def test_con_proyecto_pero_sin_lista_nadie_entra_con_token(settings, emisor):
+async def test_con_proyecto_pero_sin_lista_tampoco(settings, emisor):
     """Media configuración es la trampa.
 
-    Con proyecto y sin lista de contadores, cualquier token válido del proyecto entraría — y con
-    el registro público de Supabase encendido, eso es cualquiera en internet. Por eso
-    `auth_de_usuario_activo` exige las dos cosas y esto rebota.
+    Con proyecto y sin lista de contadores, cualquier token válido de ese proyecto de Supabase
+    entraría — y con el registro público encendido, eso es cualquiera en internet.
     """
     ajustes = settings.model_copy(update={"supabase_url": SUPABASE_URL, "contadores": []})
     app = create_app(ajustes)
-    assert await pedir(app, Authorization=f"Bearer {emisor.token()}") == 401
+    app.state.emisor_de_prueba = emisor
+
+    respuesta = await pedir(app, Authorization=f"Bearer {emisor.token()}")
+    assert respuesta.status_code == 503
+
+
+# ─────────────────────────── CORS ───────────────────────────
+
+
+async def test_sin_origenes_configurados_ningun_navegador_puede_llamar(settings, emisor):
+    """El default es cerrado.
+
+    Sin `cors_origins` no se instala el middleware, así que la respuesta no trae el permiso y el
+    navegador descarta el resultado. Que el default sea vacío —y no `*`— es lo que evita que
+    cualquier página que alguien visite pueda llamar a esta API con la sesión del contador.
+    """
+    app = create_app(settings)
+    app.state.emisor_de_prueba = emisor
+    respuesta = await pedir(
+        app, Authorization=f"Bearer {emisor.token()}", Origin="https://sitio-ajeno.com"
+    )
+    assert "access-control-allow-origin" not in respuesta.headers
+
+
+async def test_el_origen_configurado_si_recibe_permiso(settings, emisor):
+    ajustes = settings.model_copy(update={"cors_origins": ["https://declaras.co"]})
+    app = create_app(ajustes)
+    app.state.emisor_de_prueba = emisor
+    respuesta = await pedir(
+        app, Authorization=f"Bearer {emisor.token()}", Origin="https://declaras.co"
+    )
+    assert respuesta.headers.get("access-control-allow-origin") == "https://declaras.co"
+    # Sin esto el navegador no deja que el JavaScript lea la respuesta, aunque llegue bien.
+    assert respuesta.headers.get("access-control-allow-credentials") == "true"
+
+
+async def test_un_origen_que_no_esta_en_la_lista_no_recibe_permiso(settings, emisor):
+    ajustes = settings.model_copy(update={"cors_origins": ["https://declaras.co"]})
+    app = create_app(ajustes)
+    app.state.emisor_de_prueba = emisor
+    respuesta = await pedir(
+        app, Authorization=f"Bearer {emisor.token()}", Origin="https://declaras.co.atacante.com"
+    )
+    # El sufijo del atacante contiene el dominio bueno: una comparacion por `startswith` o por
+    # `in` lo dejaria pasar. Se afirma que no.
+    assert respuesta.headers.get("access-control-allow-origin") != (
+        "https://declaras.co.atacante.com"
+    )
