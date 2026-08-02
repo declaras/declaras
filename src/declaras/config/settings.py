@@ -41,6 +41,27 @@ class Settings(BaseSettings):
     # NoDecode: se leen como texto separado por comas, no como JSON.
     api_keys: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["dev-key-cambiar"])
 
+    # ── Auth de personas (Supabase Auth) ────────────────────────────────────────────────────
+    #
+    # `supabase_url` es el proyecto contra el que se valida el token: de ahi salen el emisor
+    # esperado y la URL de las llaves publicas. Sin el no hay auth de usuario y solo sirve la
+    # llave de API — que es el estado de hoy y por eso el default es None.
+    supabase_url: str | None = None
+
+    # QUIEN PUEDE ENTRAR, que no es lo mismo que quien tiene un token valido.
+    #
+    # Un JWT de Supabase prueba que alguien tiene una cuenta EN ESE PROYECTO, no que pueda ver
+    # declaraciones de renta. Con el registro publico encendido, cualquiera se crea una cuenta y
+    # su token pasa la validacion sin una sola falla — la firma es legitima.
+    #
+    # Por eso van las dos cosas: el registro apagado en el dashboard Y esta lista. Son
+    # redundantes a proposito: la primera vive en una consola web que nadie versiona y que se
+    # puede cambiar por accidente; esta esta en la configuracion del despliegue.
+    #
+    # Vacia => nadie entra. Una lista de permitidos que al quedar vacia permite a todos es la
+    # forma mas comun de que esto se vuelva decorativo.
+    contadores: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     database_url: str = "sqlite+aiosqlite:///./var/declaras.db"
 
     storage_backend: StorageBackend = StorageBackend.LOCAL
@@ -67,6 +88,27 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("contadores", mode="before")
+    @classmethod
+    def _parse_contadores(cls, value: object) -> object:
+        # En minusculas porque los correos no distinguen mayusculas para esto y la comparacion
+        # tiene que ser la misma de los dos lados: una lista con "Esteban@..." y un token con
+        # "esteban@..." dejarian a la persona afuera sin decir por que.
+        if isinstance(value, str):
+            return [item.strip().lower() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return value
+
+    @property
+    def auth_de_usuario_activo(self) -> bool:
+        """Si se puede validar un token de persona.
+
+        Las dos condiciones van juntas y no por separado: con proyecto pero sin lista, todo token
+        valido entraria; con lista pero sin proyecto, no hay nada contra lo que validar.
+        """
+        return bool(self.supabase_url and self.contadores)
 
     @property
     def is_production(self) -> bool:

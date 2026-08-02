@@ -62,6 +62,10 @@ class ResolverPartidaRequest(_Entrada):
     clase: ClaseDeIngreso | None = None
     valor: int | None = Field(default=None, ge=0)
     nota: str | None = None
+    # YA NO SE LEE. El actor de una decisión sale de la credencial verificada, en
+    # `resolver_partida`. Se conserva el campo para no romper a un cliente que todavía lo manda
+    # —el esquema rechazaría la petición con `extra="forbid"`— pero lo que llegue acá se ignora.
+    # Se borra cuando el front deje de mandarlo.
     quien: str = Field(default="contador", min_length=1, max_length=200)
 
 

@@ -19,7 +19,7 @@ import re
 from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse, Response
 
-from declaras.api.deps import ApiKeyDep, ContainerDep
+from declaras.api.deps import AutenticadoDep, ContainerDep
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -74,7 +74,7 @@ def media_type_for(filename: str) -> str:
 @router.get("/content/{display_name}", include_in_schema=False, response_class=Response)
 async def download_document(
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
     uri: str = Query(..., description="storage_uri devuelto en el resultado de la extraccion"),
     inline: bool = Query(False, description="Mostrar en el navegador en vez de descargar"),
     display_name: str | None = None,

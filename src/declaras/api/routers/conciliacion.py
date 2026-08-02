@@ -30,7 +30,7 @@ from declaras.api.conciliacion_schemas import (
     RespuestaGuardadaResponse,
     RespuestaRegistradaResponse,
 )
-from declaras.api.deps import ApiKeyDep, ContainerDep
+from declaras.api.deps import AutenticadoDep, ContainerDep
 from declaras.services.comparacion_210 import Comparacion210
 from declaras.services.conciliacion.peticiones import costo_de_cerrar
 from declaras.services.conciliacion.recomendaciones import Recomendaciones
@@ -44,7 +44,7 @@ router = APIRouter(prefix="/v1/cases/{case_id}", tags=["conciliacion"])
     summary="Cruza el reporte de terceros con los documentos del cliente y liquida el preliminar",
 )
 async def conciliar(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> ConciliacionResumenResponse:
     """Idempotente: reconstruye el cruce completo y `refrescar` decide qué resoluciones
     sobreviven. Volver a llamarla preserva las decisiones del contador y repone las
@@ -59,7 +59,7 @@ async def conciliar(
     summary="Los renglones del cruce, con la plata en juego primero",
 )
 async def ver_conciliacion(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> ConciliacionEstadoResponse:
     estado = await container.conciliacion_service.estado(case_id)
     return ConciliacionEstadoResponse.from_estado(estado)
@@ -75,14 +75,23 @@ async def resolver_partida(
     partida_id: str,
     payload: ResolverPartidaRequest,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    quien: AutenticadoDep,
 ) -> ResolverPartidaResponse:
     partida, estado = await container.conciliacion_service.resolver_partida(
         case_id,
         partida_id,
         decision=payload.decision,
         motivo=payload.motivo,
-        quien=payload.quien,
+        # EL ACTOR SALE DE LA CREDENCIAL VERIFICADA, NO DEL CUERPO DE LA PETICION.
+        #
+        # Antes venia en `payload.quien`, o sea que el navegador DECLARABA quien habia decidido —y
+        # la consola mandaba "contador" fijo, sin importar quien estuviera del otro lado. Eso no es
+        # un rastro de auditoria: es una etiqueta que el cliente elige, y en un expediente
+        # tributario el rastro es medio punto de la razon por la que existe.
+        #
+        # El campo del esquema se conserva por compatibilidad pero ya no se lee: ver
+        # `ResolverPartidaRequest.quien`.
+        quien=quien.para_bitacora,
         valor=payload.valor,
         clase=payload.clase,
         nota=payload.nota,
@@ -96,7 +105,7 @@ async def resolver_partida(
     summary="Qué documentos hay que pedirle al cliente, priorizados",
 )
 async def ver_peticiones(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> list[PeticionResponse]:
     peticiones = await container.conciliacion_service.peticiones(case_id)
     return [PeticionResponse.from_peticion(p) for p in peticiones]
@@ -108,7 +117,7 @@ async def ver_peticiones(
     summary="Cuánto impuesto le ahorraría cada beneficio, esté o no pedido",
 )
 async def ver_recomendaciones(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> Recomendaciones:
     """El catálogo completo de beneficios con lo que cada uno baja el impuesto, en pesos.
 
@@ -126,7 +135,7 @@ async def ver_recomendaciones(
     summary="El borrador que la DIAN precargó contra el nuestro, casilla por casilla",
 )
 async def ver_comparacion_con_la_dian(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> Comparacion210:
     """Dónde difiere lo que se va a radicar de lo que la DIAN precargó.
 
@@ -147,7 +156,7 @@ async def ver_comparacion_con_la_dian(
     summary="El cálculo contra la declaración que de verdad se presentó ese año",
 )
 async def ver_comparacion_con_lo_presentado(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> Comparacion210:
     """La segunda opinión sobre un año ya declarado.
 
@@ -167,7 +176,7 @@ async def ver_comparacion_con_lo_presentado(
     summary="Lo que el cliente ya contestó, para verlo y poder cambiarlo",
 )
 async def listar_respuestas(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> list[RespuestaGuardadaResponse]:
     """Una respuesta apaga una pregunta, y apagar una deducción cambia la declaración. Sin poder
     verla, un "no" dado por error no tiene vuelta atrás desde la interfaz."""
@@ -187,10 +196,19 @@ async def registrar_respuesta(
     case_id: UUID,
     payload: RegistrarRespuestaRequest,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> RespuestaRegistradaResponse:
     """Un `no` apaga la petición para siempre: sin este registro el sistema le pregunta
-    por prepagada al cliente en cada consulta."""
+    por prepagada al cliente en cada consulta.
+
+    ACÁ `quien` SÍ VIENE DEL CUERPO, Y NO ES EL MISMO CASO QUE EN `resolver_partida`.
+
+    Allá `quien` es el ACTOR —alguien tomó una decisión y hay que saber quién— y por eso tiene que
+    salir de la credencial. Acá es la FUENTE del dato: se está registrando lo que contestó el
+    cliente, que no es quien opera la consola. Reemplazarlo por el usuario autenticado no
+    corregiría una mentira, borraría una distinción real: dejaría de constar que el hecho lo
+    afirmó el cliente y no el contador.
+    """
     peticiones = await container.conciliacion_service.registrar_respuesta(
         case_id,
         pregunta=payload.pregunta,
@@ -214,11 +232,13 @@ async def cerrar_peticion(
     case_id: UUID,
     peticion_id: str,
     container: ContainerDep,
-    _auth: ApiKeyDep,
-    quien: str = "contador",
+    quien: AutenticadoDep,
 ) -> PeticionCerradaResponse:
+    # Venia como parametro de query con default "contador": cualquiera podia firmar el cierre con
+    # el nombre que quisiera, y sin poner nada quedaba firmado como el contador. Ahora sale de la
+    # credencial, igual que en `resolver_partida`.
     cerrada, quedan = await container.conciliacion_service.cerrar_peticion(
-        case_id, peticion_id, quien=quien
+        case_id, peticion_id, quien=quien.para_bitacora
     )
     return PeticionCerradaResponse(
         peticion_id=cerrada.id,
@@ -235,7 +255,7 @@ async def cerrar_peticion(
     summary="El 210 preliminar, el de hoy, y la ganancia entre los dos",
 )
 async def ver_liquidacion(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> LiquidacionesResponse:
     liquidaciones = await container.conciliacion_service.liquidaciones(case_id)
     return LiquidacionesResponse.from_liquidaciones(liquidaciones)
@@ -247,7 +267,7 @@ async def ver_liquidacion(
     summary="Da el borrador por listo (se niega si hay una alerta bloqueante viva)",
 )
 async def cerrar_borrador(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> CaseSummaryResponse:
     """La mitad "no permitir cerrar" de que `bloqueante` bloquee de verdad: la declaración
     se puede VER con la alerta impresa (el borrador es donde el contador lee qué le falta),
@@ -268,7 +288,7 @@ async def cerrar_borrador(
     summary="El 210 que se va a radicar, casilla por casilla",
 )
 async def ver_formulario(
-    case_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> list[CasillaResponse]:
     """Las casillas del formulario oficial, con la cifra que se va a declarar en cada una.
 
@@ -285,7 +305,7 @@ async def ver_formulario(
     response_class=Response,
     summary="El borrador del 210, en HTML, con sus alertas",
 )
-async def ver_borrador(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> Response:
+async def ver_borrador(case_id: UUID, container: ContainerDep, _auth: AutenticadoDep) -> Response:
     html = await container.conciliacion_service.borrador(case_id)
     return Response(content=html, media_type="text/html; charset=utf-8")
 
@@ -295,6 +315,6 @@ async def ver_borrador(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep)
     response_class=PlainTextResponse,
     summary="La memoria de cálculo, casilla por casilla, en texto",
 )
-async def ver_memoria(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> Response:
+async def ver_memoria(case_id: UUID, container: ContainerDep, _auth: AutenticadoDep) -> Response:
     texto = await container.conciliacion_service.memoria(case_id)
     return Response(content=texto, media_type="text/markdown; charset=utf-8")

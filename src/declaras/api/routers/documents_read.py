@@ -20,7 +20,7 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from declaras.api.deps import ApiKeyDep, ContainerDep
+from declaras.api.deps import AutenticadoDep, ContainerDep
 from declaras.api.schemas import DocumentReadingResponse, ReadStoredDocumentRequest
 from declaras.documents.registry import supported_types
 from declaras.documents.sniff import DESCONOCIDO, detectar_tipo
@@ -33,7 +33,7 @@ router = APIRouter(prefix="/v1/documents", tags=["documents"])
     "/types",
     summary="Lista los tipos de documento que ya tienen lector",
 )
-async def list_supported_types(_auth: ApiKeyDep) -> list[str]:
+async def list_supported_types(_auth: AutenticadoDep) -> list[str]:
     return supported_types()
 
 
@@ -44,7 +44,7 @@ async def list_supported_types(_auth: ApiKeyDep) -> list[str]:
 )
 async def read_document(
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
     doc_type: str | None = Form(
         None,
         description=(
@@ -92,7 +92,7 @@ async def read_document(
 async def read_stored_document(
     payload: ReadStoredDocumentRequest,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> DocumentReadingResponse:
     content = await container.store.read(payload.storage_uri)
     reading = await run_in_threadpool(

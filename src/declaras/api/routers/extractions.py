@@ -12,7 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from declaras.api.deps import ApiKeyDep, ContainerDep, ExtractionDep
+from declaras.api.deps import AutenticadoDep, ContainerDep, ExtractionDep
 from declaras.api.schemas import (
     ChallengeAnswerRequest,
     CreateExtractionRequest,
@@ -41,7 +41,7 @@ def _render(job: object) -> ExtractionResponse:
 async def create_extraction(
     payload: CreateExtractionRequest,
     extraction: ExtractionDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
     response: Response,
 ) -> ExtractionResponse:
     request, credentials = payload.to_domain()
@@ -58,7 +58,7 @@ async def create_extraction(
 async def get_extraction(
     job_id: UUID,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> ExtractionResponse:
     job = await container.jobs.get(job_id)
     if job is None:
@@ -75,7 +75,7 @@ async def answer_challenge(
     job_id: UUID,
     payload: ChallengeAnswerRequest,
     extraction: ExtractionDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> ExtractionResponse:
     job = await extraction.submit_challenge_answer(job_id, ChallengeAnswer(answers=payload.answers))
     return _render(job)
@@ -89,7 +89,7 @@ async def answer_challenge(
 async def cancel_extraction(
     job_id: UUID,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> ExtractionResponse:
     job = await container.jobs.get(job_id)
     if job is None:

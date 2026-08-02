@@ -21,6 +21,8 @@ from declaras.adapters.persistence.engine import (
 from declaras.adapters.persistence.job_repository import SqlJobRepository
 from declaras.adapters.persistence.login_guard import SqlLoginAttemptGuard
 from declaras.adapters.storage.factory import build_document_store
+from declaras.api.auth.jwks import CacheDeLlaves
+from declaras.api.auth.token import jwks_url_de
 from declaras.config import Settings
 from declaras.documents.service import DocumentReaderService
 from declaras.domain.case_ports import CaseRepository, ClientRepository
@@ -55,6 +57,10 @@ class Container:
     case_service: CaseService
     conciliacion: ConciliacionRepository
     conciliacion_service: ConciliacionService
+    # None cuando no hay auth de personas configurado: sin proyecto de Supabase no hay llaves que
+    # cachear. Va en el contenedor y no como global del modulo para que cada prueba tenga la suya
+    # y el orden en que corren no las contamine entre si.
+    llaves: CacheDeLlaves | None
 
     @classmethod
     def build(cls, settings: Settings) -> Container:
@@ -110,6 +116,9 @@ class Container:
             case_service=case_service,
             conciliacion=conciliacion,
             conciliacion_service=conciliacion_service,
+            llaves=(
+                CacheDeLlaves(jwks_url_de(settings.supabase_url)) if settings.supabase_url else None
+            ),
         )
 
     async def startup(self) -> None:

@@ -25,7 +25,7 @@ from declaras.api.conciliacion_schemas import (
     ArchivoIncorporadoResponse,
     UploadDocumentsResponse,
 )
-from declaras.api.deps import ApiKeyDep, ContainerDep
+from declaras.api.deps import AutenticadoDep, ContainerDep
 from declaras.domain.errors import (
     ConflictoDeConcurrenciaError,
     DeclarasError,
@@ -68,7 +68,7 @@ def _download_url(storage_uri: str, filename: str | None = None) -> str:
     summary="Abre un expediente para un cliente y un anio gravable",
 )
 async def open_case(
-    payload: OpenCaseRequest, container: ContainerDep, _auth: ApiKeyDep
+    payload: OpenCaseRequest, container: ContainerDep, _auth: AutenticadoDep
 ) -> CaseDetailResponse:
     detail = await container.case_service.open_case(
         id_kind=payload.id_kind,
@@ -87,7 +87,7 @@ async def open_case(
     summary="Lista los expedientes (para la consola del contador)",
 )
 async def list_cases(
-    container: ContainerDep, _auth: ApiKeyDep, limit: int = 50, offset: int = 0
+    container: ContainerDep, _auth: AutenticadoDep, limit: int = 50, offset: int = 0
 ) -> list[CaseSummaryResponse]:
     cases = await container.cases.list_all(limit=limit, offset=offset)
     return [
@@ -107,7 +107,9 @@ async def list_cases(
     response_model=CaseDetailResponse,
     summary="El expediente completo: cliente, documentos, flags y bitacora",
 )
-async def get_case(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> CaseDetailResponse:
+async def get_case(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> CaseDetailResponse:
     detail = await container.case_service.get_detail(case_id)
     return CaseDetailResponse.from_domain(detail, download_url_builder=_download_url)
 
@@ -117,7 +119,9 @@ async def get_case(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> 
     response_model=CaseSummary,
     summary="Resumen de lo que el sistema ya sabe del expediente",
 )
-async def get_case_summary(case_id: UUID, container: ContainerDep, _auth: ApiKeyDep) -> CaseSummary:
+async def get_case_summary(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> CaseSummary:
     detail = await container.case_service.get_detail(case_id)
     return build_summary(detail)
 
@@ -128,7 +132,7 @@ async def get_case_summary(case_id: UUID, container: ContainerDep, _auth: ApiKey
     summary="Vuelca al expediente el resultado de una extraccion DIAN ya terminada",
 )
 async def link_extraction(
-    case_id: UUID, payload: LinkExtractionRequest, container: ContainerDep, _auth: ApiKeyDep
+    case_id: UUID, payload: LinkExtractionRequest, container: ContainerDep, _auth: AutenticadoDep
 ) -> CaseDetailResponse:
     job = await container.jobs.get(payload.job_id)
     if job is None:
@@ -147,7 +151,7 @@ async def link_extraction(
 async def upload_client_document(
     case_id: UUID,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
     doc_type: list[str] = Form(
         ..., description="Tipo de cada documento, en el mismo orden que los archivos"
     ),
@@ -271,7 +275,7 @@ async def resolve_flag(
     flag_id: UUID,
     payload: ResolveFlagRequest,
     container: ContainerDep,
-    _auth: ApiKeyDep,
+    _auth: AutenticadoDep,
 ) -> CaseFlagResponse:
     flag = await container.case_service.resolve_flag(
         case_id=case_id, flag_id=flag_id, note=payload.note
@@ -285,7 +289,7 @@ async def resolve_flag(
     summary="Lista los clientes (para la consola del contador)",
 )
 async def list_clients(
-    container: ContainerDep, _auth: ApiKeyDep, limit: int = 50, offset: int = 0
+    container: ContainerDep, _auth: AutenticadoDep, limit: int = 50, offset: int = 0
 ) -> list[ClientResponse]:
     clients = await container.clients.list_all(limit=limit, offset=offset)
     return [ClientResponse.from_domain(c) for c in clients]
@@ -297,7 +301,7 @@ async def list_clients(
     summary="Los expedientes de un cliente, por todos los anios",
 )
 async def list_client_cases(
-    client_id: UUID, container: ContainerDep, _auth: ApiKeyDep
+    client_id: UUID, container: ContainerDep, _auth: AutenticadoDep
 ) -> list[CaseSummaryResponse]:
     cases = await container.cases.list_for_client(client_id)
     return [

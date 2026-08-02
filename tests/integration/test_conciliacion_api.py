@@ -730,7 +730,10 @@ async def test_una_decision_invalidada_deja_rastro_permanente(client):
             "decision": "USAR_OTRO",
             "motivo": "DECISION_DEL_CONTADOR",
             "valor": 7_777_777,
-            "quien": "contador@declaras.co",
+            # Se manda a propósito y NO tiene que aparecer en el rastro: el actor sale de la
+            # credencial verificada. Antes se leía de acá, o sea que el cliente elegía con qué
+            # nombre firmar su propia decisión.
+            "quien": "yo-me-firmo-solo@ejemplo.com",
         },
     )
     # La DIAN republica la fila del banco con otra cifra: la decisión ya no aplica.
@@ -745,7 +748,11 @@ async def test_una_decision_invalidada_deja_rastro_permanente(client):
     assert len(eventos) == 1, "una vez, ni cero ni una por reconstrucción"
     assert eventos[0]["payload"]["partida_id"] == "890903938:RENDIMIENTOS"
     assert eventos[0]["payload"]["valor"] == 7_777_777
-    assert eventos[0]["payload"]["quien"] == "contador@declaras.co"
+    # El rastro nombra a quien se autenticó —acá la llave de servicio, porque estas pruebas entran
+    # con `X-API-Key`— y NO lo que venía en el cuerpo. Que diga "servicio:" y no un correo es parte
+    # de lo que se afirma: una decisión tomada por un script no puede disfrazarse de persona.
+    assert eventos[0]["payload"]["quien"] == "servicio:test-key"
+    assert "yo-me-firmo-solo" not in str(eventos[0]["payload"])
     alertas = [f for f in detalle["flags"] if f["code"] == "RESOLUCION_DESCARTADA"]
     assert len(alertas) == 1
     assert alertas[0]["resolved_at"] is None
