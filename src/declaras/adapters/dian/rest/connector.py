@@ -12,7 +12,11 @@ import httpx
 from declaras.adapters.dian.endpoints import DASHBOARD_FORM, ENDPOINTS, USER_AGENT
 from declaras.adapters.dian.rest.auth import authenticate
 from declaras.adapters.dian.rest.session import HttpDianSession
-from declaras.domain.errors import DianInvalidCredentialsError, DianTimeoutError
+from declaras.domain.errors import (
+    DianInvalidCredentialsError,
+    DianPortalUnavailableError,
+    DianTimeoutError,
+)
 from declaras.domain.models import DianCredentials, TaxpayerRef
 from declaras.observability import get_logger
 
@@ -58,6 +62,12 @@ class HttpDianConnector:
             response = await client.get(url)
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
+            # Mismo hueco que en `api_client`: un fallo de conexion tiene que llegar al dominio
+            # como `DianError`, no como excepcion de httpx.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con el portal de la DIAN."
+            ) from exc
 
         if DASHBOARD_FORM.authenticated_marker not in response.text:
             log.warning("dian.http.login_rejected", status_code=response.status_code)

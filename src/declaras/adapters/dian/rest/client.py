@@ -12,7 +12,11 @@ import httpx
 
 from declaras.adapters.dian.endpoints import DASHBOARD_FORM, ENDPOINTS
 from declaras.adapters.dian.rest.api_client import DianApiClient
-from declaras.domain.errors import DianSessionExpiredError, DianTimeoutError
+from declaras.domain.errors import (
+    DianPortalUnavailableError,
+    DianSessionExpiredError,
+    DianTimeoutError,
+)
 
 
 class PortalClient:
@@ -43,6 +47,12 @@ class PortalClient:
             return await self._client.get(url)
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
+            # Mismo hueco que en `api_client`: `ConnectError` no es `TimeoutException` y sin esta
+            # rama sube como excepcion cruda, fuera del vocabulario del dominio.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con el portal de la DIAN."
+            ) from exc
 
     async def submit_form(
         self, payload: dict[str, str], *, url: str | None = None
@@ -61,6 +71,12 @@ class PortalClient:
             )
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=target) from exc
+        except httpx.TransportError as exc:
+            # Mismo hueco que en `api_client`: `ConnectError` no es `TimeoutException` y sin esta
+            # rama sube como excepcion cruda, fuera del vocabulario del dominio.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con el portal de la DIAN."
+            ) from exc
 
     async def aclose(self) -> None:
         await self._client.aclose()

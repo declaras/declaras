@@ -109,3 +109,83 @@ async def test_ninguna_respuesta_de_la_api_sale_como_error_interno():
         with pytest.raises(DianError) as capturado:
             await _consultar_con_estado(codigo)
         assert capturado.value.code != "INTERNAL_ERROR"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# Un fallo de CONEXIÓN, que no es un timeout
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+#
+# MEDIDO EN PRODUCCIÓN. `api.dian.gov.co` acepta el TCP y corta el handshake TLS cuando la
+# petición sale de Railway (Virginia); desde Colombia responde 200. httpx lo reporta como
+# `ConnectError`, que NO es `TimeoutException` — y los tres sitios de este cliente solo atrapaban
+# el timeout.
+#
+# La consecuencia no era un mensaje feo: `ConnectError` no es un `DianError`, así que se saltaba
+# el manejo por documento de `extraction._collect` —que ya sabe seguir con los demás— y moría en
+# el `except Exception` general. La consulta ya había bajado el RUT y la exógena, y las perdía las
+# dos. El trabajo quedaba FAILED con `will_retry=false`, o sea que había que volver a escribir la
+# clave de la DIAN.
+#
+# Estas pruebas fijan las dos mitades del arreglo: que sea un error del dominio, y que sea
+# reintentable.
+
+
+def _revienta_al_conectar(error: Exception):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("handshake cortado"),
+        httpx.ReadError("conexión cerrada a mitad"),
+        httpx.ConnectTimeout("no alcanzó a conectar"),
+    ],
+    ids=["connect", "read", "connect_timeout"],
+)
+async def test_un_fallo_de_red_al_autenticar_es_un_error_del_dominio(error):
+    async with httpx.AsyncClient(transport=_revienta_al_conectar(error)) as http:
+        http.cookies.set("DIAN-MUISCA", COOKIE, domain="muisca.dian.gov.co")
+        cliente = DianApiClient(http, portal_url=PORTAL)
+        with pytest.raises(DianError) as caida:
+            await cliente.authenticate()
+
+    # Que sea `DianError` es la mitad que importa: es lo que hace que `_collect` lo trate como una
+    # falla de ESTE documento y siga con los demás, en vez de que suba crudo y tumbe la consulta.
+    assert isinstance(caida.value, DianError)
+    # Y reintentable, porque un tropiezo de red lo es. Con `retryable=False` un parpadeo obligaba a
+    # empezar de cero, con la clave escrita otra vez.
+    assert caida.value.retryable is True
+
+
+async def test_un_fallo_de_red_al_consultar_tambien(monkeypatch):
+    async with httpx.AsyncClient(transport=_revienta_al_conectar(httpx.ConnectError("no"))) as http:
+        http.cookies.set("DIAN-MUISCA", COOKIE, domain="muisca.dian.gov.co")
+        cliente = DianApiClient(http, portal_url=PORTAL)
+        # Con el token ya en mano, para que la falla sea de la consulta y no del canje.
+        cliente._bearer = "jwt-de-prueba"
+        with pytest.raises(DianPortalUnavailableError):
+            await cliente.get_json(DIAN_API.renta_forms)
+        with pytest.raises(DianPortalUnavailableError):
+            await cliente.get_bytes(DIAN_API.renta_forms)
+
+
+async def test_el_timeout_sigue_diciendo_que_fue_un_timeout():
+    """El arreglo no puede difuminar las dos causas.
+
+    `TimeoutException` es subclase de `TransportError`, así que un `except TransportError` puesto
+    antes se lo comería y todo fallo de red diría lo mismo. El orden de las ramas importa, y esto
+    lo fija: quien depure sigue distinguiendo "no respondió" de "no se pudo conectar".
+    """
+    from declaras.domain.errors import DianTimeoutError
+
+    async with httpx.AsyncClient(
+        transport=_revienta_al_conectar(httpx.ReadTimeout("tardó demasiado"))
+    ) as http:
+        http.cookies.set("DIAN-MUISCA", COOKIE, domain="muisca.dian.gov.co")
+        cliente = DianApiClient(http, portal_url=PORTAL)
+        with pytest.raises(DianTimeoutError):
+            await cliente.authenticate()

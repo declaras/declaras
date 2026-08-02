@@ -98,6 +98,22 @@ class DianApiClient:
             )
         except httpx.TimeoutException as exc:
             raise DianTimeoutError("La DIAN no respondió a tiempo.") from exc
+        except httpx.TransportError as exc:
+            # NO SOLO EL TIMEOUT. Atrapar unicamente `TimeoutException` dejaba escapar
+            # `ConnectError` —el DNS que no resuelve, el TCP rechazado, el handshake TLS que el
+            # servidor corta— y esa excepcion NO es un `DianError`, asi que se saltaba el manejo
+            # por documento de `extraction._collect` (que ya sabe seguir con los demas) y moria en
+            # el `except Exception` general, matando la consulta entera.
+            #
+            # Medido en produccion: `api.dian.gov.co` corta el handshake desde Railway. La consulta
+            # bajaba RUT y exogena, y al llegar al cuarto documento tumbaba las tres descargas que
+            # ya estaban hechas. El trabajo quedaba FAILED con will_retry=false.
+            #
+            # `TransportError` es el padre de las dos, asi que este par cubre la familia completa.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con la API de la DIAN.",
+                url=f"{DIAN_API.base_url}{DIAN_API.token_from_cookies}",
+            ) from exc
 
         if response.status_code != httpx.codes.OK:
             raise DianSessionExpiredError(
@@ -119,6 +135,12 @@ class DianApiClient:
             response = await self._client.get(url, headers=self._headers())
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
+            # Ver la nota de `authenticate`: sin esta rama un `ConnectError` no era un `DianError`
+            # y tumbaba la consulta completa en vez de solo este documento.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con la API de la DIAN.", url=url
+            ) from exc
 
         _raise_for_status(response, url=url)
         return response.json()
@@ -134,6 +156,12 @@ class DianApiClient:
             response = await self._client.get(url, headers=headers)
         except httpx.TimeoutException as exc:
             raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
+            # Ver la nota de `authenticate`: sin esta rama un `ConnectError` no era un `DianError`
+            # y tumbaba la consulta completa en vez de solo este documento.
+            raise DianPortalUnavailableError(
+                "No se pudo establecer la conexión con la API de la DIAN.", url=url
+            ) from exc
 
         _raise_for_status(response, url=url)
         return response.content, response.headers
