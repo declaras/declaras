@@ -1,0 +1,11 @@
+# Paquetes del sistema que la imagen no trae y el arranque necesita.
+#
+# `openssh` es para el tunel de salida hacia `api.dian.gov.co` (ver `scripts/arrancar.sh`): ese
+# host corta el handshake TLS si la peticion no sale de Colombia, asi que las tres consultas que
+# dependen de el pasan por un SOCKS5 contra un servidor en Bogota.
+#
+# El `"..."` NO es un marcador de posicion: es la sintaxis de nixpacks para "los paquetes que
+# detectaste, mas estos". Sin el, esta lista REEMPLAZA la deteccion automatica y la imagen se
+# queda sin Python.
+[phases.setup]
+nixPkgs = ["...", "openssh"]
