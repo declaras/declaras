@@ -219,7 +219,12 @@ ramas sin el portal real:
 | `slow` | `DIAN_PORTAL_TIMEOUT` |
 | `challenge` | Reto de identidad; se resuelve respondiendo `1234` |
 | `noexo` | Exito parcial: la exogena falla, los demas documentos bajan |
+| `sindecl` | Primerizo: no hay declaracion anterior ni borrador. **Es el caso real del primer contribuyente**, verificado contra el portal el 2026-08-08 |
 | cualquier otra | Exito completo |
+
+El recorrido completo con esas ramas vive en `tests/integration/test_recorrido_mvp.py`: cada
+prueba es una parada, de abrir el expediente a comparar contra la DIAN. Su regla es que ninguna
+parada se quede muda — o entrega el dato, o dice por que no puede.
 
 ---
 
@@ -264,6 +269,194 @@ correccion y si tiene firma electronica**. Catalogo completo en
 Siguiente frontera: la misma API expone el formulario 210 en `documentos/renta210v18/v1`,
 que es el camino del presentador. Diligenciar por API en vez de manejar un navegador sobre
 una SPA convierte la pieza mas fragil del producto en una integracion normal.
+
+### El tunel a Colombia: por que hay un VPS
+
+`api.dian.gov.co` **corta el handshake TLS si la peticion no sale de Colombia**. No
+responde 403 ni cierra el TCP: acepta la conexion y despues abandona el handshake, que
+llega al codigo como un `ConnectError` generico. `muisca.dian.gov.co` —el portal JSF, de
+donde salen RUT, exogena y facturas— no tiene ese bloqueo y responde desde cualquier parte.
+
+Por eso el contenedor de Railway (Virginia) levanta un **SOCKS5 por SSH contra una maquina
+en Bogota** y enruta por ahi *solo* ese host. Todo lo demas sigue saliendo directo.
+
+**El bloqueo es por geolocalizacion, no por registro.** Vale la pena saberlo porque cuesta
+una tarde: el rango de esta IP figura en ARIN a nombre de **Cogent Communications (US)**,
+y aun asi la DIAN la acepta, porque las bases de geolocalizacion la ubican en Bogota. Un
+`whois` que diga "US" **no** es motivo para descartar un proveedor sin probarlo.
+
+#### La maquina
+
+| Dato | Valor |
+|---|---|
+| Proveedor | LightNode (`AS154177 LIGHT NODE LIMITED`), region Bogota |
+| IP | `149.104.107.243` |
+| Sistema | Ubuntu 24.04.2 LTS |
+| Recursos | 1 vCPU, 2 GB RAM, 50 GB disco |
+| Hostname | `cd8vaumr.vm` |
+| Puerto SSH | **2222** (ver abajo) |
+| Facturacion | por hora |
+
+Un tunel no necesita mas: reenvia bytes cifrados y no procesa nada. La carga medida es
+practicamente cero.
+
+#### Por que el SSH esta en el 2222 y no en el 22
+
+**El proveedor bloquea el puerto 22 entrante desde fuera de Colombia.** No es una decision
+de seguridad nuestra ni una configuracion del servidor: el 22 escucha y el firewall lo
+permite, pero el trafico no llega. Desde Railway el tunel daba `Connection timed out` en
+bucle, y el sintoma que aparecia tres capas mas arriba era "no se pudo conectar con la API
+de la DIAN". El 2222 y el 443 pasan sin problema.
+
+Desde dentro de Colombia el 22 sirve; desde Railway, no. **Usa siempre el 2222.**
+
+#### Los dos usuarios, y por que son dos
+
+| Usuario | Para que | Que puede hacer |
+|---|---|---|
+| `tunel` | Lo usa el backend | **Solo** abrir un forward hacia `api.dian.gov.co:443` |
+| `root` | Administrar la maquina | Todo |
+
+La cuenta `tunel` esta encerrada por dos vias independientes. Su shell es
+`/usr/sbin/nologin`, y su llave lleva restricciones en la propia linea de
+`authorized_keys`:
+
+```
+restrict,port-forwarding,permitopen="api.dian.gov.co:443",command="/bin/false" ssh-rsa AAAA...
+```
+
+Traducido: `restrict` apaga todo (agente, X11, tty, ejecucion de comandos),
+`port-forwarding` vuelve a encender lo unico que se necesita, `permitopen` limita el
+destino a ese host y ese puerto, y `command="/bin/false"` remata. Con esa llave nadie
+puede leer un archivo del servidor ni usarlo como proxy hacia otro sitio.
+
+Eso importa porque la llave privada **vive en una variable de entorno de Railway**
+(`DECLARAS_DIAN_TUNEL_LLAVE`), que es el lugar donde mas facil se filtra un secreto. Las
+restricciones son lo que hace que filtrarla sea un incidente acotado y no la perdida del
+servidor.
+
+> ⚠️ **Hoy esa garantia no se cumple: la misma llave esta tambien en
+> `/root/.ssh/authorized_keys`, sin restricciones.** Quien tenga la llave del tunel entra
+> como `root` con solo cambiar el usuario, y todo lo de arriba deja de aplicar. Es un
+> residuo del montaje inicial y hay que cerrarlo (ver "Dar acceso a otra persona").
+
+#### Lo que el VPS ve del trafico
+
+Nada legible. El tunel es SOCKS5 sobre SSH: transporta el TLS **sin terminarlo**, asi que
+en la maquina solo pasan bytes cifrados entre el backend y la DIAN. Esto no es un detalle
+de implementacion, es un requisito: **el intermediario nunca debe poder leer la clave DIAN
+de un contribuyente.** Cualquier reemplazo futuro (proxy gestionado, salida NAT, otro
+proveedor) tiene que cumplir lo mismo — un proxy HTTP que termine TLS queda descartado.
+
+Ademas, la clave del contribuyente ni siquiera pasa por aqui: se escribe en
+`muisca.dian.gov.co`, que sale directo. Por el tunel solo viaja el Bearer token ya
+canjeado.
+
+#### Conectarse
+
+```bash
+# Administrar la maquina (requiere la llave de administracion)
+ssh -p 2222 -i ~/.ssh/declaras_dian_tunel_rsa root@149.104.107.243
+
+# Levantar el tunel a mano, igual que lo hace el contenedor.
+# -N: no ejecutar comandos.  -D: abrir un SOCKS5 local en el 1080.
+ssh -N -D 127.0.0.1:1080 -p 2222 -i ~/.ssh/declaras_dian_tunel_rsa \
+    tunel@149.104.107.243
+
+# Con el tunel arriba, comprobar que la DIAN responde desde Colombia.
+# Sin credenciales devuelve 401, que es la respuesta correcta: significa que
+# el handshake TLS se completo, que es justo lo que no pasa sin tunel.
+curl -s --socks5-hostname 127.0.0.1:1080 \
+  "https://api.dian.gov.co/documentos/renta210ingreso/v1/formularios?estado=presentado"
+# {"codigo":401,"mensaje":"Unauthorized","descripcion":"The request requires user authentication"}
+```
+
+`127.0.0.1` y no `0.0.0.0` **no es cosmetica**: escuchando en todas las interfaces, ese
+SOCKS seria un proxy abierto para cualquiera que alcance la maquina.
+
+Sin tunel el mismo `curl` no devuelve un codigo HTTP: se queda colgado y muere en el
+handshake. Esa es la diferencia que se esta comprobando.
+
+#### Como lo usa el backend
+
+`scripts/arrancar.sh` levanta el tunel **antes** de uvicorn, en un bucle que lo reabre si
+se cae, y despues `exec`uta el servidor para que sea el proceso 1 y reciba las senales de
+apagado de Railway. Se configura con cuatro variables:
+
+| Variable | Valor en Railway | Que hace |
+|---|---|---|
+| `DECLARAS_DIAN_TUNEL_DESTINO` | `tunel@149.104.107.243` | Usuario y host |
+| `DECLARAS_DIAN_TUNEL_LLAVE` | la llave privada completa | Llega por variable porque en Railway no hay donde montar un archivo |
+| `DECLARAS_DIAN_TUNEL_SSH_PUERTO` | `2222` | Por el bloqueo del 22 |
+| `DECLARAS_DIAN_API_PROXY` | `socks5://127.0.0.1:1080` | Lo que hace que el cliente HTTP lo use |
+
+Las dos primeras mandan: **si faltan, el script arranca uvicorn y ya**, sin tunel y sin
+error. Es el comportamiento correcto en local y en cualquier despliegue que ya alcance la
+DIAN.
+
+La ultima es la que conecta las dos mitades. `DECLARAS_DIAN_API_PROXY` se monta en
+`rest/connector.py` con `mounts`, que enruta **por host**: solo `api.dian.gov.co` entra al
+tunel. Sin esa variable el tunel queda arriba y sin usar — y el sintoma es que todo se ve
+bien salvo que los documentos siguen sin bajar.
+
+#### Comprobar que esta arriba
+
+En los logs de arranque (`railway logs`), el script deja constancia explicita:
+
+```
+tunel.dian: levantando SOCKS5 en 127.0.0.1:1080 hacia tunel@149.104.107.243:2222
+tunel.dian: OK, alguien escucha en 127.0.0.1:1080
+```
+
+Esa segunda linea existe porque **el bucle solo habla cuando `ssh` sale**: un `ssh` colgado
+que nunca llega a escuchar se veia identico a uno sano, y el problema aparecia disfrazado
+tres capas mas arriba como "no se pudo consultar la DIAN". Si en su lugar dice
+`NADIE ESCUCHA`, el tunel no levanto y las consultas a la API van a fallar.
+
+Cuando falla, el mensaje que llega a la pantalla **nombra al tunel**:
+
+> No se pudo conectar con la API de la DIAN a traves del tunel configurado. Puede estar
+> caida la DIAN o el tunel.
+
+Es deliberado. Con un texto generico ("la DIAN no responde") quien opere revisa el portal
+de la DIAN, lo ve funcionando, y pierde un rato largo antes de sospechar de una maquina
+propia que nadie le menciono. Ya paso dos veces.
+
+#### Dar acceso a otra persona
+
+**No repartas la llave del tunel.** Hoy es tambien la llave de `root` (ver el aviso de
+arriba), y ademas una llave compartida no se puede revocar por persona. Cada quien lleva
+la suya:
+
+```bash
+# 1. La persona genera SU par y manda SOLO el .pub
+ssh-keygen -t ed25519 -C "nombre-persona-declaras" -f ~/.ssh/declaras_vps
+
+# 2. Desde una sesion de root, se agrega su llave publica
+ssh -p 2222 -i ~/.ssh/declaras_dian_tunel_rsa root@149.104.107.243 \
+  "echo 'ssh-ed25519 AAAA... nombre-persona-declaras' >> /root/.ssh/authorized_keys"
+
+# 3. Revocar despues es borrar esa linea, sin tocar a nadie mas
+```
+
+Y el pendiente que conviene hacer en la misma pasada, **en este orden**, porque hacerlo al
+reves deja la maquina inaccesible:
+
+1. Crear una llave de administracion nueva y agregarla a `/root/.ssh/authorized_keys`.
+2. **Comprobar que entra.** En otra terminal, sin cerrar la sesion actual.
+3. Solo entonces, borrar de `/root/.ssh/authorized_keys` la linea de la llave del tunel.
+
+Al terminar, la llave que vive en Railway solo sirve para lo que dice su nombre.
+
+#### Si algo se rompe
+
+| Sintoma | Causa probable |
+|---|---|
+| `Connection timed out` al conectar | Se esta usando el puerto 22. Usa el 2222 |
+| `NADIE ESCUCHA en 127.0.0.1:1080` | El tunel no levanto: revisa la llave y el destino |
+| Tunel arriba pero los documentos no bajan | Falta `DECLARAS_DIAN_API_PROXY` |
+| `Permission denied (publickey)` | Llave equivocada, o permisos: `chmod 600` |
+| Los cambios de `sshd` no aplican | En `sshd_config` **gana el primer valor**, no el ultimo. El drop-in propio se llama `00-declaras.conf` justo para ganarle a `50-cloud-init.conf`, que trae `PasswordAuthentication yes` |
 
 ## Notas para quien parsee los documentos
 

@@ -127,6 +127,90 @@ async def test_quien_nunca_ha_declarado_no_es_un_error_del_sistema():
     # verificarlo, en vez de sentenciar que la declaracion no existe.
     assert "no reportó ninguna declaración presentada" in capturado.value.message
     assert "verificarlo en el portal" in capturado.value.message
+    assert capturado.value.details["evidencia"] == "respuesta 404 de la API: no existe"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# Lo que la DIAN responde de verdad
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+# Capturado el 2026-08-08 contra el portal real, con sesion valida y por el tunel de Colombia.
+# Es la respuesta LITERAL a `GET /formularios?estado=presentado` de un contribuyente que nunca
+# ha declarado: un 404 cuyo cuerpo trae un `codigo` 500 y una traza de pila de Java de unos
+# cuatro mil caracteres. Reproducirla textual es lo que hace que estas pruebas prueben algo:
+# un fixture inventado (`{"mensaje": "no existe"}`) no habria detectado ninguno de los dos
+# problemas que se arreglan aca.
+RESPUESTA_REAL_SIN_DOCUMENTOS = {
+    "codigo": 500,
+    "mensaje": "Documentos no encontrados",
+    "descripcion": (
+        "at co.gov.dian.muisca.diligenciamiento.rest.selformrenta210.resources.server."
+        "DilIngresoFormularioRenta210CrearFormOConsultarFormsServerResource$1:ejecutar:82\n"
+        + "at org.restlet.routing.Filter:doHandle:150\n" * 120
+    ),
+}
+
+
+def _handler_404_real():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        return httpx.Response(404, json=RESPUESTA_REAL_SIN_DOCUMENTOS)
+
+    return handler
+
+
+async def test_se_cita_lo_que_la_dian_contesto_y_no_solo_el_codigo():
+    """La razon por la que el cuerpo dejo de descartarse.
+
+    Con solo el codigo, "no hay declaracion", "el endpoint cambio" y "la sesion no alcanza"
+    llegaban al expediente como la misma frase, y distinguirlas obligaba a repetir la consulta a
+    mano contra el portal real. El cuerpo lo dice con todas las letras.
+    """
+    ctx, http = _contexto(_handler_404_real())
+    async with http:
+        with pytest.raises(DianDocumentUnavailableError) as capturado:
+            await download_prior_return(ctx, TaxpayerRef(id_number="1004683364", tax_year=2025))
+
+    assert 'La DIAN respondió: "Documentos no encontrados"' in capturado.value.message
+    assert capturado.value.details["evidencia"].endswith("Documentos no encontrados")
+
+
+async def test_la_traza_de_java_no_llega_ni_al_mensaje_ni_a_la_evidencia():
+    """La DIAN manda cuatro mil caracteres de traza junto a la frase util.
+
+    Arrastrarla completa llenaria los logs y volveria ilegible el mensaje que ve una persona, sin
+    aportar un dato que no este ya en `mensaje`.
+    """
+    ctx, http = _contexto(_handler_404_real())
+    async with http:
+        with pytest.raises(DianDocumentUnavailableError) as capturado:
+            await download_prior_return(ctx, TaxpayerRef(id_number="1004683364", tax_year=2025))
+
+    for texto in (capturado.value.message, capturado.value.details["evidencia"]):
+        assert "org.restlet" not in texto
+        assert len(texto) < 400
+
+
+async def test_un_404_sin_cuerpo_legible_no_inventa_una_cita():
+    """El portal puede responder 404 con HTML, vacio, o con un JSON sin `mensaje`.
+
+    Ahi no hay nada que citar, y el mensaje tiene que seguir siendo el prudente de siempre en vez
+    de arrastrar un `None` a la pantalla.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        return httpx.Response(404, content=b"<html>Not Found</html>")
+
+    ctx, http = _contexto(handler)
+    async with http:
+        with pytest.raises(DianDocumentUnavailableError) as capturado:
+            await download_prior_return(ctx, TaxpayerRef(id_number="10203040", tax_year=2025))
+
+    assert "La DIAN respondió" not in capturado.value.message
+    assert "None" not in capturado.value.message
     assert capturado.value.details["evidencia"] == "respuesta 404 de la API"
 
 
