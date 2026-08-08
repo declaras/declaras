@@ -102,9 +102,14 @@ async def test_si_solo_hay_otros_anios_informa_cuales_hay():
 
 
 async def test_quien_nunca_ha_declarado_no_es_un_error_del_sistema():
-    """La API responde 404, y no una lista vacia, cuando la persona no tiene ninguna declaracion
-    en ese estado. Es el caso real de quien declara por primera vez: tiene que salir como
-    documento no disponible, para que la extraccion siga y traiga los otros cuatro."""
+    """Un 404 sale como documento no disponible —para que la extraccion siga y traiga los otros
+    cuatro— PERO SIN AFIRMAR MAS DE LO QUE SE SABE.
+
+    Decia "la DIAN no tiene ninguna declaracion a nombre del contribuyente", que es una afirmacion
+    categorica sacada de un codigo HTTP ambiguo: un 404 tambien puede ser un endpoint que cambio o
+    un recurso al que la sesion no alcanza. Y la diferencia no es de redaccion — si la persona SI
+    declaro y aqui se afirma que no, el patrimonio inicial entra vacio a la declaracion nueva sin
+    que nadie lo note."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == DIAN_API.token_from_cookies:
@@ -118,8 +123,11 @@ async def test_quien_nunca_ha_declarado_no_es_un_error_del_sistema():
 
     assert capturado.value.code == "DIAN_DOCUMENT_UNAVAILABLE"
     assert not capturado.value.retryable, "volver a pedirla no la va a hacer aparecer"
-    # El mensaje lo lee una persona, y tiene que decir que no hay, no que algo se rompio.
-    assert "no tiene ninguna declaración presentada" in capturado.value.message
+    # El mensaje lo lee una persona: dice lo que se OBSERVO —que la DIAN no reporto nada— y pide
+    # verificarlo, en vez de sentenciar que la declaracion no existe.
+    assert "no reportó ninguna declaración presentada" in capturado.value.message
+    assert "verificarlo en el portal" in capturado.value.message
+    assert capturado.value.details["evidencia"] == "respuesta 404 de la API"
 
 
 async def test_el_mensaje_dice_de_que_estado_es_la_declaracion_que_falta():

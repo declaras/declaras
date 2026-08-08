@@ -123,18 +123,34 @@ async def _find_declaration(
 ) -> str:
     """Busca en la API el id de la declaracion del anio y estado indicados.
 
-    La API responde 404, y no una lista vacia, cuando la persona no tiene ninguna declaracion en
-    ese estado. Es el caso de quien declara por primera vez, asi que no es una falla: se traduce
-    al mismo "no esta disponible" que cuando la lista existe pero no trae ese anio.
+    DOS SENALES CON MUY DISTINTA FUERZA, y el mensaje tiene que reflejarlo.
+
+    Cuando la API DEVUELVE LA LISTA y ese ano no esta, sabemos bastante: la DIAN enumero lo que
+    tiene y ese ano no aparece. Ahi se puede afirmar la ausencia, y ademas se dicen los anos que
+    si tiene, que es lo que permite ver de un vistazo si la respuesta tiene sentido.
+
+    Cuando la API responde 404, sabemos MUCHO MENOS. Se venia traduciendo a "la DIAN no tiene
+    ninguna declaracion a nombre del contribuyente", que es una afirmacion categorica sobre la
+    vida tributaria de una persona derivada de un codigo HTTP ambiguo: un 404 tambien es un
+    endpoint que cambio, un parametro que dejo de servir, o un recurso al que esta sesion no
+    alcanza. Suponerlo es comodo y puede ser falso.
+
+    Y la diferencia no es de redaccion. Si el contribuyente SI presento declaracion y aquí se
+    afirma que no, el patrimonio inicial y los arrastres entran vacios a la declaracion nueva sin
+    que nadie lo note — que es exactamente la clase de error silencioso que este proyecto evita.
+    Por eso el 404 ahora dice lo que de verdad se observo y pide confirmarlo.
     """
     como_se_llama = _ESTADO_LEGIBLE.get(state, state)
     try:
         payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
     except DianDocumentUnavailableError as exc:
         raise DianDocumentUnavailableError(
-            f"La DIAN no tiene ninguna declaración {como_se_llama} a nombre del contribuyente.",
+            f"La DIAN no reportó ninguna declaración {como_se_llama}. Si el contribuyente sí "
+            f"declaró el {year}, hay que verificarlo en el portal: puede que la consulta haya "
+            "fallado y no que la declaración no exista.",
             doc_type=doc_type.value,
             tax_year=year,
+            evidencia="respuesta 404 de la API",
         ) from exc
 
     listado = (payload or {}).get("listadoFormularios", {}).get("infoFormularios", [])
@@ -144,10 +160,12 @@ async def _find_declaration(
             return str(item["identificador"]["id"])
     tiene = f"; sí la tiene de {', '.join(str(a) for a in anios)}" if anios else ""
     raise DianDocumentUnavailableError(
+        # Aca SI se afirma: la DIAN enumero lo que tiene y ese ano no esta.
         f"La DIAN no tiene la declaración {como_se_llama} del año gravable {year}{tiene}.",
         doc_type=doc_type.value,
         tax_year=year,
         available_years=anios,
+        evidencia="listado de la DIAN, sin ese año",
     )
 
 
