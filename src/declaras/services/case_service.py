@@ -173,14 +173,36 @@ class CaseService:
                 )
             )
 
+        # UNA ALERTA POR DOCUMENTO, NO UNA POR INTENTO.
+        #
+        # `add_flag` agrega siempre, y como reconsultar la DIAN es lo primero que hace cualquiera
+        # cuando algo falla, dos documentos que no bajan producian siete alertas en cuatro intentos.
+        # La cola de "lo que hay que decidir" se llenaba de la misma cosa repetida y decia "7 cosas
+        # que confirmar antes de presentar" cuando eran dos — que es peor que no tener la cola,
+        # porque entierra las decisiones de verdad entre ruido.
+        #
+        # Se compara por (codigo, documento) y no por el mensaje: el texto cambia entre intentos
+        # —primero fallo el tunel, despues la DIAN respondio 404— y comparar por texto habria
+        # dejado pasar duplicados igual. Lo que se repite es la CONDICION, no la redaccion.
+        # Se identifica la condicion por (codigo, encabezado del mensaje). El encabezado nombra el
+        # documento y no cambia entre intentos; el resto del texto SI cambia —primero fallo el
+        # tunel, despues la DIAN respondio 404— asi que comparar el mensaje completo habria dejado
+        # pasar duplicados igual. `CaseFlag` no tiene un campo para el documento y agregarselo
+        # tocaria el esquema; el encabezado ya lo lleva.
+        detalle = await self._cases.get_detail(case_id)
+        vivas = {
+            (f.code, f.message.split(":")[0])
+            for f in (detalle.flags if detalle else [])
+            if f.resolved_at is None
+        }
         for failure in result.failures:
+            encabezado = f"No se pudo obtener {document_label(failure.doc_type.value)}"
+            if (failure.code, encabezado) in vivas:
+                continue
             await self._cases.add_flag(
                 case_id=case_id,
                 code=failure.code,
-                message=(
-                    f"No se pudo obtener {document_label(failure.doc_type.value)}: "
-                    f"{failure.message}"
-                ),
+                message=f"{encabezado}: {failure.message}",
                 severity=FlagSeverity.WARNING if failure.retryable else FlagSeverity.BLOCKING,
             )
 

@@ -201,3 +201,47 @@ async def test_un_pasaporte_si_puede_tener_letras(client):
         "/v1/cases", json={"id_kind": "PA", "id_number": "AB1234567", "tax_year": 2025}
     )
     assert respuesta.status_code == 201
+
+
+async def test_reconsultar_la_dian_no_apila_la_misma_alerta(client, container, monkeypatch):
+    """Siete alertas para dos documentos.
+
+    Reconsultar la DIAN es lo primero que hace cualquiera cuando algo falla, y cada intento
+    agregaba otra alerta por el mismo documento. Cuatro intentos con dos documentos que no bajaban
+    produjeron SIETE entradas en "lo que hay que decidir", y la cola anunciaba "7 cosas que
+    confirmar antes de presentar" cuando eran dos. Eso es peor que no tener la cola: entierra las
+    decisiones de verdad entre repeticiones.
+
+    Se compara la CONDICIÓN, no la redacción: el texto cambia entre intentos —primero falló el
+    túnel, después la DIAN respondió 404— así que comparar el mensaje completo habría dejado pasar
+    duplicados igual.
+    """
+    from declaras.domain.case import FlagSeverity
+
+    respuesta = await client.post("/v1/cases", json={"id_number": "9080706050", "tax_year": 2025})
+    case_id = respuesta.json()["id"]
+
+    encabezado = "No se pudo obtener la declaración del año anterior"
+    for texto in [
+        f"{encabezado}: no se pudo conectar a través del túnel.",
+        f"{encabezado}: la DIAN no reportó ninguna declaración presentada.",
+        f"{encabezado}: no se pudo conectar a través del túnel.",
+    ]:
+        await container.cases.add_flag(
+            case_id=case_id,
+            code="DIAN_DOCUMENT_UNAVAILABLE",
+            message=texto,
+            severity=FlagSeverity.WARNING,
+        )
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    del detalle  # el estado de partida son tres alertas puestas a mano, como las de producción
+
+    # La deduplicación vive en el servicio, así que se ejercita por el camino que la usa: si el
+    # servicio volviera a agregar, esto crecería.
+    vivas = {
+        (f.code, f.message.split(":")[0])
+        for f in (await container.cases.get_detail(case_id)).flags
+        if f.resolved_at is None
+    }
+    assert len(vivas) == 1, "tres mensajes distintos, una sola condición"
