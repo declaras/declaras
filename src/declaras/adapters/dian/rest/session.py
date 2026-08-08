@@ -29,11 +29,14 @@ log = get_logger(__name__)
 class HttpDianSession:
     """Sesion autenticada sobre httpx: sin Chromium, sin DOM."""
 
-    def __init__(self, *, client: httpx.AsyncClient, base_url: str) -> None:
+    def __init__(
+        self, *, client: httpx.AsyncClient, base_url: str, api_por_tunel: bool = False
+    ) -> None:
         self.session_id = str(uuid4())
         self._portal = PortalClient(client, base_url)
         self._ctx = PortalContext(
-            portal=self._portal, api=DianApiClient(client, portal_url=base_url)
+            portal=self._portal,
+            api=DianApiClient(client, portal_url=base_url, por_tunel=api_por_tunel),
         )
         self._closed = False
 

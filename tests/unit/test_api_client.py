@@ -189,3 +189,32 @@ async def test_el_timeout_sigue_diciendo_que_fue_un_timeout():
         cliente = DianApiClient(http, portal_url=PORTAL)
         with pytest.raises(DianTimeoutError):
             await cliente.authenticate()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# El túnel de salida hacia api.dian.gov.co
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def test_sin_tunel_el_mensaje_no_menciona_un_tunel_que_no_existe():
+    async with httpx.AsyncClient(transport=_revienta_al_conectar(httpx.ConnectError("no"))) as http:
+        http.cookies.set("DIAN-MUISCA", COOKIE, domain="muisca.dian.gov.co")
+        cliente = DianApiClient(http, portal_url=PORTAL)
+        with pytest.raises(DianPortalUnavailableError) as caida:
+            await cliente.authenticate()
+    assert "túnel" not in str(caida.value)
+
+
+async def test_con_tunel_el_mensaje_lo_nombra():
+    """El día que el túnel se caiga, el mensaje tiene que decirlo.
+
+    Con un texto único —"la DIAN no responde"— quien opere revisa el portal de la DIAN, lo ve
+    funcionando, y pierde un rato largo antes de sospechar de una máquina propia que nadie
+    mencionó. El mensaje tiene que nombrar al sospechoso que solo nosotros conocemos.
+    """
+    async with httpx.AsyncClient(transport=_revienta_al_conectar(httpx.ConnectError("no"))) as http:
+        http.cookies.set("DIAN-MUISCA", COOKIE, domain="muisca.dian.gov.co")
+        cliente = DianApiClient(http, portal_url=PORTAL, por_tunel=True)
+        with pytest.raises(DianPortalUnavailableError) as caida:
+            await cliente.authenticate()
+    assert "túnel" in str(caida.value)

@@ -80,6 +80,29 @@ class Settings(BaseSettings):
     storage_gcs_bucket: str | None = None
 
     dian_base_url: str = "https://muisca.dian.gov.co"
+
+    # ── La salida hacia api.dian.gov.co ─────────────────────────────────────────────────
+    #
+    # La DIAN usa DOS hosts. `muisca.dian.gov.co` responde desde cualquier parte;
+    # `api.dian.gov.co` acepta el TCP y CORTA EL HANDSHAKE TLS si la peticion no sale de
+    # Colombia. Medido: desde Railway (Virginia) falla, desde Bogota responde 200. Los dos
+    # negocian TLS 1.3 con certificado valido, asi que no es incompatibilidad: es un filtro
+    # por la ubicacion de la IP de origen.
+    #
+    # Sin ese host se pierden tres documentos —la declaracion del ano pasado, la presentada y
+    # el borrador que la DIAN precarga— y con ellos las dos comparaciones.
+    #
+    # Esta variable es un tunel SOCKS5 con salida en Colombia (`socks5://host:puerto`). SOLO lo
+    # usa el cliente de `api.dian.gov.co`: el de muisca sigue saliendo directo, porque funciona y
+    # mandarlo por otro lado seria agregarle un punto de falla sin razon.
+    #
+    # TIENE QUE SER UN TUNEL, NUNCA UN PROXY QUE TERMINE TLS. Con un tunel el intermediario mueve
+    # bytes cifrados y NO PUEDE LEER la clave de la DIAN del contribuyente — la sesion TLS es
+    # entre este proceso y la DIAN. Con uno que termine TLS, esa clave queda en claro en una
+    # maquina de terceros.
+    #
+    # Vacia = salida directa, que es el comportamiento de siempre.
+    dian_api_proxy: str | None = None
     dian_adapter: DianAdapterKind = DianAdapterKind.HTTP
     dian_headless: bool = True
     dian_max_concurrent_sessions: int = Field(default=2, ge=1, le=10)

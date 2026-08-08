@@ -73,10 +73,30 @@ def build_digest(cookie_value: str) -> str:
 class DianApiClient:
     """Habla con api.dian.gov.co reusando la sesion del portal."""
 
-    def __init__(self, client: httpx.AsyncClient, *, portal_url: str) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, *, portal_url: str, por_tunel: bool = False
+    ) -> None:
         self._client = client
         self._portal_url = portal_url.rstrip("/")
         self._bearer: str | None = None
+        self._por_tunel = por_tunel
+
+    @property
+    def _falla_de_conexion(self) -> str:
+        """El mensaje de un fallo de red, que cambia segun por donde iba la peticion.
+
+        POR QUE NO ES UN SOLO TEXTO. Cuando hay tunel configurado, un fallo de conexion tiene dos
+        causas posibles y muy distintas: se cayo la DIAN, o se cayo NUESTRO tunel. Con un mensaje
+        unico —"la DIAN no responde"— quien opere va a revisar el portal de la DIAN, verlo
+        funcionando, y perder un rato largo antes de sospechar de una maquina propia que nadie
+        menciono. El texto tiene que nombrar al sospechoso que solo nosotros conocemos.
+        """
+        if self._por_tunel:
+            return (
+                "No se pudo conectar con la API de la DIAN a través del túnel configurado. "
+                "Puede estar caída la DIAN o el túnel."
+            )
+        return "No se pudo establecer la conexión con la API de la DIAN."
 
     @property
     def is_authenticated(self) -> bool:
@@ -111,7 +131,7 @@ class DianApiClient:
             #
             # `TransportError` es el padre de las dos, asi que este par cubre la familia completa.
             raise DianPortalUnavailableError(
-                "No se pudo establecer la conexión con la API de la DIAN.",
+                self._falla_de_conexion,
                 url=f"{DIAN_API.base_url}{DIAN_API.token_from_cookies}",
             ) from exc
 
@@ -138,9 +158,7 @@ class DianApiClient:
         except httpx.TransportError as exc:
             # Ver la nota de `authenticate`: sin esta rama un `ConnectError` no era un `DianError`
             # y tumbaba la consulta completa en vez de solo este documento.
-            raise DianPortalUnavailableError(
-                "No se pudo establecer la conexión con la API de la DIAN.", url=url
-            ) from exc
+            raise DianPortalUnavailableError(self._falla_de_conexion, url=url) from exc
 
         _raise_for_status(response, url=url)
         return response.json()
@@ -159,9 +177,7 @@ class DianApiClient:
         except httpx.TransportError as exc:
             # Ver la nota de `authenticate`: sin esta rama un `ConnectError` no era un `DianError`
             # y tumbaba la consulta completa en vez de solo este documento.
-            raise DianPortalUnavailableError(
-                "No se pudo establecer la conexión con la API de la DIAN.", url=url
-            ) from exc
+            raise DianPortalUnavailableError(self._falla_de_conexion, url=url) from exc
 
         _raise_for_status(response, url=url)
         return response.content, response.headers

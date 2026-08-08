@@ -18,7 +18,7 @@ def build_dian_connector(settings: Settings) -> DianConnector:
     if settings.dian_adapter is DianAdapterKind.HTTP:
         from declaras.adapters.dian.rest.connector import HttpDianConnector
 
-        return HttpDianConnector(base_url=settings.dian_base_url)
+        return HttpDianConnector(base_url=settings.dian_base_url, api_proxy=settings.dian_api_proxy)
 
     from declaras.adapters.dian.browser import BrowserPool
     from declaras.adapters.dian.connector import PlaywrightDianConnector

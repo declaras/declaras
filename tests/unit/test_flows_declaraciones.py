@@ -136,3 +136,33 @@ async def test_el_mensaje_dice_de_que_estado_es_la_declaracion_que_falta():
         with pytest.raises(DianDocumentUnavailableError) as capturado:
             await download_suggested_return(ctx, TaxpayerRef(id_number="10203040", tax_year=2025))
     assert "en borrador" in capturado.value.message
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# Qué sale por el túnel y qué no
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+
+def test_solo_la_api_de_la_dian_sale_por_el_tunel():
+    """`muisca` sigue saliendo directo, y eso es una decisión.
+
+    Solo `api.dian.gov.co` está bloqueado fuera de Colombia. Mandar también a `muisca` por el
+    túnel le agregaría un punto de falla a lo único que hoy funciona desde cualquier parte, y
+    triplicaría el tráfico que pasa por una máquina de terceros.
+    """
+    from declaras.adapters.dian.rest.connector import HttpDianConnector
+
+    con = HttpDianConnector(base_url="https://muisca.dian.gov.co", api_proxy="socks5://127.0.0.1:1")
+    assert con._api_proxy == "socks5://127.0.0.1:1"
+
+    sin = HttpDianConnector(base_url="https://muisca.dian.gov.co")
+    assert sin._api_proxy is None
+
+
+def test_sin_proxy_configurado_no_se_monta_ningun_transporte():
+    """El default es salida directa: en un despliegue que ya alcanza la DIAN —o corriendo desde
+    Colombia— no hay razón para meter un intermediario, y meterlo sería agregar una dependencia
+    que puede caerse."""
+    from declaras.config.settings import Settings
+
+    assert Settings().dian_api_proxy is None

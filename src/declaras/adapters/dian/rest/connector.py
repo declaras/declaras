@@ -26,17 +26,32 @@ log = get_logger(__name__)
 class HttpDianConnector:
     """Implementa DianConnector sobre httpx."""
 
-    def __init__(self, *, base_url: str, timeout_s: float = 60.0) -> None:
+    def __init__(
+        self, *, base_url: str, timeout_s: float = 60.0, api_proxy: str | None = None
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout_s = timeout_s
+        self._api_proxy = api_proxy
 
     async def open_session(
         self, credentials: DianCredentials, taxpayer: TaxpayerRef
     ) -> HttpDianSession:
+        # SOLO `api.dian.gov.co` SALE POR EL TUNEL, y el resto sigue directo.
+        #
+        # `mounts` enruta por host: es lo que permite que la misma sesion —las mismas cookies, el
+        # mismo estado del portal— hable con los dos hosts por caminos distintos. Mandar tambien a
+        # muisca por el tunel seria agregarle un punto de falla a algo que ya funciona, y triplicar
+        # el trafico que pasa por una maquina de terceros.
+        mounts = (
+            {"all://api.dian.gov.co": httpx.AsyncHTTPTransport(proxy=self._api_proxy)}
+            if self._api_proxy
+            else None
+        )
         client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=self._timeout_s,
             headers={"User-Agent": USER_AGENT, "Accept-Language": "es-CO,es;q=0.9"},
+            mounts=mounts or {},
         )
         try:
             await authenticate(client, base_url=self._base_url, credentials=credentials)
@@ -46,7 +61,9 @@ class HttpDianConnector:
             raise
 
         log.info("dian.http.session_opened")
-        return HttpDianSession(client=client, base_url=self._base_url)
+        return HttpDianSession(
+            client=client, base_url=self._base_url, api_por_tunel=bool(self._api_proxy)
+        )
 
     async def shutdown(self) -> None:
         return None
