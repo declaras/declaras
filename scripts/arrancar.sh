@@ -64,6 +64,26 @@ if [ -n "$DECLARAS_DIAN_TUNEL_DESTINO" ] && [ -n "$DECLARAS_DIAN_TUNEL_LLAVE" ];
             "$DECLARAS_DIAN_TUNEL_DESTINO" || echo "tunel.dian: se cayo, reintentando en 5s"
         sleep 5
     done &
+
+    # SONDA DE ARRANQUE. Sin esto, "el tunel esta arriba" era una suposicion: el bucle solo habla
+    # cuando ssh SALE, asi que un ssh colgado sin llegar a escuchar se ve igual que uno sano. Y el
+    # sintoma llegaba disfrazado tres capas mas arriba, como "no se pudo consultar la DIAN".
+    #
+    # Comprueba lo unico que importa —que alguien escuche en el puerto SOCKS— y lo deja escrito.
+    # Se usa python y no curl porque python seguro esta en la imagen y curl no necesariamente.
+    (
+        sleep 10
+        python3 - "$PUERTO" <<'SONDA'
+import socket, sys
+puerto = int(sys.argv[1])
+try:
+    with socket.create_connection(("127.0.0.1", puerto), timeout=5):
+        print(f"tunel.dian: OK, alguien escucha en 127.0.0.1:{puerto}", flush=True)
+except OSError as e:
+    print(f"tunel.dian: NADIE ESCUCHA en 127.0.0.1:{puerto} ({e}). "
+          "Las consultas a api.dian.gov.co van a fallar.", flush=True)
+SONDA
+    ) &
 fi
 
 # `exec` para que uvicorn REEMPLACE a este shell y sea el proceso 1: asi recibe las senales de
