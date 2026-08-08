@@ -41,12 +41,20 @@ if [ -n "$DECLARAS_DIAN_TUNEL_DESTINO" ] && [ -n "$DECLARAS_DIAN_TUNEL_LLAVE" ];
     chmod 600 "$LLAVE"
 
     PUERTO="${DECLARAS_DIAN_TUNEL_PUERTO:-1080}"
-    echo "tunel.dian: levantando SOCKS5 en 127.0.0.1:$PUERTO hacia $DECLARAS_DIAN_TUNEL_DESTINO"
+    # PUERTO SSH NO ESTANDAR, Y NO ES PARANOIA DE SEGURIDAD.
+    #
+    # Medido: desde fuera de Colombia el proveedor del VPS BLOQUEA el 22 —muy comun, por abuso de
+    # escaneo— mientras el 2222 y el 443 pasan sin problema. Con el 22 el tunel daba "Connection
+    # timed out" en bucle desde Railway, y el sintoma que llegaba a la pantalla era "no se pudo
+    # conectar con la API de la DIAN".
+    SSH_PUERTO="${DECLARAS_DIAN_TUNEL_SSH_PUERTO:-2222}"
+    echo "tunel.dian: levantando SOCKS5 en 127.0.0.1:$PUERTO hacia $DECLARAS_DIAN_TUNEL_DESTINO:$SSH_PUERTO"
 
     # 127.0.0.1 y no 0.0.0.0: el SOCKS es para ESTE proceso. Escuchando en todas las interfaces
     # seria un proxy abierto para cualquiera que alcance el contenedor.
     while true; do
         ssh -N -D "127.0.0.1:$PUERTO" \
+            -p "$SSH_PUERTO" \
             -i "$LLAVE" \
             -o StrictHostKeyChecking=accept-new \
             -o ExitOnForwardFailure=yes \
