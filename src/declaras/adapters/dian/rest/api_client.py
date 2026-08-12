@@ -38,6 +38,36 @@ log = get_logger(__name__)
 _SESSION_COOKIE = "DIAN-MUISCA"
 
 
+def motivo_de_la_dian(response: httpx.Response) -> str | None:
+    """El `mensaje` con que la DIAN explica un error, si viene y es presentable.
+
+    ═══ POR QUE HAY QUE LEER EL CUERPO Y NO SOLO EL CODIGO ═══
+
+    Un 404 de esta API es ambiguo hasta la inutilidad: puede ser "no hay documentos", un
+    endpoint que cambio, o un recurso al que esta sesion no alcanza. Se descartaba el cuerpo y se
+    conservaba solo el numero, asi que las tres cosas llegaban al expediente como una sola frase,
+    y no habia forma de saber cual era sin volver a correr la consulta a mano contra el portal
+    real. Se hizo, y el cuerpo lo decia con todas las letras: `Documentos no encontrados`.
+
+    ═══ POR QUE SOLO `mensaje` Y NO EL CUERPO ENTERO ═══
+
+    La DIAN acompana ese texto con un `descripcion` que es una traza de pila de Java de unos
+    cuatro mil caracteres. Guardarla completa llenaria los logs y el mensaje que ve una persona
+    sin agregar un dato que no este ya en `mensaje`. Se toma la frase y se descarta el resto; el
+    tope de 200 caracteres es por si algun dia esa frase tampoco es una frase.
+    """
+    if "json" not in response.headers.get("content-type", ""):
+        return None
+    try:
+        cuerpo = response.json()
+    except ValueError:
+        return None
+    mensaje = cuerpo.get("mensaje") if isinstance(cuerpo, dict) else None
+    if not isinstance(mensaje, str) or not mensaje.strip():
+        return None
+    return mensaje.strip()[:200]
+
+
 def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     """Traduce la respuesta de la API a un error del dominio.
 
@@ -56,7 +86,10 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
         raise DianSessionExpiredError("La sesión con la DIAN se venció.")
     if codigo == httpx.codes.NOT_FOUND:
         raise DianDocumentUnavailableError(
-            "La DIAN no tiene ese documento.", url=url, status=codigo
+            "La DIAN no tiene ese documento.",
+            url=url,
+            status=codigo,
+            motivo=motivo_de_la_dian(response),
         )
     if codigo == httpx.codes.TOO_MANY_REQUESTS:
         raise DianRateLimitedError("La DIAN está limitando las consultas.")

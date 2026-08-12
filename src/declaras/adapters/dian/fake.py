@@ -12,7 +12,14 @@ La rama se escoge con la clave enviada:
     contiene "slow"       -> DIAN_PORTAL_TIMEOUT
     contiene "challenge"  -> reto de identidad (patron relevo); se resuelve con "1234"
     contiene "noexo"      -> exogena no publicada, el resto si baja
+    contiene "sindecl"    -> primerizo: no hay declaracion anterior ni borrador
     cualquier otra        -> exito completo
+
+EL ESCENARIO "sindecl" NO ES HIPOTETICO. Es lo que le pasa al primer contribuyente real del
+producto, verificado contra el portal el 2026-08-08: la DIAN responde 404 a las dos consultas
+de declaraciones y la extraccion entrega tres documentos de cinco. Faltaba como escenario, asi
+que todo el camino que sigue —conciliacion, liquidacion y sobre todo las dos comparaciones, que
+dependen justo de esos dos documentos— solo se ejercitaba con el caso feliz.
 """
 
 from __future__ import annotations
@@ -42,6 +49,9 @@ from declaras.domain.models import (
 _EXPECTED_CHALLENGE_ANSWER = "1234"
 _PDF_STUB = b"%PDF-1.4\n%% documento de prueba declaras\n"
 
+# Los dos documentos que salen de `api.dian.gov.co` y que un primerizo no tiene.
+_DECLARACIONES = frozenset({DocumentType.PRIOR_RETURN, DocumentType.SUGGESTED_RETURN})
+
 
 class FakeDianSession:
     """Sesion falsa que devuelve documentos sinteticos estables."""
@@ -65,6 +75,16 @@ class FakeDianSession:
             raise DianDocumentUnavailableError(
                 "La DIAN todavía no publica la información exógena del periodo.",
                 doc_label="exogena",
+            )
+        if doc_type in _DECLARACIONES and "sindecl" in self._scenario:
+            # Se cita el `mensaje` real de la DIAN, igual que hace el conector HTTP, para que lo
+            # que se prueba aca sea del mismo material que llega en produccion.
+            raise DianDocumentUnavailableError(
+                'La DIAN no reportó ninguna declaración. La DIAN respondió: "Documentos no '
+                "encontrados\". Si el contribuyente sí declaró, hay que verificarlo en el "
+                "portal: puede que la consulta haya fallado y no que la declaración no exista.",
+                doc_type=doc_type.value,
+                evidencia="respuesta 404 de la API: Documentos no encontrados",
             )
         return RawDocument(
             doc_type=doc_type,

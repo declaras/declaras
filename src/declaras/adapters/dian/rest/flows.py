@@ -139,18 +139,28 @@ async def _find_declaration(
     afirma que no, el patrimonio inicial y los arrastres entran vacios a la declaracion nueva sin
     que nadie lo note — que es exactamente la clase de error silencioso que este proyecto evita.
     Por eso el 404 ahora dice lo que de verdad se observo y pide confirmarlo.
+
+    QUE DICE LA DIAN CUANDO NO TIENE NADA, verificado contra el portal real el 2026-08-08 con una
+    sesion valida: responde 404 con el cuerpo
+    `{"codigo":500,"mensaje":"Documentos no encontrados","descripcion":<traza de Java>}`. O sea
+    que la ambiguedad del codigo se resuelve leyendo el cuerpo — y por eso se arrastra su
+    `mensaje` hasta aca en vez de descartarlo. Cuando ese texto viene, se cita: es la unica
+    evidencia que distingue "no hay" de "la consulta fallo", y citarla ademas deja registrado el
+    dia que la DIAN cambie de respuesta.
     """
     como_se_llama = _ESTADO_LEGIBLE.get(state, state)
     try:
         payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={state}")
     except DianDocumentUnavailableError as exc:
+        motivo = exc.details.get("motivo")
+        cita = f' La DIAN respondió: "{motivo}".' if motivo else ""
         raise DianDocumentUnavailableError(
-            f"La DIAN no reportó ninguna declaración {como_se_llama}. Si el contribuyente sí "
-            f"declaró el {year}, hay que verificarlo en el portal: puede que la consulta haya "
+            f"La DIAN no reportó ninguna declaración {como_se_llama}.{cita} Si el contribuyente "
+            f"sí declaró el {year}, hay que verificarlo en el portal: puede que la consulta haya "
             "fallado y no que la declaración no exista.",
             doc_type=doc_type.value,
             tax_year=year,
-            evidencia="respuesta 404 de la API",
+            evidencia=f"respuesta 404 de la API: {motivo}" if motivo else "respuesta 404 de la API",
         ) from exc
 
     listado = (payload or {}).get("listadoFormularios", {}).get("infoFormularios", [])
