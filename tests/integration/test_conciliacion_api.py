@@ -118,6 +118,22 @@ async def _conciliado(client, *filas: dict) -> str:
     return case_id
 
 
+async def _sin_patrimonio(client, case_id: str) -> None:
+    """Contesta que no a las tres compuertas del patrimonio.
+
+    Hace falta en todo test que CIERRE el borrador: el patrimonio sin contestar bloquea el cierre a
+    propósito, porque el patrimonio bruto es uno de los cinco topes que obligan a declarar y una
+    declaración dada por lista sin saber si la persona tiene casa es una declaración incompleta.
+    Un `no` explícito vale: lo que no vale es el silencio.
+    """
+    for pregunta in ("INMUEBLES", "VEHICULOS", "OTROS_BIENES"):
+        respuesta = await client.post(
+            f"/v1/cases/{case_id}/respuestas",
+            json={"pregunta": pregunta, "tiene": False, "quien": "cliente"},
+        )
+        assert respuesta.status_code == 200, respuesta.text
+
+
 async def _partidas(client, case_id: str) -> list[dict]:
     respuesta = await client.get(f"/v1/cases/{case_id}/conciliacion")
     assert respuesta.status_code == 200, respuesta.text
@@ -797,6 +813,7 @@ async def test_no_se_cierra_el_borrador_con_un_aviso_bloqueante_vivo(client):
         f"/v1/cases/{case_id}/conciliacion/901222333:HONORARIOS/resolver",
         json={"decision": "LLEVAR_A_MANO", "motivo": "FUERA_DEL_MOTOR", "quien": "contador"},
     )
+    await _sin_patrimonio(client, case_id)
     respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert respuesta.status_code == 409
     assert respuesta.json()["code"] == "LIQUIDACION_BLOQUEADA"
@@ -812,6 +829,7 @@ async def test_no_se_cierra_un_borrador_que_el_sistema_se_niega_a_imprimir(clien
     await _subir(client, case_id, DOC_220, "220.pdf", _bytes_220())
     assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
 
+    await _sin_patrimonio(client, case_id)
     respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert respuesta.status_code == 409
     assert respuesta.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
@@ -832,6 +850,7 @@ async def test_un_bloqueante_que_aparece_despues_de_la_ultima_version_igual_bloq
     assert resumen["pendientes"] == 1
 
     # Mientras el caso no se arme, cerrar se niega por falta de decisiones...
+    await _sin_patrimonio(client, case_id)
     primero = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert primero.status_code == 409
     assert primero.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
@@ -842,6 +861,7 @@ async def test_un_bloqueante_que_aparece_despues_de_la_ultima_version_igual_bloq
         f"/v1/cases/{case_id}/conciliacion/901222333:HONORARIOS/resolver",
         json={"decision": "LLEVAR_A_MANO", "motivo": "FUERA_DEL_MOTOR", "quien": "contador"},
     )
+    await _sin_patrimonio(client, case_id)
     segundo = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert segundo.status_code == 409
     assert segundo.json()["code"] == "LIQUIDACION_BLOQUEADA"
@@ -875,6 +895,7 @@ async def test_no_se_cierra_sin_haber_conciliado_nunca(client):
         negado = await client.get(f"/v1/cases/{case_id}/{ruta}")
         assert negado.status_code == 409, ruta
         assert negado.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
+    await _sin_patrimonio(client, case_id)
     cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert cerrar.status_code == 409
     assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
@@ -888,6 +909,7 @@ async def test_un_expediente_vacio_tampoco_produce_un_210_en_cero(client):
     for ruta in ("borrador", "memoria", "liquidacion"):
         negado = await client.get(f"/v1/cases/{case_id}/{ruta}")
         assert negado.status_code == 409, ruta
+    await _sin_patrimonio(client, case_id)
     assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 409
 
 
@@ -919,6 +941,7 @@ async def test_un_documento_que_entro_por_otra_puerta_invalida_los_renglones(cli
     assert rancia["falta_para_liquidar"]
     for ruta in ("borrador", "memoria"):
         assert (await client.get(f"/v1/cases/{case_id}/{ruta}")).status_code == 409, ruta
+    await _sin_patrimonio(client, case_id)
     cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert cerrar.status_code == 409
     assert cerrar.json()["code"] == "LIQUIDACION_NO_DISPONIBLE"
@@ -948,6 +971,7 @@ async def test_un_certificado_que_entro_por_otra_puerta_tambien_invalida(client,
     cuerpo = (await client.get(f"/v1/cases/{case_id}/liquidacion")).json()
     assert cuerpo["actual_vigente"] is False
     assert (await client.get(f"/v1/cases/{case_id}/borrador")).status_code == 409
+    await _sin_patrimonio(client, case_id)
     assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 409
 
 
@@ -959,6 +983,9 @@ async def test_no_se_cierra_si_alguien_resolvio_entre_la_revision_y_el_cierre(
     GUARD, no el planificador: la revisión se mueve entre que `cerrar` lee el estado y va a
     cerrar, que es exactamente lo que pasa cuando otra request resuelve un renglón."""
     case_id = await _conciliado(client)
+    # El patrimonio se contesta ANTES de instalar el espía: `/respuestas` también lee la revisión,
+    # así que contestarlo después consumía el contador y desarmaba la carrera que este test monta.
+    await _sin_patrimonio(client, case_id)
     original = type(container.conciliacion).revision
     llamadas = {"n": 0}
 
@@ -983,6 +1010,7 @@ async def test_cerrar_y_resolver_a_la_vez_no_fechan_un_cierre_con_una_cifra_viej
     case_id = await _conciliado(client)
 
     async def cerrar():
+        await _sin_patrimonio(client, case_id)
         return await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
 
     async def corregir():
@@ -1067,6 +1095,7 @@ async def test_conciliar_sin_cambios_no_tumba_el_cierre(client):
     listas se comparaban en órdenes distintos, y las provisionales del sistema se re-derivan
     con `cuando` fresco."""
     case_id = await _conciliado(client)
+    await _sin_patrimonio(client, case_id)
     assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
 
     await client.post(f"/v1/cases/{case_id}/conciliacion")
@@ -1099,6 +1128,7 @@ async def test_no_se_cierra_si_entra_un_documento_entre_la_revision_y_el_cierre(
         return resultado
 
     monkeypatch.setattr(modulo.ConciliacionService, "_de_hoy", entra_un_documento)
+    await _sin_patrimonio(client, case_id)
     respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert respuesta.status_code == 409, respuesta.text
     assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] != "DRAFT_READY"
@@ -1124,6 +1154,7 @@ async def test_una_exogena_sin_filas_tambien_produce_su_210(client):
     assert borrador.status_code == 200, borrador.text
     assert "Borrador Formulario 210" in borrador.text
     assert (await client.get(f"/v1/cases/{case_id}/memoria")).status_code == 200
+    await _sin_patrimonio(client, case_id)
     cerrar = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert cerrar.status_code == 200, cerrar.text
     assert cerrar.json()["status"] == "DRAFT_READY"
@@ -1136,6 +1167,9 @@ async def test_la_invalidacion_ve_un_cierre_que_ocurrio_a_mitad_de_la_request(cl
     from declaras.services import conciliacion_service as modulo
 
     case_id = await _conciliado(client)
+    # El cierre que este test dispara desde dentro tiene que poder ocurrir de verdad, o la ventana
+    # que quiere ejercitar no se abre nunca.
+    await _sin_patrimonio(client, case_id)
     original = modulo.ConciliacionService._registrar_descartadas
     hecho = {"cerrado": False}
 
@@ -1160,6 +1194,7 @@ async def test_resolver_despues_de_cerrar_tumba_el_cierre(client):
     el test de carrera, que es no determinístico. Secuencial: cerrar y después corregir un
     renglón deja el borrador por revisar otra vez."""
     case_id = await _conciliado(client)
+    await _sin_patrimonio(client, case_id)
     assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
 
     corregido = await client.post(
@@ -1181,6 +1216,7 @@ async def test_cerrar_deja_de_valer_cuando_los_renglones_cambian(client):
     """`DRAFT_READY` era terminal de hecho: nada lo invalidaba. Un borrador "listo" que ya
     no corresponde al expediente es la misma mentira, persistida en el estado."""
     case_id = await _conciliado(client)
+    await _sin_patrimonio(client, case_id)
     assert (await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")).status_code == 200
     assert (await client.get(f"/v1/cases/{case_id}")).json()["status"] == "DRAFT_READY"
 
@@ -1192,6 +1228,7 @@ async def test_cerrar_deja_de_valer_cuando_los_renglones_cambian(client):
 
 async def test_el_borrador_sin_bloqueantes_si_se_cierra(client):
     case_id = await _conciliado(client)
+    await _sin_patrimonio(client, case_id)
     respuesta = await client.post(f"/v1/cases/{case_id}/liquidacion/cerrar")
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json()["status"] == "DRAFT_READY"

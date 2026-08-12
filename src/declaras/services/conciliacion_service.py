@@ -25,7 +25,16 @@ from uuid import UUID
 
 from pydantic import ValidationError as PydanticValidationError
 
-from declaras.caso import Beneficios, CasoTributario, Contribuyente, Movimientos
+from declaras.caso import (
+    Activo,
+    Beneficios,
+    CasoTributario,
+    Contribuyente,
+    Deuda,
+    Movimientos,
+    Patrimonio,
+)
+from declaras.dinero import en_pesos
 from declaras.documents.models import DocumentReading
 from declaras.domain.case import Case, CaseDetail, CaseDocument, CaseStatus, FlagSeverity
 from declaras.domain.case_ports import CaseRepository
@@ -79,11 +88,24 @@ from declaras.services.conciliacion import (
 # pendientes, y una segunda copia haría que la cola del contador y la lista del API se
 # ordenaran distinto sin que nadie lo note.
 from declaras.services.conciliacion.beneficios import beneficios_de
+from declaras.services.conciliacion.patrimonio import (
+    PREGUNTAS,
+    BienCapturado,
+    PreguntaPatrimonio,
+    Valoracion,
+    a_patrimonio,
+    falta_por_contestar,
+    valorar,
+)
 from declaras.services.conciliacion.recomendaciones import (
     Recomendaciones,
     derivar_recomendaciones,
 )
 from declaras.services.conciliacion.resolucion import _plata_en_juego
+
+# Las claves de las compuertas de patrimonio, para separarlas de las demás respuestas del
+# expediente (prepagada, dependientes...) cuando se arma la vista.
+_CLAVES = {p.pregunta for p in PREGUNTAS}
 
 log = get_logger(__name__)
 
@@ -160,11 +182,43 @@ class ConciliacionRepository(Protocol):
 
     async def registrar_respuesta(self, case_id: UUID, respuesta: Respuesta) -> Respuesta: ...
 
+    async def bienes(self, case_id: UUID) -> list[BienCapturado]: ...
+
+    async def guardar_bien(self, case_id: UUID, bien: BienCapturado) -> BienCapturado: ...
+
+    async def borrar_bien(self, case_id: UUID, bien_id: str) -> bool: ...
+
     async def versiones(self, case_id: UUID) -> list[LiquidacionVersionada]: ...
 
     async def agregar_version(
         self, case_id: UUID, version: LiquidacionVersionada
     ) -> LiquidacionVersionada: ...
+
+
+@dataclass
+class VistaPatrimonio:
+    """El patrimonio del caso visto de una sola vez: lo que se sabe y lo que falta preguntar.
+
+    `reportados` y `bienes` son las dos mitades y NO se suman en una sola lista a propósito. Se
+    consiguen distinto (una llega sola por la exógena, la otra hay que preguntarla), se corrigen
+    distinto (la primera se corrige resolviendo un renglón del cruce, la segunda editando el bien)
+    y equivocarse de mitad es pedirle a un cliente un papel de algo que el sistema ya tenía.
+    """
+
+    preguntas: list[PreguntaPatrimonio]
+    # Qué se contestó a cada compuerta. Ausente = sin contestar, que no es lo mismo que un `False`.
+    contestadas: dict[str, bool]
+    bienes: list[tuple[BienCapturado, Valoracion]]
+    reportados: list[Activo]
+    deudas_reportadas: list[Deuda]
+    capturado: int
+    patrimonio_liquido_anterior: int | None
+    # Las frases que dicen por qué el patrimonio no está completo. Vacía = completo.
+    falta: list[str]
+
+    @property
+    def completo(self) -> bool:
+        return not self.falta
 
 
 @dataclass
@@ -191,6 +245,22 @@ class Estado:
     # ensamble. Viajan en el estado porque se calculan donde se calcula el caso —el mismo
     # sitio único— y de acá los toma quien liquida.
     avisos_beneficios: list[Flag] = field(default_factory=list)
+    # Los del camino de PATRIMONIO, que tampoco pasa por partidas y por la razón opuesta a la de
+    # los beneficios: nadie le reporta a la DIAN, año tras año, que alguien sigue siendo dueño de
+    # su apartamento. Van aparte de los de beneficios porque se calculan de otra fuente, y se
+    # consumen juntos por `avisos_de_captura`.
+    avisos_patrimonio: list[Flag] = field(default_factory=list)
+
+    @property
+    def avisos_de_captura(self) -> list[Flag]:
+        """Todo lo que hay que avisar de lo que NO salió del cruce, en un solo sitio.
+
+        Existe para que agregar un tercer camino de captura sea una línea acá y no una cacería de
+        los sitios que arman `avisos_extra`: hoy son dos y ya se llaman desde dos lugares distintos
+        (la versión que se persiste y la liquidación de hoy), así que olvidarse de uno sería un
+        borrador al que le faltan alertas sin que nada falle.
+        """
+        return [*self.avisos_beneficios, *self.avisos_patrimonio]
 
     @property
     def pendientes(self) -> list[Partida]:
@@ -294,6 +364,7 @@ class ConciliacionService:
             detail=detail,
             revision=revision,
             corresponde=await self._corresponde(case_id, detail),
+            bienes=await self._repo.bienes(case_id),
         )
 
     async def _corresponde(self, case_id: UUID, detail: CaseDetail) -> bool:
@@ -315,6 +386,7 @@ class ConciliacionService:
         detail: CaseDetail,
         revision: int,
         corresponde: bool,
+        bienes: list[BienCapturado],
     ) -> Estado:
         """EL ÚNICO SITIO donde se decide si hay caso que liquidar.
 
@@ -340,7 +412,13 @@ class ConciliacionService:
         beneficios, avisos_beneficios = beneficios_de(
             d.reading for d in detail.documents if d.reading is not None
         )
-        caso, falta = self._intentar_caso(partidas, detail, beneficios)
+        # El patrimonio se arma en el MISMO sitio y por la misma razón: es el otro canal que no
+        # pasa por partidas, y si se armara por fuera habría un camino capaz de producir un
+        # `Estado` con el caso de un lado y sus bienes del otro.
+        patrimonio, avisos_patrimonio = a_patrimonio(
+            bienes, patrimonio_liquido_anterior=self._patrimonio_anterior(detail)
+        )
+        caso, falta = self._intentar_caso(partidas, detail, beneficios, patrimonio)
         return Estado(
             partidas=partidas,
             huerfanas=huerfanas,
@@ -348,7 +426,28 @@ class ConciliacionService:
             falta=falta,
             revision=revision,
             avisos_beneficios=avisos_beneficios,
+            avisos_patrimonio=avisos_patrimonio,
         )
+
+    @staticmethod
+    def _patrimonio_anterior(detail: CaseDetail) -> int | None:
+        """El patrimonio líquido que la persona declaró el año pasado, si su 210 está en el caso.
+
+        Es el insumo de la comparación patrimonial del art. 236, que `motor/cierre.py` ya sabía
+        calcular y nunca calculaba: el campo existía en el modelo y nadie lo llenaba, así que el
+        chequeo estaba apagado en todos los casos reales. La declaración anterior YA se descarga
+        del portal y YA se lee (casillas 29, 30 y 31), solo que su lectura no la consumía nadie.
+
+        `None` no es cero, y la diferencia es la que evita una alerta falsa: sin declaración
+        anterior no se puede afirmar que el patrimonio creció, y un cero diría que creció todo.
+        """
+        for documento in detail.documents:
+            if documento.doc_type != "PRIOR_RETURN" or documento.reading is None:
+                continue
+            for campo in documento.reading.fields:
+                if campo.name == "casilla_31" and isinstance(campo.value, int):
+                    return campo.value
+        return None
 
     async def resolver_partida(
         self,
@@ -409,6 +508,7 @@ class ConciliacionService:
             huerfanas=estado.huerfanas,
             detail=await self._detalle(case_id),
             revision=revision,
+            bienes=await self._repo.bienes(case_id),
             # El veredicto se hereda del estado que se leyó: resolver no re-deriva el cruce,
             # así que no puede volver correspondiente algo que no lo era.
             corresponde=estado.corresponde_al_expediente,
@@ -438,6 +538,70 @@ class ConciliacionService:
         return derivar_recomendaciones(
             estado.partidas, respuestas, caso, p=self._parametros(detail)
         )
+
+    async def patrimonio(self, case_id: UUID) -> VistaPatrimonio:
+        """Todo lo que hay que saber del patrimonio del caso, en una sola lectura.
+
+        Junta las dos mitades que la pantalla necesita ver JUNTAS: lo que la exógena ya reporta
+        (saldos bancarios, cesantías) y lo que solo puede contar una persona (la casa, el carro).
+        Separarlas en dos llamadas dejaría a quien pregunta sin saber qué ya está contado, y la
+        pregunta más cara del cuestionario es la que se hace por algo que el sistema ya sabía.
+        """
+        detail = await self._detalle(case_id)
+        bienes = await self._repo.bienes(case_id)
+        respuestas = await self._repo.respuestas(case_id)
+        patrimonio, _avisos = a_patrimonio(
+            bienes, patrimonio_liquido_anterior=self._patrimonio_anterior(detail)
+        )
+        estado = await self.estado(case_id)
+        # `clase == "manual"` es lo capturado; lo demás salió de una partida del cruce. No se
+        # cuenta por posición en la lista (el ensamble los concatena en un orden que es un
+        # detalle de implementación de `a_caso`, no un contrato).
+        reportados = [
+            a
+            for a in (estado.caso.patrimonio.activos if estado.caso else [])
+            if a.fuente.clase != "manual"
+        ]
+        deudas_reportadas = [
+            d
+            for d in (estado.caso.patrimonio.deudas if estado.caso else [])
+            if d.fuente.clase != "manual"
+        ]
+        return VistaPatrimonio(
+            preguntas=list(PREGUNTAS),
+            contestadas={r.pregunta: r.tiene for r in respuestas if r.pregunta in _CLAVES},
+            bienes=[(b, valorar(b)) for b in bienes],
+            reportados=reportados,
+            deudas_reportadas=deudas_reportadas,
+            capturado=sum(a.valor_31dic for a in patrimonio.activos),
+            patrimonio_liquido_anterior=patrimonio.patrimonio_liquido_anterior,
+            falta=falta_por_contestar(respuestas, bienes),
+        )
+
+    async def guardar_bien(self, case_id: UUID, bien: BienCapturado) -> VistaPatrimonio:
+        """Crea o corrige un bien, y deja constancia.
+
+        La constancia importa más de lo que parece: un bien capturado cambia la casilla 29 y puede
+        cambiar si la persona está obligada a declarar, así que es una modificación de la
+        declaración y no una nota interna.
+        """
+        await self._detalle(case_id)
+        await self._repo.guardar_bien(case_id, bien)
+        valoracion = valorar(bien)
+        await self._cases.add_event(
+            case_id=case_id,
+            kind="ANSWER_RECORDED",
+            message=(
+                f"{bien.descripcion}: {en_pesos(valoracion.valor)} en el patrimonio "
+                f"({valoracion.regla}), según {bien.quien}"
+            ),
+        )
+        return await self.patrimonio(case_id)
+
+    async def borrar_bien(self, case_id: UUID, bien_id: str) -> VistaPatrimonio:
+        await self._detalle(case_id)
+        await self._repo.borrar_bien(case_id, bien_id)
+        return await self.patrimonio(case_id)
 
     async def respuestas(self, case_id: UUID) -> list[Respuesta]:
         """Lo que ya se contestó, para poder verlo y cambiarlo.
@@ -613,9 +777,31 @@ class ConciliacionService:
         """
         estado, liquidacion = await self._de_hoy(case_id)
         vivos = bloqueantes(liquidacion)
-        if vivos:
+        # ═══ EL PATRIMONIO SIN CONTESTAR BLOQUEA ACÁ, Y NO COMO ALERTA DE LA LIQUIDACIÓN ═══
+        #
+        # Era lo obvio y estaba mal. Una alerta `bloqueante` en la liquidación apaga el optimizador
+        # (`liquidar_conciliado` no optimiza cuando hay una), y como el patrimonio arranca sin
+        # contestar en TODOS los casos, el preliminar —la foto contra la que se mide lo que el
+        # producto le ahorró al cliente— habría quedado siempre sin optimizar. La ganancia que se
+        # le muestra saldría inflada por una diferencia que no es ahorro, sino un optimizador
+        # apagado. El patrimonio además no cambia nada de lo que el optimizador elige: no entra en
+        # la renta, solo en las casillas 29 a 31 y en los topes de obligación.
+        #
+        # Así que bloquea donde de verdad importa, que es al DAR POR BUENA la declaración, y por el
+        # mismo error y con la misma forma que las demás alertas: quien recibe el 409 lee qué le
+        # falta. Las dos comprobaciones leen de `falta_por_contestar`, así que siguen siendo una
+        # sola fuente de verdad con dos puertas.
+        respuestas = await self._repo.respuestas(case_id)
+        falta_patrimonio = falta_por_contestar(respuestas, await self._repo.bienes(case_id))
+        if vivos or falta_patrimonio:
             raise LiquidacionBloqueadaError(
-                detalles=[{"codigo": f.codigo, "mensaje": f.mensaje} for f in vivos]
+                detalles=[
+                    *({"codigo": f.codigo, "mensaje": f.mensaje} for f in vivos),
+                    *(
+                        {"codigo": "PATRIMONIO_INCOMPLETO", "mensaje": mensaje}
+                        for mensaje in falta_patrimonio
+                    ),
+                ]
             )
         # SE REVALIDAN LAS DOS COSAS, y hacen falta las dos: la revisión detecta que alguien
         # resolvió un renglón, y el sello detecta que entró un documento por un camino que no
@@ -765,6 +951,7 @@ class ConciliacionService:
             revision=revision,
             # Acaba de derivarse del expediente y quedó sellado con él.
             corresponde=True,
+            bienes=await self._repo.bienes(case_id),
         )
 
     def _mismos_renglones(self, antes: Sequence[Partida], despues: Sequence[Partida]) -> bool:
@@ -914,7 +1101,7 @@ class ConciliacionService:
             estado.partidas,
             p=self._parametros_de(estado.caso.anio_gravable),
             version=len(versiones) + 1,
-            avisos_extra=estado.avisos_beneficios,
+            avisos_extra=estado.avisos_de_captura,
         )
         if versiones and versiones[-1].liquidacion == candidata.liquidacion:
             return
@@ -1025,6 +1212,9 @@ class ConciliacionService:
         solo_dian = autorresolver(abrir(exogena))
         # El preliminar es la foto de la exógena SOLA, así que va sin beneficios: los
         # certificados del cliente son justamente lo que todavía no llegó.
+        # El preliminar es la foto de ANTES de que el cliente aportara nada, y un bien
+        # capturado es un aporte suyo: incluirlo aquí inflaría la ganancia que se le
+        # muestra después.
         caso, _falta = self._intentar_caso(solo_dian, detail, Beneficios())
         if caso is None:
             return
@@ -1047,7 +1237,7 @@ class ConciliacionService:
             estado.caso,
             estado.partidas,
             self._parametros_de(estado.caso.anio_gravable),
-            estado.avisos_beneficios,
+            estado.avisos_de_captura,
         )
 
     async def _de_hoy(self, case_id: UUID) -> tuple[Estado, Liquidacion]:
@@ -1077,7 +1267,11 @@ class ConciliacionService:
         return Movimientos()
 
     def _intentar_caso(
-        self, partidas: Sequence[Partida], detail: CaseDetail, beneficios: Beneficios
+        self,
+        partidas: Sequence[Partida],
+        detail: CaseDetail,
+        beneficios: Beneficios,
+        patrimonio: Patrimonio | None = None,
     ) -> tuple[CasoTributario | None, str | None]:
         """El caso que el motor liquida, o el motivo por el que todavía no se puede armar.
 
@@ -1105,6 +1299,12 @@ class ConciliacionService:
                     # certificados de beneficio se leen, se paga la llamada al modelo, y no
                     # se declaran.
                     beneficios=beneficios,
+                    # La casa y el carro. `a_caso` recibía este parámetro desde el principio y
+                    # NADIE se lo pasaba, así que no había ninguna ruta —ni siquiera manual— por
+                    # la que un inmueble llegara a la casilla 29. El patrimonio bruto es uno de
+                    # los cinco topes que obligan a declarar, así que el agujero no era solo una
+                    # casilla corta: podía decirle a alguien que no estaba obligado.
+                    patrimonio=patrimonio,
                     # Tampoco salen del cruce, y por la razón opuesta: sus filas no abren
                     # partida porque no se declaran en ninguna casilla. Pero el motor los
                     # necesita para saber si la persona está obligada, así que llegan por acá

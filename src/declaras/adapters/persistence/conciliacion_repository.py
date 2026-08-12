@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from declaras.adapters.persistence.tables import (
+    CaseBienRow,
     CaseConciliacionRow,
     CaseLiquidacionRow,
     CasePartidaRow,
@@ -31,6 +32,7 @@ from declaras.adapters.persistence.tables import (
 )
 from declaras.domain.errors import ConflictoDeConcurrenciaError
 from declaras.services.conciliacion import LiquidacionVersionada, Partida, Respuesta
+from declaras.services.conciliacion.patrimonio import BienCapturado
 
 
 def _utcnow() -> datetime:
@@ -234,6 +236,60 @@ class SqlConciliacionRepository:
             fila.updated_at = _utcnow()
             await session.flush()
         return respuesta
+
+    # ─────────────────────────── bienes del patrimonio ───────────────────────────
+
+    async def bienes(self, case_id: UUID) -> list[BienCapturado]:
+        async with self._sessions() as session:
+            filas = (
+                await session.execute(
+                    select(CaseBienRow)
+                    .where(CaseBienRow.case_id == str(case_id))
+                    # Por tipo y no por fecha: la pantalla los agrupa en inmuebles y vehiculos, y
+                    # ordenar por llegada obligaria a reagrupar del otro lado.
+                    .order_by(CaseBienRow.tipo, CaseBienRow.updated_at)
+                )
+            ).scalars()
+            return [BienCapturado.model_validate(f.bien_json) for f in filas]
+
+    async def guardar_bien(self, case_id: UUID, bien: BienCapturado) -> BienCapturado:
+        """Crea el bien o reemplaza el que ya tuviera ese id.
+
+        Con `id` propio en vez de autogenerado en la escritura: corregir el valor de compra de un
+        inmueble es la operacion mas comun de esta pantalla —se captura sin el papel y se completa
+        cuando llega—, y con solo alta y baja cada correccion crearia un duplicado.
+        """
+        async with self._sessions() as session, session.begin():
+            fila = (
+                await session.execute(
+                    select(CaseBienRow).where(
+                        CaseBienRow.case_id == str(case_id), CaseBienRow.id == bien.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if fila is None:
+                fila = CaseBienRow(id=bien.id, case_id=str(case_id))
+                session.add(fila)
+            fila.tipo = bien.tipo
+            fila.bien_json = bien.model_dump(mode="json")
+            fila.updated_at = _utcnow()
+            await session.flush()
+        return bien
+
+    async def borrar_bien(self, case_id: UUID, bien_id: str) -> bool:
+        """Borra el bien y dice si existia. Un borrado de algo que no esta no es un error."""
+        async with self._sessions() as session, session.begin():
+            fila = (
+                await session.execute(
+                    select(CaseBienRow).where(
+                        CaseBienRow.case_id == str(case_id), CaseBienRow.id == bien_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if fila is None:
+                return False
+            await session.delete(fila)
+        return True
 
     # ─────────────────────────── liquidaciones ───────────────────────────
 

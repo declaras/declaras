@@ -220,6 +220,25 @@ class CaseRespuestaRow(Base):
     __table_args__ = (UniqueConstraint("case_id", "pregunta", name="uq_respuesta_caso_pregunta"),)
 
 
+class CaseBienRow(Base):
+    """Un bien del patrimonio que capturo una persona, no un reporte de un tercero.
+
+    Tabla propia y no un `detalle` dentro de `case_respuestas` porque son cosas de cardinalidad
+    distinta: la respuesta es UNA por pregunta ("si tengo inmuebles") y los bienes son varios, cada
+    uno con sus cifras y su deuda. Embutir una lista en el JSON de la respuesta habria dejado el
+    borrado de un solo bien como una reescritura del conjunto, y sin fila propia no hay a que
+    colgarle mañana el documento que lo soporta.
+    """
+
+    __tablename__ = "case_bienes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("cases.id"), index=True)
+    tipo: Mapped[str] = mapped_column(String(20))
+    bien_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CaseLiquidacionRow(Base):
     """Una version de la liquidacion, con el momento en que se calculo.
 

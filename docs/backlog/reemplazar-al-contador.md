@@ -42,20 +42,48 @@ el exterior (art. 607 ET) cuando el patrimonio afuera supera 2.000 UVT, con su p
 - Si los activos pasan 2.000 UVT, avisar de la obligación aparte
 - Relevante para el segmento con cuentas en USD, cripto en exchanges extranjeros y trabajo remoto
 
-### 1.3 Vehículos e inmuebles no se capturan
+### 1.3 Vehículos e inmuebles no se capturan ~~pendiente~~ HECHO
 
-Sigue pendiente de antes. El patrimonio bruto define uno de los cinco topes de obligación (4.500 UVT,
-$224.096.000 para AG2025), así que un patrimonio incompleto puede decirle a alguien que no está
-obligado cuando sí lo está.
+Lo que faltaba no era la captura sino el cable: `a_caso` recibía el parámetro `patrimonio` desde el
+principio y **nadie se lo pasaba**, así que no había ninguna ruta —ni siquiera manual— por la que un
+inmueble llegara a la casilla 29. Lo mismo con `patrimonio_liquido_anterior`, que existía en el
+modelo, alimentaba la comparación patrimonial del art. 236 en `motor/cierre.py`, y estaba en `None`
+en todos los casos reales porque nadie lo llenaba; ahora sale de la casilla 31 de la declaración del
+año anterior, que ya se descargaba y ya se leía.
 
-Medido en el caso real de prueba: la comparación con el borrador de la DIAN muestra $2.286.342 de
-diferencia en la casilla 29, o sea patrimonio que la DIAN ve y el cálculo no.
+Quedó construido: `services/conciliacion/patrimonio.py` (captura y valoración), la tabla
+`case_bienes`, los endpoints `GET/POST/DELETE /v1/cases/{id}/patrimonio`, el cuestionario de tres
+compuertas (`INMUEBLES`, `VEHICULOS`, `OTROS_BIENES`) y el bloqueo del cierre mientras algo falte.
 
-- Captura guiada de vehículos e inmuebles con las reglas de valor patrimonial (arts. 267 y ss.)
-- La exógena delata la compra de inmuebles y el reporte trae la **matrícula inmobiliaria** en la
-  columna de información adicional: se puede detectar y preguntar, no esperar a que lo cuenten
-- Las dos preguntas que quedaron abiertas: si el valor lo digita el contador o se lee del predial y
-  de la tarjeta de propiedad; y si las deudas asociadas van con el bien o aparte
+**Las dos preguntas que estaban abiertas, contestadas.**
+
+*Si el valor lo digita el contador o se lee del papel.* Ninguna de las dos por sí sola sirve para un
+inmueble, porque el art. 277 pide el **mayor** entre el costo de adquisición y el avalúo, y ese
+máximo necesita las dos cifras. Se capturan los insumos crudos por separado y el sistema aplica la
+regla, de modo que la cifra siempre viene con la explicación de cuál ganó. Con un solo candidato
+entra igual y queda señalada, porque dejarla fuera subdeclararía.
+
+*Si las deudas van con el bien o aparte.* Con el bien, y no es una preferencia de modelado. Capturar
+la casa sin la hipoteca infla el patrimonio líquido y dispara la alerta de comparación patrimonial
+en todos los casos con inmueble financiado, así que separarlas garantizaba una alerta falsa
+sistemática.
+
+**El hallazgo que no estaba en la auditoría.** El recibo del impuesto vehicular no sirve para valorar
+un carro, aunque sea el papel que todo el mundo tiene a mano. Ese avalúo lo fija cada año el
+Ministerio de Transporte para cobrar un impuesto departamental (Ley 488 de 1998, art. 143); el valor
+patrimonial es el costo fiscal (art. 267, cuyo texto anterior nombraba explícitamente los "vehículos
+automotores de uso personal"). Por eso el formulario no tiene un campo para ese avalúo: existiendo,
+alguien lo llenaría y la casilla quedaría corta. Además las motos de hasta 125 c.c. están excluidas
+del impuesto (Ley 488, art. 141), así que para esas ni siquiera existe el recibo.
+
+**Lo que queda de este frente.**
+
+- Lectores de `PREDIAL` e `IMPUESTO_VEHICULAR`, para no digitar. Van en la familia con modelo: cada
+  municipio arma el recibo como quiere
+- Detección proactiva del inmueble comprado en el año. La exógena trae la compraventa reportada por
+  la notaría con la **matrícula inmobiliaria** en la columna de información adicional, así que se
+  puede afirmar ("compraste este inmueble, mándame el predial") en vez de preguntar
+- Activos en el exterior, que son el punto 1.2 y comparten pantalla con esto
 
 ### 1.4 Aportes obligatorios que la DIAN tiene y el cálculo no
 

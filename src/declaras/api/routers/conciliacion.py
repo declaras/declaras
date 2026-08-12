@@ -11,6 +11,7 @@ una barra cruda partiría la ruta.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter
@@ -21,7 +22,9 @@ from declaras.api.conciliacion_schemas import (
     CasillaResponse,
     ConciliacionEstadoResponse,
     ConciliacionResumenResponse,
+    GuardarBienRequest,
     LiquidacionesResponse,
+    PatrimonioResponse,
     PeticionCerradaResponse,
     PeticionResponse,
     RegistrarRespuestaRequest,
@@ -32,6 +35,7 @@ from declaras.api.conciliacion_schemas import (
 )
 from declaras.api.deps import AutenticadoDep, ContainerDep
 from declaras.services.comparacion_210 import Comparacion210
+from declaras.services.conciliacion.patrimonio import BienCapturado
 from declaras.services.conciliacion.peticiones import costo_de_cerrar
 from declaras.services.conciliacion.recomendaciones import Recomendaciones
 
@@ -168,6 +172,56 @@ async def ver_comparacion_con_lo_presentado(
         await container.conciliacion_service.comparacion_con_lo_presentado(case_id)
     )
     return comparacion
+
+
+@router.get(
+    "/patrimonio",
+    response_model=PatrimonioResponse,
+    summary="El patrimonio del caso: lo que ya se sabe y lo que falta preguntar",
+)
+async def ver_patrimonio(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> PatrimonioResponse:
+    """Las dos mitades del patrimonio en una sola lectura.
+
+    Una llega sola (los saldos bancarios y las cesantías vienen en la exógena) y la otra hay que
+    preguntarla, porque ninguna notaría le reporta a la DIAN, año tras año, que alguien SIGUE
+    siendo dueño de su apartamento. Van juntas para que nadie le pida a un cliente el papel de
+    algo que el sistema ya tenía contado.
+    """
+    return PatrimonioResponse.from_vista(await container.conciliacion_service.patrimonio(case_id))
+
+
+@router.post(
+    "/patrimonio/bienes",
+    response_model=PatrimonioResponse,
+    summary="Agrega o corrige un bien del patrimonio",
+)
+async def guardar_bien(
+    case_id: UUID,
+    payload: GuardarBienRequest,
+    container: ContainerDep,
+    _auth: AutenticadoDep,
+) -> PatrimonioResponse:
+    """Un bien capturado cambia la casilla 29, y con ella puede cambiar si la persona está
+    obligada a declarar: el patrimonio bruto es uno de los cinco topes del art. 592."""
+    bien = BienCapturado(**payload.model_dump(), cuando=datetime.now(tz=UTC))
+    return PatrimonioResponse.from_vista(
+        await container.conciliacion_service.guardar_bien(case_id, bien)
+    )
+
+
+@router.delete(
+    "/patrimonio/bienes/{bien_id}",
+    response_model=PatrimonioResponse,
+    summary="Quita un bien del patrimonio",
+)
+async def borrar_bien(
+    case_id: UUID, bien_id: str, container: ContainerDep, _auth: AutenticadoDep
+) -> PatrimonioResponse:
+    return PatrimonioResponse.from_vista(
+        await container.conciliacion_service.borrar_bien(case_id, bien_id)
+    )
 
 
 @router.get(

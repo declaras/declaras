@@ -10,7 +10,7 @@ reventar en vez de ignorarse y dejar la decisión del contador sin registrar.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,12 +27,14 @@ from declaras.services.conciliacion import (
     Respuesta,
     etiqueta_de_pregunta,
 )
+from declaras.services.conciliacion.patrimonio import BienCapturado, Valoracion
 from declaras.services.conciliacion.peticiones import Peticion
 from declaras.services.conciliacion.resolucion import _plata_en_juego
 from declaras.services.conciliacion_service import (
     ArchivoIncorporado,
     Estado,
     Liquidaciones,
+    VistaPatrimonio,
     clase_sugerida,
     clases_posibles,
     decisiones_posibles,
@@ -75,6 +77,33 @@ class RegistrarRespuestaRequest(_Entrada):
     pregunta: str = Field(min_length=1, max_length=300)
     tiene: bool
     detalle: dict[str, Any] = Field(default_factory=dict)
+    quien: str = Field(default="cliente", min_length=1, max_length=200)
+
+
+class GuardarBienRequest(_Entrada):
+    """Un bien del patrimonio: la casa, el carro, la moto.
+
+    Los insumos van CRUDOS y separados en vez de un `valor` ya resuelto, porque la regla de
+    valoración depende del tipo y hay que poder explicarla después. Para un inmueble el art. 277
+    pide el MAYOR entre el costo de adquisición y el avalúo del predial, así que mandar uno solo
+    da una cifra que puede quedarse corta; para un vehículo el art. 267 pide el costo, y el avalúo
+    del impuesto vehicular —que es el papel que la gente tiene a mano— no sirve para eso.
+
+    `id` lo pone el cliente para que corregir un bien sea la misma operación que crearlo: el caso
+    normal de esta pantalla es capturar el inmueble sin el predial y completarlo cuando llega, y
+    con solo alta y baja cada corrección dejaría un duplicado.
+    """
+
+    id: str = Field(min_length=1, max_length=36)
+    tipo: Literal["inmueble", "vehiculo", "otro"]
+    descripcion: str = Field(min_length=1, max_length=200)
+    identificacion: str | None = Field(default=None, max_length=100)
+    costo_adquisicion: int | None = Field(default=None, ge=0)
+    avaluo_catastral: int | None = Field(default=None, ge=0)
+    valor_declarado: int | None = Field(default=None, ge=0)
+    deuda_saldo: int | None = Field(default=None, ge=0)
+    deuda_acreedor: str | None = Field(default=None, max_length=200)
+    cilindraje: int | None = Field(default=None, ge=0)
     quien: str = Field(default="cliente", min_length=1, max_length=200)
 
 
@@ -489,3 +518,111 @@ class CasillaResponse(BaseModel):
     nombre: str
     valor: int
     nodo: str | None = None
+
+
+class BienResponse(BaseModel):
+    """Un bien capturado con su valor y, sobre todo, con la regla que produjo ese valor.
+
+    `regla` no es adorno, es lo que permite defender la cifra. "Es el avalúo del predial porque era
+    mayor que los $80.000.000 de la escritura" se sostiene ante la DIAN; "$120.000.000" no.
+    """
+
+    id: str
+    tipo: str
+    descripcion: str
+    identificacion: str | None
+    costo_adquisicion: int | None
+    avaluo_catastral: int | None
+    valor_declarado: int | None
+    deuda_saldo: int | None
+    deuda_acreedor: str | None
+    cilindraje: int | None
+    valor: int
+    regla: str
+    # El artículo, aparte de la frase. Al contador le dice todo y al titular no le dice nada, así
+    # que la pantalla decide a quién se lo muestra en vez de tener que elegir un solo texto.
+    norma: str | None
+    # Qué falta para poder sostener la cifra. `None` es "está completo".
+    falta: str | None
+
+    @classmethod
+    def from_bien(cls, bien: BienCapturado, valoracion: Valoracion) -> BienResponse:
+        return cls(
+            **bien.model_dump(include=set(BienCapturado.model_fields) - {"quien", "cuando"}),
+            valor=valoracion.valor,
+            regla=valoracion.regla,
+            norma=valoracion.norma,
+            falta=valoracion.falta,
+        )
+
+
+class PreguntaPatrimonioResponse(BaseModel):
+    """Una compuerta del cuestionario, con lo que se contestó si ya se contestó."""
+
+    pregunta: str
+    tipo: str
+    texto: str
+    por_que: str
+    documento: str
+    copy_sugerido: str
+    # `None` es "sin contestar", que no es lo mismo que "contestó que no". La diferencia decide si
+    # se le vuelve a preguntar al cliente.
+    contestada: bool | None
+
+
+class ActivoReportadoResponse(BaseModel):
+    """Un activo que llegó solo, por el reporte de un tercero. No hay nada que preguntar de él."""
+
+    descripcion: str
+    valor: int
+
+
+class PatrimonioResponse(BaseModel):
+    """El patrimonio del caso completo, para poder preguntar sin preguntar de más.
+
+    Trae las dos mitades juntas porque la pantalla las necesita juntas: quien va a pedirle un papel
+    a un cliente tiene que ver primero lo que el sistema ya sabe, o la pregunta más cara del
+    cuestionario es la que se hace por algo que ya estaba contado.
+    """
+
+    preguntas: list[PreguntaPatrimonioResponse]
+    bienes: list[BienResponse]
+    reportados: list[ActivoReportadoResponse]
+    deudas_reportadas: list[ActivoReportadoResponse]
+    # Lo capturado y lo reportado, separados y sumados. El bruto es la casilla 29.
+    total_capturado: int
+    total_reportado: int
+    total_bruto: int
+    total_deudas: int
+    patrimonio_liquido_anterior: int | None
+    falta: list[str]
+    completo: bool
+
+    @classmethod
+    def from_vista(cls, vista: VistaPatrimonio) -> PatrimonioResponse:
+        reportado = sum(a.valor_31dic for a in vista.reportados)
+        return cls(
+            preguntas=[
+                PreguntaPatrimonioResponse(
+                    **p.model_dump(), contestada=vista.contestadas.get(p.pregunta)
+                )
+                for p in vista.preguntas
+            ],
+            bienes=[BienResponse.from_bien(b, v) for b, v in vista.bienes],
+            reportados=[
+                ActivoReportadoResponse(descripcion=a.descripcion, valor=a.valor_31dic)
+                for a in vista.reportados
+            ],
+            deudas_reportadas=[
+                ActivoReportadoResponse(descripcion=d.acreedor, valor=d.saldo_31dic)
+                for d in vista.deudas_reportadas
+            ],
+            total_capturado=vista.capturado,
+            total_reportado=reportado,
+            total_bruto=vista.capturado + reportado,
+            total_deudas=sum(d.saldo_31dic for d in vista.deudas_reportadas)
+            + sum(b.deuda_saldo or 0 for b, _ in vista.bienes),
+            patrimonio_liquido_anterior=vista.patrimonio_liquido_anterior,
+            falta=vista.falta,
+            completo=vista.completo,
+        )

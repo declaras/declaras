@@ -85,6 +85,43 @@ async def test_requiere_haber_ingresado(client_sin_sesion):
     assert response.status_code == 401
 
 
+async def test_entregar_el_contenido_exige_sesion(client_sin_sesion, client, container):
+    """El sintoma que reporto produccion: el visor pintaba el JSON del 401 dentro del marco.
+
+    La causa no era el almacenamiento sino el TRANSPORTE. El front metia este endpoint en un
+    `<iframe src>` y en un `<a href>`, y el navegador resuelve esas dos cosas por su cuenta, sin la
+    cabecera `Authorization`. Como este endpoint la exige igual que todos los demas, respondia
+    `UNAUTHORIZED` y el iframe pintaba el JSON del error con pinta de documento roto.
+
+    Esta prueba fija las dos mitades del contrato, porque el arreglo del front depende de las dos:
+    sin token no se entrega nada (no se debilito la puerta), y con token se entregan los bytes
+    (asi que traerlos con `fetch` y publicarlos como `blob:` es suficiente y no hace falta una URL
+    firmada, que ademas dejaria la credencial en el historial y en los logs).
+    """
+    from uuid import uuid4
+
+    from declaras.domain.models import DocumentType, RawDocument, TaxpayerRef
+
+    contenido = build_exogena_xlsx(taxpayer_name="RESTREPO VELEZ")
+    stored = await container.store.put(
+        taxpayer=TaxpayerRef(id_number="1020304050", tax_year=2025),
+        document=RawDocument(
+            doc_type=DocumentType.EXOGENA, filename="exogena.xlsx", content=contenido
+        ),
+        scope_id=uuid4(),
+    )
+    ruta = "/v1/documents/content"
+    parametros = {"uri": stored.storage_uri}
+
+    sin_sesion = await client_sin_sesion.get(ruta, params=parametros)
+    assert sin_sesion.status_code == 401
+    assert sin_sesion.json()["code"] == "UNAUTHORIZED"
+
+    con_sesion = await client.get(ruta, params=parametros)
+    assert con_sesion.status_code == 200
+    assert con_sesion.content == contenido
+
+
 async def test_sin_tipo_el_documento_se_clasifica_y_se_rutea(client, monkeypatch):
     """El tipo es opcional: quien manda cuatro PDF juntos sin decir qué es cada uno no
     tiene que adivinar. El camino normal SÍ informa el tipo — el flujo del producto sabe
