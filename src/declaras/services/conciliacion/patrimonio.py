@@ -267,6 +267,9 @@ class PreguntaPatrimonio(_Modelo):
     pregunta: str
     tipo: TipoBien
     texto: str
+    # La misma pregunta para quien NO es el contribuyente. El contador no tiene casa a su nombre:
+    # revisa la de otro, y tutearlo es la voz del titular filtrandose a la pantalla equivocada.
+    texto_contador: str
     # Para qué sirve contestarla. No es el ahorro (estas preguntas no ahorran nada), es la razón
     # por la que hay que contestarla igual.
     por_que: str
@@ -279,6 +282,9 @@ PREGUNTAS: tuple[PreguntaPatrimonio, ...] = (
         pregunta=INMUEBLES,
         tipo="inmueble",
         texto="¿Tienes casa, apartamento, lote, local, finca o parqueadero a tu nombre?",
+        texto_contador=(
+            "¿El cliente tiene inmuebles? Casa, apartamento, lote, local, finca o parqueadero."
+        ),
         por_que=(
             "Un inmueble no lo reporta nadie año tras año, y el patrimonio bruto define uno de "
             "los topes que obligan a declarar."
@@ -298,6 +304,7 @@ PREGUNTAS: tuple[PreguntaPatrimonio, ...] = (
         pregunta=VEHICULOS,
         tipo="vehiculo",
         texto="¿Tienes carro o moto a tu nombre?",
+        texto_contador="¿El cliente tiene carro o moto a su nombre?",
         por_que=(
             "Un vehículo se declara por lo que costó, y ese dato no llega por ningún reporte."
         ),
@@ -317,6 +324,10 @@ PREGUNTAS: tuple[PreguntaPatrimonio, ...] = (
         texto=(
             "¿Tienes otros bienes? Cuentan cuentas en el exterior, criptomonedas, acciones, "
             "participaciones en empresas y préstamos que te deban."
+        ),
+        texto_contador=(
+            "¿El cliente tiene otros bienes? Cuentas en el exterior, criptomonedas, acciones, "
+            "participaciones en sociedades y cuentas por cobrar."
         ),
         por_que=(
             "Las cuentas y los saldos de bancos colombianos ya llegan por la exógena. Lo de "

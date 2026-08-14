@@ -81,7 +81,7 @@ class FakeDianSession:
             # que se prueba aca sea del mismo material que llega en produccion.
             raise DianDocumentUnavailableError(
                 'La DIAN no reportó ninguna declaración. La DIAN respondió: "Documentos no '
-                "encontrados\". Si el contribuyente sí declaró, hay que verificarlo en el "
+                'encontrados". Si el contribuyente sí declaró, hay que verificarlo en el '
                 "portal: puede que la consulta haya fallado y no que la declaración no exista.",
                 doc_type=doc_type.value,
                 evidencia="respuesta 404 de la API: Documentos no encontrados",

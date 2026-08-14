@@ -562,6 +562,7 @@ class PreguntaPatrimonioResponse(BaseModel):
     pregunta: str
     tipo: str
     texto: str
+    texto_contador: str
     por_que: str
     documento: str
     copy_sugerido: str
