@@ -8,6 +8,7 @@ from declaras.caso import (
     Contribuyente,
     Creditos,
     Dependiente,
+    Deuda,
     Donacion,
     Fuente,
     IngresoLaboral,
@@ -425,3 +426,49 @@ def test_caso_limpio_sin_flags_de_validacion():
         "CONFIANZA_BAJA",
     ):
         assert not liq.tiene_flag(codigo)
+
+
+def test_el_patrimonio_liquido_no_baja_de_cero():
+    """Quien debe más de lo que tiene declara 0 en la casilla 31, no un negativo.
+
+    Comprobado contra una declaración real presentada: casilla 29 en $1.880.000, casilla 30 en
+    $139.228.000 y casilla 31 en 0. El lector del 210 ya aplicaba el piso al validar las
+    identidades del formulario; el motor no, así que las dos mitades del sistema discrepaban sobre
+    la misma regla y la que producía nuestras cifras era la que estaba mal.
+    """
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="7", nombre="P"),
+        pensiones=[IngresoPension(pagador="Colpensiones", mesadas=[4_000_000] * 12, fuente=FX)],
+        patrimonio=Patrimonio(
+            activos=[
+                Activo(tipo="cuenta", descripcion="ahorros", valor_31dic=1_880_000, fuente=FX)
+            ],
+            deudas=[Deuda(acreedor="Banco", saldo_31dic=139_228_000, fuente=FX)],
+        ),
+    )
+
+    liq = liquidar(caso, cargar(2025), Elecciones())
+
+    assert liq.valor("PATRIMONIO_BRUTO") == 1_880_000
+    assert liq.valor("PATRIMONIO_LIQUIDO") == 0
+    # La memoria dice que hubo piso, o el cero se lee como "no tiene deudas" y es lo contrario.
+    assert "piso en cero" in liq.nodos["PATRIMONIO_LIQUIDO"].formula
+
+
+def test_con_mas_activos_que_deudas_el_liquido_es_la_resta():
+    """El piso no puede tragarse el caso normal."""
+    caso = CasoTributario(
+        contribuyente=Contribuyente(num_doc="7", nombre="P"),
+        pensiones=[IngresoPension(pagador="Colpensiones", mesadas=[4_000_000] * 12, fuente=FX)],
+        patrimonio=Patrimonio(
+            activos=[
+                Activo(tipo="inmueble", descripcion="apto", valor_31dic=300_000_000, fuente=FX)
+            ],
+            deudas=[Deuda(acreedor="Banco", saldo_31dic=120_000_000, fuente=FX)],
+        ),
+    )
+
+    liq = liquidar(caso, cargar(2025), Elecciones())
+
+    assert liq.valor("PATRIMONIO_LIQUIDO") == 180_000_000
+    assert "piso" not in liq.nodos["PATRIMONIO_LIQUIDO"].formula

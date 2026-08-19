@@ -62,11 +62,22 @@ def validar(caso: CasoTributario, p: ParametrosAnio, t: Traza) -> None:
         sum(a.valor_31dic for a in caso.patrimonio.activos),
         "suma de activos",
     )
+    # EL PATRIMONIO LIQUIDO NO BAJA DE CERO, y no es una decisión de diseño: es cómo se llena el
+    # formulario. Quien debe más de lo que tiene declara 0 en la casilla 31, no un negativo. Está
+    # comprobado contra una declaración real presentada (casilla 29 en $1.880.000, casilla 30 en
+    # $139.228.000, casilla 31 en 0) y el lector del 210 YA aplicaba la regla al validar las
+    # identidades del formulario. O sea que las dos mitades del sistema decían cosas distintas: la
+    # que LEE una declaración ajena sabía que el piso es cero y la que ESCRIBE la nuestra no, así
+    # que un cliente con más deudas que activos recibía una casilla 31 en negativo que la DIAN no
+    # acepta.
+    deudas = sum(d.saldo_31dic for d in caso.patrimonio.deudas)
     liquido = t.nodo(
         "PATRIMONIO_LIQUIDO",
         "Patrimonio líquido a 31 dic",
-        bruto_pat - sum(d.saldo_31dic for d in caso.patrimonio.deudas),
-        "PATRIMONIO_BRUTO − deudas",
+        max(bruto_pat - deudas, 0),
+        "PATRIMONIO_BRUTO − deudas, con piso en cero"
+        if deudas > bruto_pat
+        else "PATRIMONIO_BRUTO − deudas",
         insumos=["PATRIMONIO_BRUTO"],
     )
 
