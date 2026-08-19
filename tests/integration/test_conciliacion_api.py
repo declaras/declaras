@@ -1407,3 +1407,37 @@ async def test_los_movimientos_que_la_dian_reporta_llegan_al_chequeo_de_obligaci
         "el tope de consignaciones que la DIAN publica no llegó al caso"
     )
     assert movimientos.consignaciones_totales.valor > 0
+
+
+async def test_el_saldo_a_favor_del_anio_anterior_se_arrastra(client):
+    """La casilla 137 lleva el total: lo del año que se presenta MAS lo que venía arrastrado.
+
+    El motor ya restaba `saldo_favor_anterior` al calcular el saldo, pero nadie le pasaba
+    `creditos` a `a_caso` —el mismo cable suelto que tenía el patrimonio—, así que valía 0 en todos
+    los casos reales y el cliente veía menos plata a favor de la que le correspondía. Medido en un
+    caso real de produccion: $176.000.
+
+    Y la 131, que es donde se DECLARA ese arrastre, ni siquiera se imprimía: el total a favor no
+    cuadraba con las cifras impresas y no había de dónde sacar la diferencia.
+    """
+    case_id = await _abrir_caso(
+        client,
+        FILA_SALARIO,
+        {
+            # La fila tal como llega en el reporte real: la reporta la propia DIAN y no un
+            # tercero, y el renglon de destino es lo que la identifica.
+            "reporter_nit": "800197268",
+            "reporter_name": "U.A.E. DIRECCION DE IMPUESTOS Y ADUANAS NACIONALES",
+            "concept": "Total saldo a favor",
+            "amount": 176_000,
+            "suggested_use": (
+                "R131 Saldo a favor del año gravable anterior sin solicitud de devolución"
+            ),
+        },
+    )
+    await client.post(f"/v1/cases/{case_id}/conciliacion")
+
+    respuesta = await client.get(f"/v1/cases/{case_id}/formulario")
+    assert respuesta.status_code == 200, respuesta.text
+    casillas = {c["numero"]: c["valor"] for c in respuesta.json()}
+    assert casillas[131] == 176_000

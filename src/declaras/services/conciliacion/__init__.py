@@ -36,6 +36,7 @@ from declaras.services.conciliacion.mapeo import (
     RETENCION_SIN_INGRESO,
     a_caso,
     avisos,
+    creditos_de,
     movimientos_de,
 )
 from declaras.services.conciliacion.modelos import (
@@ -105,6 +106,7 @@ __all__ = [
     "bloqueantes",
     "concepto_de_codigo",
     "costo_de_cerrar",
+    "creditos_de",
     "derivar_peticiones",
     "etiqueta_de_pregunta",
     "ganancia",

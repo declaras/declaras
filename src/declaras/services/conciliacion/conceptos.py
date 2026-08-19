@@ -35,6 +35,12 @@ class Concepto(StrEnum):
     # aparte. Pedirle a alguien que decida que hacer con "77 millones de movimientos en cuentas"
     # es pedirle una decision que no existe.
     SOLO_PARA_TOPE = "SOLO_PARA_TOPE"
+    # El saldo a favor que viene arrastrado del anio anterior (R131). NO es renta ni patrimonio: es
+    # un credito CONTRA el impuesto, y entra al caso por `creditos_de` con el valor que la propia
+    # DIAN reporta. No abre partida porque no hay nada que decidir: la DIAN dice cuanto arrastra y
+    # eso es lo que se declara. Sin esta clase caia en CONCEPTO_DESCONOCIDO y le aparecia al
+    # contador como un renglon por resolver que no tiene ninguna respuesta valida.
+    SALDO_FAVOR_ANTERIOR = "SALDO_FAVOR_ANTERIOR"
     # El auxilio de cesantías y sus intereses. Es INGRESO del año (art. 27 num. 3: se realiza al
     # pagarse al trabajador o al consignarse al fondo) pero con tratamiento propio: queda exento
     # según el promedio salarial del semestre (art. 206 num. 4). Separado de SALARIOS porque el

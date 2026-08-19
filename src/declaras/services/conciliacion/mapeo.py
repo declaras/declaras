@@ -91,6 +91,10 @@ _ORDEN_INGRESOS = (
 )
 
 
+# El renglon del 210 al que la DIAN manda el saldo a favor arrastrado del anio anterior.
+_RENGLON_SALDO_FAVOR_ANTERIOR = 131
+
+
 def movimientos_de(exogena: DocumentReading) -> Movimientos:
     """Los insumos del chequeo de obligación, tal como los publica la DIAN.
 
@@ -124,6 +128,34 @@ def movimientos_de(exogena: DocumentReading) -> Movimientos:
             default=None,
         ),
     )
+
+
+def creditos_de(exogena: DocumentReading) -> Creditos:
+    """El saldo a favor del año anterior, que la propia DIAN reporta en el mismo archivo.
+
+    ═══ POR QUE ESTABA PERDIDO ═══
+
+    `Creditos` existe, el motor lo RESTA al calcular el saldo, y `a_caso` recibe el parámetro desde
+    el primer día. Nadie se lo pasaba, igual que pasaba con el patrimonio: el cable estaba cortado
+    en el mismo sitio. Así que `saldo_favor_anterior` valía 0 en todos los casos reales y el saldo a
+    favor de la casilla 137 salía corto exactamente en lo que el cliente traía arrastrado.
+
+    Y el hueco estaba declarado en `CASILLAS_SIN_MAPEAR` diciendo que ese dato "viene de la
+    declaración previa, que todavía no se lee". Es cierto que ahí está, pero **la exógena también lo
+    trae**, marcado por la DIAN con el renglón de destino (`R131`), así que no hacía falta esperar a
+    leer el 210 anterior para recuperarlo. Medido en un caso real: $176.000 que se perdían.
+
+    Se lee del renglón que la DIAN señala y no del texto del concepto, por lo mismo que el resto del
+    cruce: el nombre del concepto lo escribe cada quien y el renglón es la clasificación oficial.
+    """
+    for fila in exogena.rows:
+        lineas = fila.values.get("form_lines") or []
+        if _RENGLON_SALDO_FAVOR_ANTERIOR not in lineas:
+            continue
+        monto = fila.values.get("amount")
+        if isinstance(monto, int | float) and monto > 0:
+            return Creditos(saldo_favor_anterior=int(monto))
+    return Creditos()
 
 
 def a_caso(

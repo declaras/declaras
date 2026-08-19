@@ -82,6 +82,7 @@ _NUMEROS = (
     # dependientes y la adición por dependientes, y se transcribieron mal la primera vez.
     121,
     126,
+    131,
     132,
     133,
     136,
@@ -101,9 +102,10 @@ CASILLAS_SIN_MAPEAR: dict[str, str] = {
         "el motor calcula los dividendos agregados, y el formulario los separa por año de "
         "origen y por régimen"
     ),
-    "anticipos y sanciones (128 a 137)": (
-        "el anticipo del año anterior y las sanciones son datos de la declaración previa, "
-        "que todavía no se leen"
+    "anticipo del año anterior y sanciones (128 a 130, 134 y 135)": (
+        "el anticipo liquidado el año pasado y las sanciones son datos de la declaración "
+        "previa, que todavía no se leen. El saldo a favor arrastrado (131) sí se llena: lo "
+        "reporta la exógena"
     ),
 }
 
@@ -183,6 +185,12 @@ def formulario_210(liq: Liquidacion, caso: CasoTributario) -> list[Casilla]:
         (111, liq.valor("DIV_GRAVADOS"), "DIV_GRAVADOS"),
         (121, liq.valor("IMPUESTO_241") + liq.valor("IMP_DIV_35"), None),
         (126, liq.valor("IMPUESTO_NETO"), "IMPUESTO_NETO"),
+        # LA 131 NO SE IMPRIMIA Y EL ARRASTRE SE VEIA COMO UN ERROR. El motor sí restaba el saldo
+        # a favor del año anterior al calcular la 137, pero la casilla que lo declara no salía en
+        # el formulario: quien lo revisara veía un total a favor mayor que la resta de las cifras
+        # impresas y no tenía de dónde sacar la diferencia. Son dos hechos distintos —lo que se
+        # arrastra y lo que resulta— y el formulario pide los dos.
+        (131, caso.creditos.saldo_favor_anterior, None),
         (132, liq.valor("RETENCIONES"), "RETENCIONES"),
         (133, liq.valor("ANTICIPO_SIGUIENTE"), "ANTICIPO_SIGUIENTE"),
         # Las dos casillas de saldo son EXCLUYENTES: el formulario tiene una para pagar y otra

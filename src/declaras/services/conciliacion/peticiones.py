@@ -508,6 +508,9 @@ _SIN_CERTIFICADO: frozenset[Concepto] = (
             Concepto.PATRIMONIO,
             Concepto.DEUDA,
             Concepto.SOLO_PARA_TOPE,
+            # El saldo a favor arrastrado no tiene certificado que pedir: lo reporta la propia
+            # DIAN en la exógena y entra al caso por ahí.
+            Concepto.SALDO_FAVOR_ANTERIOR,
         }
     )
     | CONCEPTOS_FUERA_DEL_MOTOR

@@ -48,6 +48,9 @@ _RENGLON_RETENCIONES = 132
 _RENGLON_PATRIMONIO = 29
 _RENGLON_DEUDAS = 30
 _RENGLONES_PATRIMONIALES = frozenset({29, 30, 31})
+# El saldo a favor arrastrado del anio anterior. Va a un renglon del 210, asi que no cae en
+# "no va a ninguno", pero tampoco es ingreso ni patrimonio.
+_RENGLON_SALDO_FAVOR_ANTERIOR = 131
 # Los renglones de INCRNGO del 210, uno por cédula: R33 rentas de trabajo, R44 honorarios,
 # R59 rentas de capital, R76 no laborales, R100 pensiones. Una fila que la DIAN manda a uno de
 # estos es un ingreso NO CONSTITUTIVO de renta: RESTA de la base, no suma.
@@ -281,7 +284,7 @@ def abrir(exogena: DocumentReading) -> list[Partida]:
         # topes, que se muestran aparte. Abrirla la ponía en la cola como una decisión que no
         # existe: no hay ninguna respuesta posible a "qué hacemos con los movimientos de tu
         # cuenta de ahorros", porque no se declaran en ningún renglón.
-        if concepto is Concepto.SOLO_PARA_TOPE:
+        if concepto in (Concepto.SOLO_PARA_TOPE, Concepto.SALDO_FAVOR_ANTERIOR):
             continue
 
         # Una fila que el tercero no le reportó al titular es un hecho DISTINTO, no una
@@ -408,6 +411,8 @@ def _concepto_de_fila(
     # contador de los cuales 18 no se declaran en ninguna casilla del 210.
     if not renglones:
         return Concepto.SOLO_PARA_TOPE, None
+    if renglones == {_RENGLON_SALDO_FAVOR_ANTERIOR}:
+        return Concepto.SALDO_FAVOR_ANTERIOR, None
     if renglones <= _RENGLONES_PATRIMONIALES:
         # Una fila que toca los dos (el reporte de saldos bancarios manda a R29 y R30 a la vez)
         # es un activo: el saldo de una cuenta suma al patrimonio, y R30 aparece porque el mismo

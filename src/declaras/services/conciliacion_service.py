@@ -30,6 +30,7 @@ from declaras.caso import (
     Beneficios,
     CasoTributario,
     Contribuyente,
+    Creditos,
     Deuda,
     Movimientos,
     Patrimonio,
@@ -71,6 +72,7 @@ from declaras.services.conciliacion import (
     abrir,
     autorresolver,
     bloqueantes,
+    creditos_de,
     derivar_peticiones,
     etiqueta_de_pregunta,
     ganancia,
@@ -1259,6 +1261,14 @@ class ConciliacionService:
         return estado, liquidacion
 
     @staticmethod
+    def _creditos(detail: CaseDetail) -> Creditos:
+        """El saldo a favor arrastrado, de la exógena vigente del expediente."""
+        for d in detail.documents:
+            if d.doc_type == "EXOGENA" and d.reading is not None:
+                return creditos_de(d.reading)
+        return Creditos()
+
+    @staticmethod
     def _movimientos(detail: CaseDetail) -> Movimientos:
         """Los insumos del chequeo de obligación, de la exógena vigente del expediente."""
         for d in detail.documents:
@@ -1310,6 +1320,10 @@ class ConciliacionService:
                     # necesita para saber si la persona está obligada, así que llegan por acá
                     # en vez de desaparecer.
                     movimientos=self._movimientos(detail),
+                    # El saldo a favor del año anterior. Tercer parámetro de `a_caso` que existía
+                    # sin que nadie se lo pasara: el motor YA lo restaba al calcular el saldo, así
+                    # que la casilla 137 salía corta en exactamente lo que el cliente arrastraba.
+                    creditos=self._creditos(detail),
                 ),
                 None,
             )
