@@ -46,7 +46,7 @@ from typing import Any
 
 from declaras.adapters.dian.endpoints import DIAN_API
 from declaras.adapters.dian.rest.client import PortalContext
-from declaras.domain.errors import DianDocumentUnavailableError, DianLayoutChangedError
+from declaras.domain.errors import DianLayoutChangedError
 from declaras.domain.models import BorradorEscrito, DiferenciaDeEscritura
 from declaras.observability import get_logger
 
@@ -88,19 +88,65 @@ def _es_editable(info: Mapping[str, Any]) -> bool:
     return bool(atributos.get("esEditable")) and not atributos.get("esPresentado")
 
 
+async def _crear_borrador(ctx: PortalContext, uri: str, anio: int) -> str:
+    """Crea el borrador del año, igual que el boton "Haga su declaracion de renta" del portal.
+
+    ES UNA COPIA FIEL DE LO QUE HACE LA APP DE LA DIAN, leida de su propio bundle
+    (`DFormularioServicio.crearFormulario`): se pide el MOLDE que el portal prellena
+    (`GET formularios/borrador?modo=inicial&anio=...`) y se manda de vuelta entero
+    (`POST formularios`). El cuerpo no se inventa ni se arma a mano — es el documento que
+    la propia DIAN acaba de entregar, con sus 214 casillas y su cabecera.
+
+    Sin esto, el contribuyente tenia que entrar al portal a crear el borrador antes de que
+    Clara pudiera llenarlo, y eso rompia la promesa del producto: cerrar la declaracion y
+    que lo unico que quede sea entrar a firmar.
+    """
+    molde = await ctx.api.get_json(
+        f"{uri}/formularios/borrador?modo=inicial&anio={anio}&periodicidad=anual&periodo=null"
+    )
+    creado = await ctx.api.post_json(f"{uri}/formularios", molde)
+
+    # La respuesta del portal anida el documento creado; el id tambien viaja en el mensaje.
+    doc = _documento_de(creado)
+    nuevo_id = (doc.get("cab") or {}).get("cs_id_4") if doc else None
+    if not nuevo_id:
+        raise DianLayoutChangedError(
+            "La DIAN creó el borrador pero no devolvió su número. Hay que recalibrar la "
+            "lectura de esa respuesta antes de volver a escribir.",
+            doc_type="FORM_210_WRITE",
+        )
+    log.info("dian.write.borrador_creado", form_id=str(nuevo_id), anio=anio)
+    return str(nuevo_id)
+
+
+def _documento_de(respuesta: Any) -> dict[str, Any] | None:
+    """El `doc` dentro de la respuesta del portal, este donde este.
+
+    La API envuelve distinto segun la operacion (`{"doc": ...}` en el GET, y anidado bajo
+    `respuesta.listaResultados.resultado.textoResultado` en el POST), asi que se busca en
+    vez de asumir una forma: asumirla es lo que se rompe cuando cambian el envoltorio.
+    """
+    if isinstance(respuesta, dict):
+        doc = respuesta.get("doc")
+        if isinstance(doc, dict):
+            return dict(doc)
+        for valor in respuesta.values():
+            encontrado = _documento_de(valor)
+            if encontrado is not None:
+                return encontrado
+    return None
+
+
 async def _borrador_del_anio(ctx: PortalContext, uri: str, anio: int) -> str:
     listado = await ctx.api.get_json(f"{uri}/formularios")
     formularios = (listado or {}).get("infoFormularios") or []
     for info in formularios:
         if info.get("anio") == anio and _es_editable(info):
             return str(info["identificador"]["id"])
-    raise DianDocumentUnavailableError(
-        f"No hay un borrador editable del año {anio} en la cuenta del contribuyente. "
-        "Se crea en un minuto: en el portal de la DIAN, 'Renta personas naturales' → "
-        "'Diligenciar y presentar' → elegir el año. Después de eso Clara lo llena.",
-        doc_type="FORM_210_WRITE",
-        tax_year=anio,
-    )
+    # NO HAY: se crea, que es lo que haria una persona en el portal con un clic. Pedirle al
+    # contribuyente que lo haga el mismo era dejar un paso manual justo en el tramo que este
+    # modulo existe para eliminar.
+    return await _crear_borrador(ctx, uri, anio)
 
 
 def _mismo_valor(a: Any, b: Any) -> bool:

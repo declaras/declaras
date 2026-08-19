@@ -100,23 +100,12 @@ class FakeDianSession:
     async def escribir_borrador(
         self, taxpayer: TaxpayerRef, casillas: dict[int, int]
     ) -> BorradorEscrito:
-        """Simula la escritura con los mismos desenlaces del portal real.
-
-        `sinborrador` reproduce la cuenta sin borrador editable del año, con el MISMO
-        mensaje del adaptador real: la instruccion de crearlo en el portal es parte del
-        contrato que el front muestra, no un adorno.
-        """
+        """Simula la escritura con los mismos desenlaces del portal real."""
         if self._closed:
             raise DianSessionExpiredError("La sesión ya fue cerrada.")
-        if "sinborrador" in self._scenario:
-            raise DianDocumentUnavailableError(
-                f"No hay un borrador editable del año {taxpayer.tax_year} en la cuenta del "
-                "contribuyente. Se crea en un minuto: en el portal de la DIAN, 'Renta "
-                "personas naturales' → 'Diligenciar y presentar' → elegir el año. Después "
-                "de eso Clara lo llena.",
-                doc_type="FORM_210_WRITE",
-                tax_year=taxpayer.tax_year,
-            )
+        # `sinborrador` YA NO FALLA: la cuenta sin borrador del año es el caso normal de un
+        # primerizo, y el adaptador real lo crea copiando lo que hace el portal. El escenario
+        # se conserva para fijar justamente eso — que no hay paso manual.
         # El id imita la forma real (los formularios del portal empiezan por 21) y el
         # resultado declara verificado: el fake no tiene un portal que corrompa nada.
         return BorradorEscrito(

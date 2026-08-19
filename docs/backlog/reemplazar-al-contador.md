@@ -123,9 +123,11 @@ El *kill shot* quedó funcionando el mismo día que se descubrió el camino. Lo 
 
 Lo que queda abierto de este tramo:
 
-- **Crear el borrador cuando no existe.** El `POST` de creación existe (lo declara el `Allow`) pero
-  su cuerpo no está calibrado; hoy el mensaje dice cómo crearlo en el portal (un clic). Capturar el
-  tráfico de ese clic con `scripts/inspeccionar_red.py` y calibrarlo
+- ~~Crear el borrador cuando no existe~~ **HECHO (2026-08-19).** No hizo falta capturar tráfico: el
+  bundle de la propia app de la DIAN trae el flujo legible (`DFormularioServicio.crearFormulario`).
+  Es `GET formularios/borrador?modo=inicial&anio=...` para pedir el molde que el portal prellena, y
+  `POST formularios` mandándolo de vuelta entero. El cuerpo no se inventa: es el documento que la
+  DIAN acaba de entregar. Con esto no queda ningún paso manual entre cerrar y firmar
 - **Las casillas derivadas.** El borrador de la DIAN trae totales que Clara no calcula (41, 42, 91,
   92...); al escribir las nuestras el documento queda mezclado hasta que el formulario web las
   recalcule al abrirlo, que es lo esperable pero no está comprobado. Abrir un borrador escrito por

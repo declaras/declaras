@@ -57,17 +57,22 @@ async def test_sin_cerrar_no_se_escribe(client):
     assert respuesta.json()["code"] == "BORRADOR_NO_CERRADO"
 
 
-async def test_sin_borrador_en_el_portal_dice_como_crearlo(client):
-    """La cuenta sin borrador del año no es un error criptico: el mensaje trae el paso a paso."""
+async def test_sin_borrador_en_la_cuenta_se_crea_solo(client):
+    """La cuenta sin borrador del año es el caso NORMAL de un primerizo, no un error.
+
+    Antes esto devolvia 404 pidiendole al contribuyente que entrara al portal a crear el
+    borrador. Eso rompia la promesa entera del tramo: cerrar la declaracion y que lo unico
+    que quede sea entrar a firmar. El adaptador lo crea copiando lo que hace la propia app
+    de la DIAN (pedir el molde prellenado y mandarlo de vuelta), asi que no queda ningun
+    paso manual antes de la firma.
+    """
     case_id = await _listo_para_escribir(client)
 
     respuesta = await client.post(
         f"{BASE}/{case_id}/portal/escribir", json={"dian_password": "clave-sinborrador"}
     )
-    assert respuesta.status_code == 404
-    cuerpo = respuesta.json()
-    assert cuerpo["code"] == "DIAN_DOCUMENT_UNAVAILABLE"
-    assert "Diligenciar y presentar" in cuerpo["message"]
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json()["verificado"] is True
 
 
 async def test_clave_mala_no_gasta_el_expediente(client):

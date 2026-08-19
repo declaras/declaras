@@ -223,6 +223,22 @@ class DianApiClient:
         _raise_for_status(response, url=url)
         return response.json()
 
+    async def post_json(self, path: str, payload: Any) -> Any:
+        """Crea un recurso en la API. Mismo trato de codificacion que `put_json`."""
+        if self._bearer is None:
+            await self.authenticate()
+        url = f"{DIAN_API.base_url}{path}"
+        cuerpo = json.dumps(payload, ensure_ascii=True).encode("ascii")
+        try:
+            response = await self._client.post(url, headers=self._headers(), content=cuerpo)
+        except httpx.TimeoutException as exc:
+            raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
+            raise DianPortalUnavailableError(self._falla_de_conexion, url=url) from exc
+
+        _raise_for_status(response, url=url)
+        return response.json()
+
     async def get_bytes(self, path: str) -> tuple[bytes, httpx.Headers]:
         """Descarga un recurso binario de la API, como el PDF de una declaracion."""
         if self._bearer is None:
