@@ -52,6 +52,32 @@ log = get_logger(__name__)
 _EVIDENCE_DOC_TYPE = "EVIDENCE"
 
 
+# LOS DOCUMENTOS DE COMODIDAD NO BLOQUEAN, y confundirlos costó caro. El borrador sugerido por la
+# DIAN y la declaración del año anterior MEJORAN el resultado (uno permite cruzar nuestras cifras
+# contra las suyas, el otro aporta el patrimonio inicial y los arrastres) pero ninguno hace falta
+# para preparar ni para presentar: la declaración sugerida es una cortesía de la DIAN, no un
+# requisito.
+#
+# EL CASO REAL: la DIAN no tenía sugerida de 2025 para un cliente y sí de 2024. Eso salió como
+# alerta BLOQUEANTE diciendo "no tiene 2025; sí tiene 2024", el contador entró al portal, vio ahí
+# un borrador de 2024 que no es nuestro, y concluyó que el sistema había preparado el año
+# equivocado. La declaración estaba bien hecha y era de 2025. Un rojo sobre algo que no bloquea
+# nada no es solo ruido: dirige la atención hacia un problema que no existe.
+_SIN_ESTOS_SE_PUEDE_IGUAL = frozenset({DocumentType.SUGGESTED_RETURN, DocumentType.PRIOR_RETURN})
+
+
+def _severidad_de(failure: object) -> FlagSeverity:
+    """Qué tan grave es no haber podido traer un documento.
+
+    `retryable` dice si vale la pena reintentar, que es otra pregunta: un 404 definitivo no se
+    reintenta y aun así puede ser inocuo.
+    """
+    doc_type = getattr(failure, "doc_type", None)
+    if doc_type in _SIN_ESTOS_SE_PUEDE_IGUAL:
+        return FlagSeverity.WARNING
+    return FlagSeverity.WARNING if getattr(failure, "retryable", False) else FlagSeverity.BLOCKING
+
+
 class CaseService:
     def __init__(
         self,
@@ -203,7 +229,7 @@ class CaseService:
                 case_id=case_id,
                 code=failure.code,
                 message=f"{encabezado}: {failure.message}",
-                severity=FlagSeverity.WARNING if failure.retryable else FlagSeverity.BLOCKING,
+                severity=_severidad_de(failure),
             )
 
         await self._cases.transition(case_id, status=CaseStatus.READY_FOR_REVIEW)

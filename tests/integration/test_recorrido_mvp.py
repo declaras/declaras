@@ -189,3 +189,25 @@ async def test_la_comparacion_que_no_se_puede_hacer_se_niega_explicando(client, 
     cuerpo = respuesta.json()
     assert cuerpo["code"] == "LIQUIDACION_NO_DISPONIBLE"
     assert len(cuerpo["message"]) > 20, "negarse sin explicar deja la pantalla muda"
+
+
+async def test_sin_las_declaraciones_el_expediente_avisa_pero_no_lo_da_por_roto(client):
+    """Que la DIAN no tenga la sugerida de este año NO es un bloqueo, y marcarlo en rojo hizo daño.
+
+    El caso real: la DIAN no tenía sugerida de 2025 para un cliente y sí de 2024. Salió como alerta
+    BLOQUEANTE diciendo justo eso; el contador entró al portal, vio ahí un borrador de 2024 que no
+    es nuestro —Clara solo descarga del portal, nunca escribe— y concluyó que el sistema había
+    preparado el año equivocado. La declaración estaba bien y era de 2025.
+
+    La sugerida y la declaración anterior mejoran el resultado, pero ninguna hace falta para
+    preparar ni para presentar: la sugerida es una cortesía de la DIAN, no un requisito. Un rojo
+    sobre algo que no bloquea nada dirige la atención hacia un problema que no existe.
+    """
+    case_id = await _recorrer(client, clave="clave-sindecl")
+
+    detalle = (await client.get(f"/v1/cases/{case_id}")).json()
+    faltantes = [f for f in detalle["flags"] if f["code"] == "DIAN_DOCUMENT_UNAVAILABLE"]
+    assert faltantes, "el expediente tiene que decir que no llegaron"
+    assert all(f["severity"] == "warning" for f in faltantes), (
+        "sin las declaraciones se puede preparar y presentar igual: no son bloqueantes"
+    )
