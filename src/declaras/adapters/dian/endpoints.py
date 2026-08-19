@@ -138,6 +138,28 @@ class DianApiEndpoints:
     renta_form_download: str = "/documentos/renta210ingreso/v1/formularios/{form_id}/descargar"
     rut_registration_date: str = "/documentos/renta210ingreso/v1/contribuyente/fechaInscripcionRut"
 
+    # ═══ EL FORMULARIO EN SI, QUE ES OTRA API ═══
+    #
+    # `renta210ingreso` es la app de ENTRADA: lista años, versiones y formularios. El contenido
+    # (las casillas) vive en una API versionada por formato, y su ruta la publica la propia DIAN
+    # en `uriApi` de `renta_form_versions`. Para el año gravable 2025 es la version 18.
+    #
+    # Descubierto el 2026-08-19 con `scripts/sondear_borradores.py`, sin escribir nada:
+    #
+    #   GET     /documentos/renta210v18/v1/formularios          lista los borradores
+    #   POST    /documentos/renta210v18/v1/formularios          crea uno
+    #   GET     /documentos/renta210v18/v1/formularios/{id}     lo lee con sus casillas
+    #   PUT     /documentos/renta210v18/v1/formularios/{id}     lo guarda
+    #
+    # Los dos verbos de escritura NO se adivinaron: el recurso los declara en la cabecera `Allow`
+    # de un OPTIONS, que es una pregunta y no una modificacion.
+    #
+    # LA FORMA DEL DOCUMENTO: `{"doc": {"cab": {...}, "cuerpo": {...}, "pie": {...}}}`, y cada
+    # casilla es una clave `cs_id_{numero}` con el MISMO numero que imprime el formulario. O sea
+    # que lo que `render/formulario.py` ya produce se traduce sin tabla intermedia.
+    renta_form_v18: str = "/documentos/renta210v18/v1/formularios"
+    renta_form_v18_one: str = "/documentos/renta210v18/v1/formularios/{form_id}"
+
     # RUT.
     economic_activities: str = "/rut/v10/contribuyentes/{document}/actividadeseconomicas"
     taxpayer_kind: str = "/rut/v10/contribuyentes/{document}/tipocontribuyente"

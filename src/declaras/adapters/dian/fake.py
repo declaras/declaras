@@ -33,10 +33,12 @@ from declaras.domain.errors import (
     DianIdentityChallengeError,
     DianInvalidCredentialsError,
     DianPortalUnavailableError,
+    DianSessionExpiredError,
     DianTimeoutError,
     ValidationError,
 )
 from declaras.domain.models import (
+    BorradorEscrito,
     ChallengeAnswer,
     ChallengeKind,
     DianCredentials,
@@ -93,6 +95,36 @@ class FakeDianSession:
             content_type="application/pdf",
             source_url=f"https://fake.local/{doc_type.value.lower()}",
             metadata={"fake": True, "tax_year": taxpayer.tax_year},
+        )
+
+    async def escribir_borrador(
+        self, taxpayer: TaxpayerRef, casillas: dict[int, int]
+    ) -> BorradorEscrito:
+        """Simula la escritura con los mismos desenlaces del portal real.
+
+        `sinborrador` reproduce la cuenta sin borrador editable del año, con el MISMO
+        mensaje del adaptador real: la instruccion de crearlo en el portal es parte del
+        contrato que el front muestra, no un adorno.
+        """
+        if self._closed:
+            raise DianSessionExpiredError("La sesión ya fue cerrada.")
+        if "sinborrador" in self._scenario:
+            raise DianDocumentUnavailableError(
+                f"No hay un borrador editable del año {taxpayer.tax_year} en la cuenta del "
+                "contribuyente. Se crea en un minuto: en el portal de la DIAN, 'Renta "
+                "personas naturales' → 'Diligenciar y presentar' → elegir el año. Después "
+                "de eso Clara lo llena.",
+                doc_type="FORM_210_WRITE",
+                tax_year=taxpayer.tax_year,
+            )
+        # El id imita la forma real (los formularios del portal empiezan por 21) y el
+        # resultado declara verificado: el fake no tiene un portal que corrompa nada.
+        return BorradorEscrito(
+            form_id="2118740000000",
+            anio=taxpayer.tax_year,
+            escritas=len(casillas),
+            verificado=True,
+            ajenas={},
         )
 
     async def capture_evidence(self, label: str) -> RawDocument:

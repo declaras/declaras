@@ -9,8 +9,13 @@ from playwright.async_api import Page
 from declaras.adapters.dian.browser import ManagedContext
 from declaras.adapters.dian.flows.documents import DOWNLOADERS
 from declaras.adapters.dian.flows.login import resolve_challenge
-from declaras.domain.errors import DianIdentityChallengeError, ValidationError
+from declaras.domain.errors import (
+    DianIdentityChallengeError,
+    DianLayoutChangedError,
+    ValidationError,
+)
 from declaras.domain.models import (
+    BorradorEscrito,
     ChallengeAnswer,
     DocumentType,
     IdentityChallenge,
@@ -56,6 +61,22 @@ class PlaywrightDianSession:
         document = await downloader(self._page, self._base_url, taxpayer)
         log.info("dian.download.done", doc_type=doc_type.value, size_bytes=len(document.content))
         return document
+
+    async def escribir_borrador(
+        self, taxpayer: TaxpayerRef, casillas: dict[int, int]
+    ) -> BorradorEscrito:
+        """El conector de navegador NO escribe, y la negativa es explicita a proposito.
+
+        La escritura vive en el conector HTTP, que habla con la API del formato
+        (`renta210v18`) y verifica con relectura. Reproducir eso a punta de DOM seria una
+        segunda implementacion de la operacion mas delicada del producto: la que modifica
+        la cuenta del contribuyente.
+        """
+        raise DianLayoutChangedError(
+            "Escribir el 210 requiere el conector HTTP (DECLARAS_DIAN_ADAPTER=http). "
+            "El conector de navegador solo descarga.",
+            doc_type="FORM_210_WRITE",
+        )
 
     async def capture_evidence(self, label: str) -> RawDocument:
         """Captura de pantalla para el expediente de auditoria."""

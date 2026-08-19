@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from declaras.domain.models import (
+    BorradorEscrito,
     ChallengeAnswer,
     DianCredentials,
     DocumentType,
@@ -44,6 +45,17 @@ class DianSession(Protocol):
 
     async def capture_evidence(self, label: str) -> RawDocument:
         """Captura de pantalla para auditoria."""
+        ...
+
+    async def escribir_borrador(
+        self, taxpayer: TaxpayerRef, casillas: dict[int, int]
+    ) -> BorradorEscrito:
+        """Llena el borrador del 210 del contribuyente en el portal y verifica la escritura.
+
+        Es la UNICA operacion del puerto que modifica algo en la cuenta. Lanza
+        DianDocumentUnavailableError si no hay borrador editable del año (el mensaje dice
+        como crearlo), y el resultado carga la verificacion casilla por casilla.
+        """
         ...
 
     async def answer_challenge(self, answer: ChallengeAnswer) -> None:

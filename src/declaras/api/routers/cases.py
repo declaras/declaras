@@ -7,10 +7,12 @@ lo que el conector DIAN descarga o lo que el cliente sube por chat a un expedien
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, UploadFile
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from declaras.api.case_schemas import (
     CaseDetailResponse,
@@ -32,6 +34,7 @@ from declaras.domain.errors import (
     JobNotFoundError,
     ValidationError,
 )
+from declaras.domain.models import BorradorEscrito
 from declaras.observability import get_logger
 from declaras.services.case_summary import CaseSummary, build_summary
 from declaras.services.conciliacion_service import (
@@ -314,3 +317,56 @@ async def list_client_cases(
         )
         for c in cases
     ]
+
+
+class EscribirAlPortalRequest(BaseModel):
+    """La clave del portal, que abre la sesion y se suelta: no se persiste nunca."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dian_password: SecretStr = Field(examples=["clave-del-portal"])
+
+
+class EscrituraResponse(BaseModel):
+    """Lo que quedo en el portal, con la verificacion que hace confiable el resultado."""
+
+    form_id: str
+    anio: int
+    escritas: int
+    verificado: bool
+    diferencias: list[dict[str, Any]]
+    ajenas: dict[int, int | str]
+
+    @classmethod
+    def from_domain(cls, r: BorradorEscrito) -> EscrituraResponse:
+        return cls(
+            form_id=r.form_id,
+            anio=r.anio,
+            escritas=r.escritas,
+            verificado=r.verificado,
+            diferencias=[d.model_dump() for d in r.diferencias],
+            ajenas=r.ajenas,
+        )
+
+
+@router.post(
+    "/cases/{case_id}/portal/escribir",
+    response_model=EscrituraResponse,
+    summary="Escribe el 210 calculado en el borrador del portal de la DIAN y lo verifica",
+)
+async def escribir_al_portal(
+    case_id: UUID,
+    payload: EscribirAlPortalRequest,
+    container: ContainerDep,
+    _auth: AutenticadoDep,
+) -> EscrituraResponse:
+    """El ultimo tramo: las casillas que hasta hoy se transcribian a mano.
+
+    Exige que el borrador este dado por listo (la misma disciplina del cierre, extendida al
+    portal) y NO firma ni presenta nada: llena el borrador para que el contribuyente entre,
+    lo revise y lo firme el mismo. La firma electronica es personal e intransferible.
+    """
+    # La cedula NO viaja en la peticion: sale del expediente. Aceptarla del cliente seria
+    # permitir escribir el 210 de una persona con la sesion de otra.
+    resultado = await container.escritura.escribir(case_id, payload.dian_password)
+    return EscrituraResponse.from_domain(resultado)

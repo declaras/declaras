@@ -12,9 +12,11 @@ import httpx
 
 from declaras.adapters.dian.rest.api_client import DianApiClient
 from declaras.adapters.dian.rest.client import PortalClient, PortalContext
+from declaras.adapters.dian.rest.escritura import escribir_borrador
 from declaras.adapters.dian.rest.flows import DOWNLOADERS
 from declaras.domain.errors import DianLayoutChangedError, ValidationError
 from declaras.domain.models import (
+    BorradorEscrito,
     ChallengeAnswer,
     DocumentType,
     IdentityChallenge,
@@ -55,6 +57,14 @@ class HttpDianSession:
             )
         log.info("dian.http.download_start", doc_type=doc_type.value, session_id=self.session_id)
         return await downloader(self._ctx, taxpayer)
+
+    async def escribir_borrador(
+        self, taxpayer: TaxpayerRef, casillas: dict[int, int]
+    ) -> BorradorEscrito:
+        """Llena el borrador del 210 en el portal y verifica lo que quedo guardado."""
+        self._assert_open()
+        log.info("dian.http.write_start", tax_year=taxpayer.tax_year, session_id=self.session_id)
+        return await escribir_borrador(self._ctx, anio=taxpayer.tax_year, casillas=casillas)
 
     async def capture_evidence(self, label: str) -> RawDocument:
         """Sin navegador no hay captura de pantalla: se archiva el HTML del portal.

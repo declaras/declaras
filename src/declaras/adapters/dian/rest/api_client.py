@@ -17,6 +17,7 @@ Como se autentica, calibrado el 2026-07-25:
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from typing import Any
 
@@ -191,6 +192,32 @@ class DianApiClient:
         except httpx.TransportError as exc:
             # Ver la nota de `authenticate`: sin esta rama un `ConnectError` no era un `DianError`
             # y tumbaba la consulta completa en vez de solo este documento.
+            raise DianPortalUnavailableError(self._falla_de_conexion, url=url) from exc
+
+        _raise_for_status(response, url=url)
+        return response.json()
+
+    async def put_json(self, path: str, payload: Any) -> Any:
+        """Guarda un recurso de la API y devuelve la respuesta.
+
+        ═══ EL CUERPO VIAJA EN ASCII PURO, Y NO ES UN CAPRICHO ═══
+
+        La API declara `Content-Type: ...;charset=ISO-8859-1` pero un `json=` de httpx
+        serializa en UTF-8: la DIAN interpreta esos bytes como ISO-8859-1 y toda letra fuera
+        de ASCII se corrompe. Medido en la cuenta real el 2026-08-19: un PUT identico a lo
+        leido convirtio "JOSÉ" en "JOSÃ‰" DENTRO del borrador guardado, y hubo que repararlo
+        con un segundo PUT. Con `ensure_ascii=True` todo caracter no ASCII viaja escapado
+        (`\u00c9`), que es valido bajo cualquier charset y no se puede corromper.
+        """
+        if self._bearer is None:
+            await self.authenticate()
+        url = f"{DIAN_API.base_url}{path}"
+        cuerpo = json.dumps(payload, ensure_ascii=True).encode("ascii")
+        try:
+            response = await self._client.put(url, headers=self._headers(), content=cuerpo)
+        except httpx.TimeoutException as exc:
+            raise DianTimeoutError(url=url) from exc
+        except httpx.TransportError as exc:
             raise DianPortalUnavailableError(self._falla_de_conexion, url=url) from exc
 
         _raise_for_status(response, url=url)

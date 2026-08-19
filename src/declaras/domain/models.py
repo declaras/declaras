@@ -188,6 +188,38 @@ class RawDocument(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DiferenciaDeEscritura(BaseModel):
+    """Una casilla que no quedo como se mando: lo enviado y lo que el portal devolvio."""
+
+    casilla: int
+    enviado: int | str | None
+    leido: int | str | None
+
+
+class BorradorEscrito(BaseModel):
+    """El resultado de escribir el 210 en el portal, con su verificacion.
+
+    LA VERIFICACION NO ES OPCIONAL. Escribir tiene un modo de falla que leer no tiene: un
+    payload aceptado con 201 puede quedar guardado DISTINTO de lo que se mando (pasó en el
+    primer ensayo real: la codificación corrompió una letra dentro del borrador y el portal
+    respondió 201 igual). Por eso el flujo relee el documento completo después del PUT y
+    compara casilla por casilla, y este modelo carga las tres listas que un contador necesita
+    para confiar o desconfiar del resultado.
+    """
+
+    form_id: str
+    anio: int
+    # Cuantas casillas se mandaron y si TODAS se releyeron identicas.
+    escritas: int
+    verificado: bool
+    # Las que volvieron distintas de lo enviado. Vacia cuando `verificado`.
+    diferencias: list[DiferenciaDeEscritura] = Field(default_factory=list)
+    # Casillas del cuerpo con valor en el portal que Clara NO calcula (ganancias ocasionales,
+    # anticipo del año anterior...). No son un error, pero el contador tiene que verlas: el
+    # borrador final es la mezcla de lo nuestro y lo que ya estaba.
+    ajenas: dict[int, int | str] = Field(default_factory=dict)
+
+
 class StoredDocument(BaseModel):
     """Documento ya persistido en el almacenamiento."""
 

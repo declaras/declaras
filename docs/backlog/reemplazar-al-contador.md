@@ -105,19 +105,35 @@ certificado de salarios se contestó "no lo tengo", así que el hecho nunca entr
 Sin esto Clara calcula y el cliente queda solo justo donde el contador remata. Es el bloque más
 grande de construcción y el que define si el producto reemplaza al contador o solo lo ayuda.
 
-### 2.1 Escribir el 210 en el portal y guardarlo como borrador
+### 2.1 Escribir el 210 en el portal y guardarlo como borrador — CONSTRUIDO (2026-08-19)
 
-El *kill shot* del documento maestro. Hoy el adaptador **lee** (RUT, exógena, facturas, borrador
-sugerido, declaración anterior) pero no **escribe**.
+El *kill shot* quedó funcionando el mismo día que se descubrió el camino. Lo que hay:
 
-La Resolución 000227 del 23 de septiembre de 2025 juega a favor: eliminó la presentación litográfica,
-así que todo el mundo pasa por el portal transaccional de todas formas.
+- `adapters/dian/rest/escritura.py`: resuelve la versión del formato del año (la publica la DIAN
+  en `uriApi`, no está fijada en el código), encuentra el borrador editable, escribe las casillas
+  calculadas como `cs_id_{numero}` respetando el tipo que el documento trae, y **relee todo el
+  documento para comparar casilla por casilla**. La relectura no es paranoia: en el primer ensayo
+  real el portal respondió 201 habiendo corrompido una "É" por la codificación (la API declara
+  ISO-8859-1; el cuerpo viaja ahora en ASCII escapado, que es inmune)
+- `POST /v1/cases/{id}/portal/escribir`: exige el borrador dado por listo (`DRAFT_READY`), toma la
+  cédula del expediente (nunca de la petición) y la clave viaja y se suelta sin persistirse
+- La pantalla de Presentar pide la clave en el momento y muestra la verificación: si algo volvió
+  distinto, sale en rojo con lo enviado y lo leído
+- Probado en vivo contra un borrador real: 17 casillas reescritas, verificado, cero diferencias
 
-- Flujo de escritura: diligenciar las casillas y guardar sin firmar (nivel 2, legalmente limpio)
-- El nivel 3 (firmar por el usuario) sigue descartado: el instrumento de firma electrónica es
-  personal e intransferible
-- Los avisos técnicos de la DIAN son restricciones de diseño reales: sesión de 60 minutos, una sola
-  pestaña activa, y descargar exógena **antes** que el reporte de factura electrónica
+Lo que queda abierto de este tramo:
+
+- **Crear el borrador cuando no existe.** El `POST` de creación existe (lo declara el `Allow`) pero
+  su cuerpo no está calibrado; hoy el mensaje dice cómo crearlo en el portal (un clic). Capturar el
+  tráfico de ese clic con `scripts/inspeccionar_red.py` y calibrarlo
+- **Las casillas derivadas.** El borrador de la DIAN trae totales que Clara no calcula (41, 42, 91,
+  92...); al escribir las nuestras el documento queda mezclado hasta que el formulario web las
+  recalcule al abrirlo, que es lo esperable pero no está comprobado. Abrir un borrador escrito por
+  Clara en el portal y verificar qué recalcula
+- El reto de identidad en la escritura se despacha a correr primero una extracción (que sí releva);
+  si estorba en el piloto, mover el relevo a un sitio compartido
+- Y los tres huecos de casillas del motor (ganancias ocasionales, dividendos por subcédula,
+  anticipo y sanciones del año anterior) ahora son visibles en el portal para quien los tenga
 
 ### 2.2 Recibo 490 y acompañamiento del pago
 
