@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -218,6 +219,34 @@ class CaseRespuestaRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("case_id", "pregunta", name="uq_respuesta_caso_pregunta"),)
+
+
+class ConsultaRow(Base):
+    """Quien consulto si debe declarar, por donde, y en que quedo.
+
+    ES LA PUERTA DEL EMBUDO. Antes toda esa gente escribia por WhatsApp preguntando "¿me toca
+    declarar?" y no quedaba rastro de ninguna: ni cuantas eran, ni por que via preguntaban, ni
+    cuantas terminaban declarando. Sin eso no hay embudo que optimizar ni campana que medir.
+
+    LA CLAVE DE LA DIAN VA CIFRADA, en `dian_password_cifrada`, nunca en claro. La columna se
+    llama asi para que nadie la lea por accidente creyendo que trae texto plano.
+    """
+
+    __tablename__ = "consultas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    nombre: Mapped[str] = mapped_column(String(200))
+    correo: Mapped[str] = mapped_column(String(200), index=True)
+    whatsapp: Mapped[str] = mapped_column(String(40), index=True)
+    # Por donde consulto: preguntas, dian, experto.
+    via: Mapped[str] = mapped_column(String(20))
+    # Lo que contesto a cada tope, tal cual, para poder revisar un resultado despues.
+    respuestas: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # El veredicto: OBLIGADO, NO_OBLIGADO, NO_CONCLUYENTE.
+    resultado: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    id_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    dian_password_cifrada: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CaseBienRow(Base):

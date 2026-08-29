@@ -29,6 +29,7 @@ from declaras.adapters.persistence.tables import (
     CaseLiquidacionRow,
     CasePartidaRow,
     CaseRespuestaRow,
+    ConsultaRow,
 )
 from declaras.domain.errors import ConflictoDeConcurrenciaError
 from declaras.services.conciliacion import LiquidacionVersionada, Partida, Respuesta
@@ -236,6 +237,39 @@ class SqlConciliacionRepository:
             fila.updated_at = _utcnow()
             await session.flush()
         return respuesta
+
+    # ─────────────────────────── consultas del embudo ───────────────────────────
+
+    async def guardar_consulta(
+        self,
+        *,
+        consulta_id: UUID,
+        nombre: str,
+        correo: str,
+        whatsapp: str,
+        via: str,
+        respuestas: dict[str, str],
+        resultado: str | None,
+        id_number: str | None,
+        dian_password_cifrada: str | None,
+        cuando: datetime,
+    ) -> None:
+        """Guarda una consulta. La clave llega YA CIFRADA: aca nunca se ve en claro."""
+        async with self._sessions() as session, session.begin():
+            session.add(
+                ConsultaRow(
+                    id=str(consulta_id),
+                    nombre=nombre,
+                    correo=correo,
+                    whatsapp=whatsapp,
+                    via=via,
+                    respuestas=respuestas,
+                    resultado=resultado,
+                    id_number=id_number,
+                    dian_password_cifrada=dian_password_cifrada,
+                    created_at=cuando,
+                )
+            )
 
     # ─────────────────────────── bienes del patrimonio ───────────────────────────
 

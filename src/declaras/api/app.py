@@ -14,6 +14,7 @@ from declaras.api.errors import register_exception_handlers
 from declaras.api.routers import (
     cases,
     conciliacion,
+    consultas,
     documents,
     documents_read,
     extractions,
@@ -86,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(consultas.router)
     app.include_router(extractions.router)
     app.include_router(documents.router)
     app.include_router(documents_read.router)

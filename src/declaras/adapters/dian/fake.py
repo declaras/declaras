@@ -55,6 +55,65 @@ _PDF_STUB = b"%PDF-1.4\n%% documento de prueba declaras\n"
 _DECLARACIONES = frozenset({DocumentType.PRIOR_RETURN, DocumentType.SUGGESTED_RETURN})
 
 
+def _exogena_sintetica(taxpayer: TaxpayerRef) -> bytes:
+    """Un reporte de exogena con la MISMA disposicion que el real.
+
+    Las posiciones no son decorativas: el lector busca la cedula en C7, el anio en C4 y los cinco
+    topes en las filas 15 a 19. Una hoja con los mismos datos en otro sitio se lee vacia.
+
+    Los topes van por ENCIMA del limite legal a proposito: el escenario util para probar es el
+    de alguien obligado, que es donde el resultado tiene consecuencias.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reporte"
+    ws["C1"] = "Consulta de Información reportada por terceros"
+    ws["H2"] = "2026-01-01 00:00:00"
+    ws["C3"] = f"{taxpayer.tax_year}-12-31 00:00:00"
+    ws["C4"] = str(taxpayer.tax_year)
+    ws["C6"] = "C. C."
+    ws["C7"] = taxpayer.id_number
+    ws["C8"] = "PEREZ GOMEZ ANA MARIA"
+    for columna, titulo in enumerate(
+        [
+            "NIT",
+            "Nombre",
+            "NIT",
+            "Nombre reportado",
+            "Detalle",
+            "Valor",
+            "Uso declaración Sugerida",
+        ],
+        start=1,
+    ):
+        ws.cell(row=14, column=columna, value=titulo)
+    topes = [
+        ("Tope 1 - Ingresos", 90_000_000),
+        ("Tope 2 - Patrimonio", 30_000_000),
+        ("Tope 3 - Consumo TC", 12_000_000),
+        ("Tope 4 - Movimiento", 40_000_000),
+        ("Tope 5 - Compras", 8_000_000),
+    ]
+    for offset, (etiqueta, valor) in enumerate(topes):
+        ws.cell(row=15 + offset, column=5, value=etiqueta)
+        ws.cell(row=15 + offset, column=6, value=valor)
+    ws.cell(row=20, column=1, value="900111222")
+    ws.cell(row=20, column=2, value="EMPRESA DEMO SAS")
+    ws.cell(row=20, column=3, value=taxpayer.id_number)
+    ws.cell(row=20, column=4, value="PEREZ GOMEZ ANA MARIA")
+    ws.cell(row=20, column=5, value="Pagos por salarios (Concepto: 2276)")
+    ws.cell(row=20, column=6, value=90_000_000)
+    ws.cell(row=20, column=7, value="Tope 1: Ingresos brutos | R32 Ingresos brutos")
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 class FakeDianSession:
     """Sesion falsa que devuelve documentos sinteticos estables."""
 
@@ -87,6 +146,19 @@ class FakeDianSession:
                 "portal: puede que la consulta haya fallado y no que la declaración no exista.",
                 doc_type=doc_type.value,
                 evidencia="respuesta 404 de la API: Documentos no encontrados",
+            )
+        # LA EXOGENA ES UNA HOJA DE CALCULO, NO UN PDF. El falso devolvia el mismo relleno de
+        # PDF para todo, asi que cualquier camino que la LEYERA de verdad —y no solo la
+        # guardara— reventaba con "el archivo no es una hoja de calculo que se pueda leer".
+        # Lo descubrio la consulta de obligacion, que es el primer camino que la parsea al vuelo.
+        if doc_type is DocumentType.EXOGENA:
+            return RawDocument(
+                doc_type=doc_type,
+                filename=f"exogena-{taxpayer.tax_year}.xlsx",
+                content=_exogena_sintetica(taxpayer),
+                content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                source_url="https://fake.local/exogena",
+                metadata={"fake": True, "tax_year": taxpayer.tax_year},
             )
         return RawDocument(
             doc_type=doc_type,
