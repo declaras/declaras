@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     # forma mas comun de que esto se vuelva decorativo.
     contadores: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # LA LLAVE CON QUE SE CIFRAN LOS SECRETOS GUARDADOS (hoy, la clave de la DIAN de un lead).
+    # Vive en el entorno y NO en la base a proposito: si viviera en la base, un volcado traeria
+    # las claves y su cifrado, y el cifrado seria decoracion.
+    #
+    # Sin ella el sistema NO guarda en claro: revienta al intentarlo. Un fallback silencioso a
+    # texto plano es como un despliegue mal configurado termina escribiendo miles de claves
+    # legibles sin que nada avise.
+    clave_de_cifrado: str | None = None
+
     database_url: str = "sqlite+aiosqlite:///./var/declaras.db"
 
     storage_backend: StorageBackend = StorageBackend.LOCAL

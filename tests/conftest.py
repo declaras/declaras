@@ -34,6 +34,9 @@ def settings(tmp_path: Path) -> Settings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         storage_backend=StorageBackend.LOCAL,
         storage_local_root=tmp_path / "documents",
+        # Sin llave, guardar un secreto revienta a proposito: las pruebas que guardan la
+        # clave de la DIAN necesitan una, y ademas asi se ejercita el camino real.
+        clave_de_cifrado="llave-de-pruebas",
         dian_adapter=DianAdapterKind.FAKE,
         dian_max_login_attempts=2,
         worker_enabled=True,

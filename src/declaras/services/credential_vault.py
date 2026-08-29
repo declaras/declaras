@@ -1,8 +1,18 @@
 """Boveda de credenciales en memoria, con vida corta.
 
-REGLA DEL PROYECTO: la clave de la DIAN nunca se escribe en disco ni en base de datos.
-Vive en memoria del proceso, solo el tiempo que dura la extraccion, y se destruye al
-terminar o al vencer el TTL.
+REGLA PARA LA EXTRACCION: la clave que llega a extraer documentos no se escribe en disco.
+Vive en memoria del proceso, solo el tiempo que dura el trabajo, y se destruye al terminar
+o al vencer el TTL. Aca no hay nada que guardar: la clave llega, se usa y sobra.
+
+═══ LA REGLA CAMBIO PARA UN CASO, Y SOLO PARA UNO (2026-08-29) ═══
+
+El embudo de "¿debo declarar?" SI guarda la clave, porque ahi la clave no es de un solo
+uso: la persona consulta hoy, decide despues, y volver a pedirsela en cada paso es perder
+al cliente entre uno y otro. Es una decision de negocio tomada a conciencia.
+
+Lo que NO cambio: esa clave se guarda CIFRADA (`services/cifrado.py`), con la llave fuera
+de la base, y este modulo sigue sin escribir nada. Son dos caminos con dos tratos
+distintos, no una excepcion que se derrama sobre el resto.
 
 CONSECUENCIA OPERATIVA que hay que respetar al desplegar: como la clave vive en el
 proceso, la API y el worker deben ser el mismo proceso (una sola unidad de despliegue).
