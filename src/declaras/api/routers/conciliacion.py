@@ -277,6 +277,45 @@ async def registrar_respuesta(
     )
 
 
+@router.delete(
+    "/respuestas/{pregunta}",
+    response_model=RespuestaRegistradaResponse,
+    summary="Deshace una respuesta: la pregunta vuelve a estar sin contestar",
+)
+async def deshacer_respuesta(
+    case_id: UUID,
+    pregunta: str,
+    container: ContainerDep,
+    auth: AutenticadoDep,
+) -> RespuestaRegistradaResponse:
+    """Para cuando se contestó por error, que es más frecuente de lo que parece.
+
+    ═══ POR QUE NO ALCANZA CON CONTESTAR AL REVES ═══
+
+    "Sin contestar" y "contestó que no" son estados distintos: el primero deja la pregunta
+    viva, el segundo la apaga para siempre. Deshacer un "no" escribiendo un "sí" no devuelve
+    las cosas a como estaban, y encima afirma en nombre del cliente algo que nunca dijo.
+
+    ACA `quien` SALE DE LA CREDENCIAL y no del cuerpo, al reves que al registrar. Es la misma
+    distinción de siempre: registrar una respuesta guarda lo que dijo el CLIENTE (la fuente del
+    dato), y deshacerla es una acción de quien opera la consola (el actor). Poner al cliente
+    como autor de un deshacer que él no pidió sería una mentira en la bitácora.
+    """
+    peticiones = await container.conciliacion_service.deshacer_respuesta(
+        # El correo puede faltar (un servicio no tiene): se cae en el `subject`, que siempre
+        # esta, en vez de dejar la bitacora diciendo "lo hizo None".
+        case_id,
+        pregunta=pregunta,
+        quien=auth.email or auth.subject,
+    )
+    return RespuestaRegistradaResponse(
+        pregunta=pregunta,
+        # Sin respuesta no hay `tiene`: es justamente el estado al que se vuelve.
+        tiene=None,
+        peticiones=[PeticionResponse.from_peticion(p) for p in peticiones],
+    )
+
+
 @router.post(
     "/cerrar-peticion/{peticion_id}",
     response_model=PeticionCerradaResponse,

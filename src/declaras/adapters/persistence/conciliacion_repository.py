@@ -238,6 +238,31 @@ class SqlConciliacionRepository:
             await session.flush()
         return respuesta
 
+    async def borrar_respuesta(self, case_id: UUID, pregunta: str) -> bool:
+        """Devuelve la pregunta a SIN CONTESTAR. `False` si no habia nada que borrar.
+
+        ═══ POR QUE BORRAR Y NO GUARDAR LO CONTRARIO ═══
+
+        "Sin contestar" y "contestó que no" son estados DISTINTOS y el sistema los trata
+        distinto: el primero deja la pregunta viva en la cola, el segundo la apaga para
+        siempre. Deshacer un "no" escribiendo un "si" no devuelve las cosas a como estaban,
+        las deja en un tercer estado que tampoco es el original — y encima afirma en nombre
+        del cliente algo que el cliente nunca dijo.
+        """
+        async with self._sessions() as session, session.begin():
+            fila = (
+                await session.execute(
+                    select(CaseRespuestaRow).where(
+                        CaseRespuestaRow.case_id == str(case_id),
+                        CaseRespuestaRow.pregunta == pregunta,
+                    )
+                )
+            ).scalar_one_or_none()
+            if fila is None:
+                return False
+            await session.delete(fila)
+            return True
+
     # ─────────────────────────── consultas del embudo ───────────────────────────
 
     async def guardar_consulta(

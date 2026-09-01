@@ -322,7 +322,9 @@ class PeticionResponse(BaseModel):
 
 class RespuestaRegistradaResponse(BaseModel):
     pregunta: str
-    tiene: bool
+    # `None` es "sin contestar", que es a donde vuelve una respuesta deshecha. NO es lo mismo
+    # que `False`: aquel apaga la pregunta para siempre y este la deja viva.
+    tiene: bool | None
     peticiones: list[PeticionResponse]
 
 

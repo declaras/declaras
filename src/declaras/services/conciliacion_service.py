@@ -184,6 +184,8 @@ class ConciliacionRepository(Protocol):
 
     async def registrar_respuesta(self, case_id: UUID, respuesta: Respuesta) -> Respuesta: ...
 
+    async def borrar_respuesta(self, case_id: UUID, pregunta: str) -> bool: ...
+
     async def bienes(self, case_id: UUID) -> list[BienCapturado]: ...
 
     async def guardar_bien(self, case_id: UUID, bien: BienCapturado) -> BienCapturado: ...
@@ -725,6 +727,38 @@ class ConciliacionService:
             ),
             payload={"pregunta": pregunta, "tiene": tiene, "quien": quien},
         )
+        return await self.peticiones(case_id)
+
+    async def deshacer_respuesta(
+        self, case_id: UUID, *, pregunta: str, quien: str
+    ) -> list[Peticion]:
+        """Devuelve una pregunta a sin contestar, como si nunca se hubiera respondido.
+
+        ═══ DESHACER NO ES BORRAR EL RASTRO ═══
+
+        La respuesta se va —para eso es deshacer— pero el evento de que se deshizo se queda, y
+        el de la respuesta original tambien. La bitacora es lo que respalda la garantia si la
+        DIAN pregunta: un expediente donde las decisiones desaparecen sin dejar huella no
+        respalda nada, y ademas hace imposible entender por que una declaracion quedo como
+        quedo.
+
+        Asi que despues de deshacer, la pantalla muestra la pregunta otra vez Y el historial
+        cuenta la vuelta completa: se contesto, se deshizo.
+        """
+        from datetime import UTC, datetime  # noqa: F401  (mismo patrón que registrar_respuesta)
+
+        await self._detalle(case_id)
+        habia = await self._repo.borrar_respuesta(case_id, pregunta)
+        if habia:
+            await self._cases.add_event(
+                case_id=case_id,
+                kind="ANSWER_UNDONE",
+                message=(
+                    f"Se deshizo la respuesta sobre {etiqueta_de_pregunta(pregunta)}: "
+                    f"vuelve a estar sin contestar (lo hizo {quien})"
+                ),
+                payload={"pregunta": pregunta, "quien": quien},
+            )
         return await self.peticiones(case_id)
 
     async def cerrar_peticion(
