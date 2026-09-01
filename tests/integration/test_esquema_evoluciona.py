@@ -79,3 +79,22 @@ async def test_correrlo_dos_veces_no_falla(base_vieja):
             lambda c: [x["name"] for x in inspect(c).get_columns("clients")]
         )
     assert columnas.count("dian_password_cifrada") == 1
+
+
+def test_el_sql_tambien_es_valido_en_el_motor_de_produccion():
+    """LAS PRUEBAS CORREN EN SQLITE Y PRODUCCION ES POSTGRES, y esa diferencia ya mordió una
+    vez: un cambio de esquema que pasa acá puede fallar allá.
+
+    El tipo de cada columna se compila con el dialecto del motor, así que basta con verificar
+    que los dos dialectos producen algo compilable. Un tipo que no se puede expresar en
+    Postgres reventaría el ARRANQUE del despliegue, o sea el peor momento posible.
+    """
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    from declaras.adapters.persistence.tables import Base
+
+    for dialecto in (postgresql.dialect(), sqlite.dialect()):
+        for tabla in Base.metadata.sorted_tables:
+            for columna in tabla.columns:
+                compilado = columna.type.compile(dialecto)
+                assert compilado, f"{tabla.name}.{columna.name} no se pudo compilar"
