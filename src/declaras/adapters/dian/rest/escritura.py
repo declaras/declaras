@@ -41,12 +41,12 @@ rehace sus cuentas.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from typing import Any
 
 from declaras.adapters.dian.endpoints import DIAN_API
 from declaras.adapters.dian.rest.client import PortalContext
-from declaras.domain.errors import DianLayoutChangedError
+from declaras.domain.errors import DianDocumentUnavailableError, DianLayoutChangedError
 from declaras.domain.models import BorradorEscrito, DiferenciaDeEscritura
 from declaras.observability import get_logger
 
@@ -62,6 +62,25 @@ _NO_SON_CIFRAS = frozenset({24, 25, 26, 27})
 # humano puede accionar. Medido en el primer ensayo real: 30 "ajenas" de las que 13 eran
 # internas.
 _ULTIMA_CASILLA_OFICIAL = 139
+
+
+async def _paso(que_se_hacia: str, tarea: Awaitable[Any]) -> Any:
+    """Corre una llamada al portal y, si falla por documento ausente, dice CUAL era.
+
+    Un 404 del portal llega siempre como "la DIAN no tiene ese documento", que es correcto
+    para una descarga y desorientador al escribir: no falta un documento del contribuyente,
+    falló un paso concreto de la escritura. Se conserva el código (quien lo trate por código
+    sigue funcionando) y el motivo que dio la DIAN, y se le agrega el paso.
+    """
+    try:
+        return await tarea
+    except DianDocumentUnavailableError as exc:
+        raise DianDocumentUnavailableError(
+            # El paso va como frase propia y no interpolado en la del portal: pegados, el punto
+            # final quedaba dentro de una oración que arrancaba con el mensaje de la DIAN.
+            f"Falló un paso de la escritura en el portal: {que_se_hacia}. {exc.message}",
+            **{**exc.details, "paso": que_se_hacia},
+        ) from exc
 
 
 async def _uri_del_anio(ctx: PortalContext, anio: int) -> str:
@@ -160,12 +179,23 @@ def _mismo_valor(a: Any, b: Any) -> bool:
 async def escribir_borrador(
     ctx: PortalContext, *, anio: int, casillas: Mapping[int, int]
 ) -> BorradorEscrito:
-    """Llena el borrador del año con las casillas calculadas y verifica lo que quedo."""
-    uri = await _uri_del_anio(ctx, anio)
-    form_id = await _borrador_del_anio(ctx, uri, anio)
+    """Llena el borrador del año con las casillas calculadas y verifica lo que quedo.
+
+    ═══ CADA PASO DICE CUAL ES ═══
+
+    Este flujo hace cinco llamadas al portal (versión del formato, buscar el borrador, leerlo,
+    escribirlo, releerlo) y un 404 en cualquiera de ellas salía con el mismo texto genérico:
+    "la DIAN no tiene ese documento". Al escribir eso apunta al lado contrario —parece que
+    falta un documento del contribuyente cuando lo que falló fue crear su borrador— y deja a
+    quien opera sin saber en qué paso se cayó.
+
+    `_paso` envuelve cada llamada y le pone nombre al que falla.
+    """
+    uri = await _paso("consultar la versión del formulario", _uri_del_anio(ctx, anio))
+    form_id = await _paso("abrir el borrador del año", _borrador_del_anio(ctx, uri, anio))
     ruta = f"{uri}/formularios/{form_id}"
 
-    documento = await ctx.api.get_json(ruta)
+    documento = await _paso("leer el borrador", ctx.api.get_json(ruta))
     cuerpo = documento["doc"]["cuerpo"]
 
     enviadas: dict[int, int] = {}
@@ -182,10 +212,10 @@ async def escribir_borrador(
         enviadas[numero] = int(valor)
 
     log.info("dian.write.put", form_id=form_id, anio=anio, casillas=len(enviadas))
-    await ctx.api.put_json(ruta, documento)
+    await _paso("guardar el borrador", ctx.api.put_json(ruta, documento))
 
     # ═══ LA RELECTURA ═══
-    releido = await ctx.api.get_json(ruta)
+    releido = await _paso("releer el borrador para verificarlo", ctx.api.get_json(ruta))
     cuerpo_releido = releido["doc"]["cuerpo"]
 
     diferencias = [
