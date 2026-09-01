@@ -215,8 +215,28 @@ class VistaPatrimonio:
     deudas_reportadas: list[Deuda]
     capturado: int
     patrimonio_liquido_anterior: int | None
+    # El patrimonio BRUTO del año pasado, que es la unica pista de cuantos bienes tiene esta
+    # persona: sirve para preguntar con referencia en vez de en blanco. `None` cuando no hay
+    # declaracion anterior, que no es cero.
+    bruto_anterior: int | None
     # Las frases que dicen por qué el patrimonio no está completo. Vacía = completo.
     falta: list[str]
+
+    @property
+    def por_explicar(self) -> int | None:
+        """Cuanto del patrimonio del año pasado todavia no aparece en este expediente.
+
+        ES UNA PISTA, NO UN FALTANTE, y la diferencia importa: el patrimonio pudo bajar de
+        verdad (se vendio el carro, se pago la hipoteca), asi que un numero positivo aca no
+        significa que alguien olvido algo. Significa que vale la pena preguntar por que.
+
+        Negativo no se devuelve: que el patrimonio de este año sea MAYOR que el del pasado es
+        lo normal y no hay nada que explicar por ese lado.
+        """
+        if self.bruto_anterior is None:
+            return None
+        ya_hay = self.capturado + sum(a.valor_31dic for a in self.reportados)
+        return max(self.bruto_anterior - ya_hay, 0)
 
     @property
     def completo(self) -> bool:
@@ -432,24 +452,51 @@ class ConciliacionService:
         )
 
     @staticmethod
-    def _patrimonio_anterior(detail: CaseDetail) -> int | None:
-        """El patrimonio líquido que la persona declaró el año pasado, si su 210 está en el caso.
+    def _casilla_del_anterior(detail: CaseDetail, casilla: str) -> int | None:
+        """Una casilla de la declaración del año pasado, si su 210 está en el caso.
 
-        Es el insumo de la comparación patrimonial del art. 236, que `motor/cierre.py` ya sabía
-        calcular y nunca calculaba: el campo existía en el modelo y nadie lo llenaba, así que el
-        chequeo estaba apagado en todos los casos reales. La declaración anterior YA se descarga
-        del portal y YA se lee (casillas 29, 30 y 31), solo que su lectura no la consumía nadie.
-
-        `None` no es cero, y la diferencia es la que evita una alerta falsa: sin declaración
-        anterior no se puede afirmar que el patrimonio creció, y un cero diría que creció todo.
+        `None` no es cero, y la diferencia es la que evita afirmar de más: sin declaración
+        anterior no se sabe cuánto patrimonio había, y un cero diría que no había ninguno.
         """
         for documento in detail.documents:
             if documento.doc_type != "PRIOR_RETURN" or documento.reading is None:
                 continue
             for campo in documento.reading.fields:
-                if campo.name == "casilla_31" and isinstance(campo.value, int):
+                if campo.name == casilla and isinstance(campo.value, int):
                     return campo.value
         return None
+
+    @classmethod
+    def _patrimonio_anterior(cls, detail: CaseDetail) -> int | None:
+        """El patrimonio LIQUIDO declarado el año pasado (casilla 31).
+
+        Es el insumo de la comparación patrimonial del art. 236, que `motor/cierre.py` ya sabía
+        calcular y nunca calculaba: el campo existía en el modelo y nadie lo llenaba, así que el
+        chequeo estaba apagado en todos los casos reales.
+        """
+        return cls._casilla_del_anterior(detail, "casilla_31")
+
+    @classmethod
+    def _bruto_anterior(cls, detail: CaseDetail) -> int | None:
+        """El patrimonio BRUTO declarado el año pasado (casilla 29).
+
+        ═══ PARA QUE SIRVE, QUE NO ES LO MISMO QUE EL LIQUIDO ═══
+
+        El líquido va a la comparación patrimonial. El bruto sirve para otra cosa: es la unica
+        pista que existe de CUANTOS bienes tiene esta persona, y hasta ahora se estaba tirando.
+
+        Un inmueble no lo reporta nadie año tras año —ninguna notaria le dice a la DIAN que
+        alguien SIGUE siendo dueño de su apartamento— asi que el patrimonio se pregunta desde
+        cero, en blanco, todos los años. Pero el año pasado la persona declaro un numero, y ese
+        numero dice cuanto habia. Preguntar "¿tienes casa?" sin decir "el año pasado declaraste
+        180 millones y llevas cero capturado" es esconder el dato mas util que hay en el
+        expediente.
+
+        NO alcanza para precargar los bienes: el 210 trae el total, no el desglose (que casa,
+        que carro, por cuanto cada uno). Alcanza para decir cuanto falta por explicar, que es
+        justamente lo que convierte tres preguntas en blanco en una verificacion con referencia.
+        """
+        return cls._casilla_del_anterior(detail, "casilla_29")
 
     async def resolver_partida(
         self,
@@ -600,6 +647,7 @@ class ConciliacionService:
             deudas_reportadas=deudas_reportadas,
             capturado=sum(a.valor_31dic for a in patrimonio.activos),
             patrimonio_liquido_anterior=patrimonio.patrimonio_liquido_anterior,
+            bruto_anterior=self._bruto_anterior(detail),
             falta=falta_por_contestar(respuestas, bienes),
         )
 

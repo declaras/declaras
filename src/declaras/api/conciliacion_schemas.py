@@ -596,6 +596,11 @@ class PatrimonioResponse(BaseModel):
     total_bruto: int
     total_deudas: int
     patrimonio_liquido_anterior: int | None
+    # El patrimonio BRUTO del año pasado y cuanto de el todavia no aparece en este expediente.
+    # Es la referencia que convierte tres preguntas en blanco en una verificacion: "el año
+    # pasado declaraste X, llevas Y". `None` cuando no hay declaracion anterior.
+    bruto_anterior: int | None
+    por_explicar: int | None
     falta: list[str]
     completo: bool
 
@@ -624,6 +629,8 @@ class PatrimonioResponse(BaseModel):
             total_deudas=sum(d.saldo_31dic for d in vista.deudas_reportadas)
             + sum(b.deuda_saldo or 0 for b, _ in vista.bienes),
             patrimonio_liquido_anterior=vista.patrimonio_liquido_anterior,
+            bruto_anterior=vista.bruto_anterior,
+            por_explicar=vista.por_explicar,
             falta=vista.falta,
             completo=vista.completo,
         )
