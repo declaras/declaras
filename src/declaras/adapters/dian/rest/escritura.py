@@ -157,7 +157,30 @@ def _documento_de(respuesta: Any) -> dict[str, Any] | None:
 
 
 async def _borrador_del_anio(ctx: PortalContext, uri: str, anio: int) -> str:
-    listado = await ctx.api.get_json(f"{uri}/formularios")
+    """El borrador editable del año, y si no hay ninguno lo crea.
+
+    ═══ UN 404 AL LISTAR ES "NO TIENE NINGUNO", NO UN ERROR ═══
+
+    Y esa distinción era justo la que faltaba. Cuando el contribuyente no tiene NI UN
+    formulario, la DIAN responde 404 con "Documentos no encontrados" a la consulta del listado.
+    Esa excepción reventaba aquí y nunca se llegaba a la línea que crea el borrador — o sea que
+    la creación automática funcionaba solo para quien YA tenía formularios de otros años, y
+    fallaba exactamente en el caso para el que se construyó: el primerizo, o el que nunca abrió
+    borrador de este año.
+
+    Se vio en un expediente real: "Falló un paso de la escritura en el portal: abrir el
+    borrador del año. La DIAN respondió: Documentos no encontrados". Con el borrador cerrado y
+    listo, el proceso moría en el último tramo.
+
+    El resto del sistema ya trataba ese 404 así (`api_client` lo documenta: "un 404 aquí casi
+    nunca es un error, es la DIAN diciendo que no tiene ese documento"); lo que faltaba era
+    consumirlo con ese significado en vez de dejarlo subir.
+    """
+    try:
+        listado = await ctx.api.get_json(f"{uri}/formularios")
+    except DianDocumentUnavailableError:
+        log.info("dian.write.sin_formularios", anio=anio)
+        listado = None
     formularios = (listado or {}).get("infoFormularios") or []
     for info in formularios:
         if info.get("anio") == anio and _es_editable(info):
