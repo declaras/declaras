@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     dian_max_concurrent_sessions: int = Field(default=2, ge=1, le=10)
     dian_nav_timeout_ms: int = Field(default=45_000, ge=5_000)
     dian_max_login_attempts: int = Field(default=2, ge=1, le=2)
+    # Cuantos proxies de confianza hay delante de este servicio. Decide de donde se lee la IP
+    # del visitante para limitar por origen: se cuenta ese numero de valores desde el final del
+    # `X-Forwarded-For`, porque un proxy AGREGA al final y el cliente puede mandar los suyos.
+    #
+    # Uno es el caso de Railway con su proxy de borde. Si entra un CDN delante, sube a dos: con
+    # el numero corto, el valor leido pasa a ser la IP del proxy —la misma para todos— y el
+    # limite empieza a contar a todos los visitantes en un solo cubo. Un numero mal puesto aca
+    # no falla, cuenta mal, y por eso se verifica en el primer despliegue.
+    proxies_de_confianza: int = Field(default=1, ge=1, le=4)
     dian_capture_evidence: bool = True
     dian_challenge_ttl_s: int = Field(default=600, ge=60)
 

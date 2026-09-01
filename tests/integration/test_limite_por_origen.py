@@ -125,3 +125,25 @@ async def test_las_ventanas_viejas_se_barren(client, container):
             BASE, json=_consulta(n), headers={"X-Forwarded-For": "200.9.9.9"}
         )
         assert respuesta.status_code == 200, respuesta.text
+
+
+async def test_con_dos_proxies_se_lee_un_salto_mas_atras(container, client):
+    """El numero de proxies decide DE DONDE se lee la IP, y equivocarlo no falla: cuenta mal.
+
+    Con un CDN delante del proxy, el ultimo valor pasa a ser la IP del proxy —la misma para
+    todo el mundo— y el limite empezaria a contar a todos los visitantes en un solo cubo,
+    bloqueando a gente que no hizo nada. Por eso es configuracion y no una constante.
+    """
+    from declaras.api.origen import origen_de
+
+    class PeticionFalsa:
+        def __init__(self, cadena: str) -> None:
+            self.headers = {"x-forwarded-for": cadena}
+            self.client = None
+
+    # cliente(falsificado), visitante real, proxy interno
+    cadena = "1.2.3.4, 200.5.5.5, 10.0.0.9"
+    assert origen_de(PeticionFalsa(cadena), saltos_de_confianza=1) == "10.0.0.9"
+    assert origen_de(PeticionFalsa(cadena), saltos_de_confianza=2) == "200.5.5.5"
+    # Mas saltos declarados que valores: se toma el primero, que es lo unico que hay.
+    assert origen_de(PeticionFalsa("200.5.5.5"), saltos_de_confianza=3) == "200.5.5.5"

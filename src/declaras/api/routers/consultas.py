@@ -72,7 +72,9 @@ async def registrar_consulta(
     con abrir las herramientas del navegador para guardarse un "no obligado" que nadie calculo.
     """
     await container.limitador.registrar(
-        origen=origen_de(request), recurso="consultas", limite=_LIMITE_REGISTRO
+        origen=origen_de(request, saltos_de_confianza=container.settings.proxies_de_confianza),
+        recurso="consultas",
+        limite=_LIMITE_REGISTRO,
     )
     consulta_id, resultado = await container.consultas.registrar(
         nombre=payload.nombre,
@@ -112,7 +114,9 @@ async def consultar_con_la_dian(
     # ANTES de abrir sesion: el limite existe para que este servicio no golpee el portal en
     # bucle, asi que comprobarlo despues del login no serviria de nada.
     await container.limitador.registrar(
-        origen=origen_de(request), recurso="consultas_dian", limite=_LIMITE_DIAN
+        origen=origen_de(request, saltos_de_confianza=container.settings.proxies_de_confianza),
+        recurso="consultas_dian",
+        limite=_LIMITE_DIAN,
     )
     return await container.consultas.consultar_con_la_dian(
         nombre=payload.nombre,
