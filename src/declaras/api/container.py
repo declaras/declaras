@@ -30,6 +30,7 @@ from declaras.domain.case_ports import CaseRepository, ClientRepository
 from declaras.domain.ports import DianConnector, DocumentStore, JobRepository, LoginAttemptGuard
 from declaras.observability import get_logger
 from declaras.services.case_service import CaseService
+from declaras.services.clave_service import ClaveService
 from declaras.services.conciliacion_service import ConciliacionRepository, ConciliacionService
 from declaras.services.consultas_service import ConsultasService
 from declaras.services.credential_vault import InMemoryCredentialVault
@@ -63,6 +64,7 @@ class Container:
     conciliacion_service: ConciliacionService
     escritura: EscrituraService
     historial: HistorialService
+    clave: ClaveService
     limitador: LimitadorPorOrigen
     consultas: ConsultasService
     # None cuando no hay auth de personas configurado: sin proyecto de Supabase no hay llaves que
@@ -106,12 +108,14 @@ class Container:
             connector=connector,
             guard=guard,
         )
+        clave = ClaveService(clients=clients, llave=settings.clave_de_cifrado)
         escritura = EscrituraService(
             connector=connector,
             cases=cases,
             conciliacion=conciliacion_service,
             guard=guard,
             store=store,
+            clave=clave,
         )
         historial = HistorialService(cases=cases)
         limitador = LimitadorPorOrigen(sessions)
@@ -142,6 +146,7 @@ class Container:
             conciliacion_service=conciliacion_service,
             escritura=escritura,
             historial=historial,
+            clave=clave,
             limitador=limitador,
             consultas=consultas,
             llaves=(

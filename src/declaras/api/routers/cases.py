@@ -320,11 +320,17 @@ async def list_client_cases(
 
 
 class EscribirAlPortalRequest(BaseModel):
-    """La clave del portal, que abre la sesion y se suelta: no se persiste nunca."""
+    """La clave del portal. Opcional: si el cliente ya tiene una guardada, se usa esa.
+
+    Preparar una declaracion son varias visitas al portal repartidas en dias, y quien opera la
+    consola NO tiene la clave: pedirla en cada paso significaba una llamada al cliente por
+    paso. Con una guardada, el campo sobra; mandarla igual la reemplaza, que es como se
+    corrige una clave que cambio.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    dian_password: SecretStr = Field(examples=["clave-del-portal"])
+    dian_password: SecretStr | None = Field(default=None, examples=["clave-del-portal"])
 
 
 class EscrituraResponse(BaseModel):
@@ -374,6 +380,45 @@ async def escribir_al_portal(
     # permitir escribir el 210 de una persona con la sesion de otra.
     resultado = await container.escritura.escribir(case_id, payload.dian_password)
     return EscrituraResponse.from_domain(resultado)
+
+
+class ClaveGuardadaResponse(BaseModel):
+    """Si hay clave guardada para el cliente de este expediente."""
+
+    guardada: bool
+
+
+@router.get(
+    "/cases/{case_id}/clave",
+    response_model=ClaveGuardadaResponse,
+    summary="Dice si hay una clave del portal guardada para este cliente",
+)
+async def estado_de_la_clave(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> ClaveGuardadaResponse:
+    """La pantalla necesita saberlo para no pedir lo que ya tiene, y para poder ofrecer
+    borrarla. Devuelve SI hay, nunca cual: la clave sale de la base solo hacia el portal."""
+    detalle = await container.case_service.get_detail(case_id)
+    guardada = await container.clave.recuperar(detalle.client.id)
+    return ClaveGuardadaResponse(guardada=guardada is not None)
+
+
+@router.delete(
+    "/cases/{case_id}/clave",
+    response_model=ClaveGuardadaResponse,
+    summary="Olvida la clave del portal guardada para este cliente",
+)
+async def olvidar_la_clave(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> ClaveGuardadaResponse:
+    """Sin esto, guardar la clave seria una trampa.
+
+    Quien confia una credencial tiene que poder retirarla, y el titular puede pedirlo en
+    cualquier momento. Que exista el boton es lo que hace legitimo el guardado.
+    """
+    detalle = await container.case_service.get_detail(case_id)
+    await container.clave.olvidar(detalle.client.id)
+    return ClaveGuardadaResponse(guardada=False)
 
 
 class AnioDelHistorial(BaseModel):

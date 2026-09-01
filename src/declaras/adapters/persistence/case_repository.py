@@ -173,6 +173,36 @@ class SqlClientRepository:
             ).scalars()
             return [_client_from_row(r) for r in rows]
 
+    async def guardar_clave(self, client_id: UUID, cifrada: str) -> None:
+        """Guarda la clave del portal, YA CIFRADA. Aca nunca se ve en claro."""
+        async with self._sessions() as session, session.begin():
+            row = await session.get(ClientRow, str(client_id))
+            if row is None:
+                raise CaseNotFoundError(client_id=str(client_id))
+            row.dian_password_cifrada = cifrada
+            row.dian_password_guardada_at = _utcnow()
+
+    async def leer_clave(self, client_id: UUID) -> str | None:
+        """La clave cifrada, o None si no hay ninguna guardada."""
+        async with self._sessions() as session:
+            row = await session.get(ClientRow, str(client_id))
+            return row.dian_password_cifrada if row else None
+
+    async def borrar_clave(self, client_id: UUID) -> bool:
+        """Olvida la clave. `False` si no habia ninguna.
+
+        Una clave guardada sin forma de borrarla no es una funcion, es una trampa: quien la
+        confio tiene que poder retirarla, y eso vale tanto para el titular como para el
+        despliegue que quiera limpiar.
+        """
+        async with self._sessions() as session, session.begin():
+            row = await session.get(ClientRow, str(client_id))
+            if row is None or row.dian_password_cifrada is None:
+                return False
+            row.dian_password_cifrada = None
+            row.dian_password_guardada_at = None
+            return True
+
     async def _find(self, id_kind: IdDocumentKind, id_number: str) -> Client | None:
         async with self._sessions() as session:
             row = (

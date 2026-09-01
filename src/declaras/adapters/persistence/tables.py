@@ -54,6 +54,27 @@ class ClientRow(Base):
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # La clave del portal, CIFRADA, para no pedirla en cada operacion.
+    #
+    # ═══ POR QUE SE GUARDA, Y QUE CAMBIA CON ESO ═══
+    #
+    # Preparar una declaracion son varias visitas al portal repartidas en dias: consultar,
+    # volver a consultar cuando la DIAN publica algo, escribir el borrador. Con la clave
+    # efimera, cada una la pedia de nuevo, y quien opera no la tiene: hay que llamar al
+    # cliente. En la practica eso significaba una llamada por paso.
+    #
+    # Lo que cambia es la promesa: mientras la clave se destruia, la pantalla podia decir "no
+    # queda guardada en ninguna parte". Guardandola, ese texto seria mentira, asi que cambia
+    # tambien — y por eso existe el borrado explicito. Una clave guardada sin forma de borrarla
+    # no es una funcion, es una trampa.
+    #
+    # Nunca en claro: se cifra con la llave del despliegue antes de llegar aca, igual que las
+    # del embudo de consultas. La columna se llama asi para que nadie la lea por accidente
+    # creyendo que trae texto plano.
+    dian_password_cifrada: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dian_password_guardada_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (UniqueConstraint("id_kind", "id_number", name="uq_client_document"),)
 

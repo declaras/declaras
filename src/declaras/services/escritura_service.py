@@ -50,6 +50,16 @@ class BorradorNoCerradoError(DeclarasError):
     )
 
 
+class SinClaveError(DeclarasError):
+    """No llego clave y no hay ninguna guardada para ese cliente."""
+
+    code = "SIN_CLAVE_DIAN"
+    http_status = 400
+    default_message = (
+        "Hace falta la clave del portal de la DIAN: no hay ninguna guardada para este cliente."
+    )
+
+
 class EscrituraService:
     def __init__(
         self,
@@ -59,31 +69,40 @@ class EscrituraService:
         conciliacion: ConciliacionService,
         guard: LoginAttemptGuard,
         store: DocumentStore,
+        clave: object,
     ) -> None:
         self._connector = connector
         self._cases = cases
         self._conciliacion = conciliacion
         self._guard = guard
         self._store = store
+        self._clave = clave
 
-    async def escribir(self, case_id: UUID, password: SecretStr) -> BorradorEscrito:
+    async def escribir(
+        self, case_id: UUID, password: SecretStr | None = None
+    ) -> BorradorEscrito:
         """Lleva el 210 del expediente al borrador del portal y verifica lo guardado.
 
-        LA CLAVE NO SE PERSISTE. Llega en la peticion, abre la sesion y se suelta: el mismo
-        trato que le da la extraccion, por la misma razon — la clave del portal es del
-        contribuyente, no un dato del expediente. La cedula NO viaja en la peticion: sale
-        del expediente, porque aceptar otra seria escribir el 210 de una persona con la
-        sesion de otra.
+        LA CLAVE PUEDE VENIR O ESTAR GUARDADA. Preparar una declaracion son varias visitas al
+        portal repartidas en dias, y quien opera la consola no tiene la clave del cliente:
+        pedirla en cada paso significaba una llamada por paso. Si llega en la peticion se usa
+        y se guarda (cifrada) para los siguientes; si no llega, se usa la guardada.
+
+        La cedula NO viaja en la peticion: sale del expediente, porque aceptar otra seria
+        escribir el 210 de una persona con la sesion de otra.
         """
         detail = await self._cases.get_detail(case_id)
         if detail is None:
             raise CaseNotFoundError(case_id=str(case_id))
+        clave = password or await self._clave.recuperar(detail.client.id)
+        if clave is None:
+            raise SinClaveError()
         if detail.case.status is not CaseStatus.DRAFT_READY:
             raise BorradorNoCerradoError()
         credentials = DianCredentials(
             id_kind=detail.client.id_kind,
             id_number=detail.client.id_number,
-            password=password,
+            password=clave,
         )
 
         # Las casillas se calculan ANTES de abrir la sesion: si el caso no se puede armar,
@@ -124,6 +143,11 @@ class EscrituraService:
             await session.close()
 
         resultado = resultado.model_copy(update={"documento_id": documento_id})
+
+        # Se guarda DESPUES de que funciono: una clave que no sirvio no se archiva, porque
+        # entonces el proximo paso la usaria sola y fallaria sin que nadie entienda por que.
+        if password is not None:
+            await self._clave.guardar(detail.client.id, password)
 
         veredicto = (
             "verificado renglón por renglón"
