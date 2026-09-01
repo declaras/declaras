@@ -23,6 +23,12 @@ def payload(password: str, **overrides) -> dict:
 
 
 async def test_extraccion_exitosa_devuelve_los_cinco_documentos(client):
+    """Los cinco insumos del calculo, MAS las declaraciones de años anteriores.
+
+    El historial entro despues y en la misma sesion. La razon es que lo escaso no es la
+    descarga sino el LOGIN —la DIAN bloquea la cuenta al tercer intento fallido— asi que
+    pedirle la clave otra vez para bajar un PDF gasta el recurso caro por ahorrar el barato.
+    """
     created = await client.post(BASE, json=payload("clave-buena"))
     assert created.status_code == 202
     body = created.json()
@@ -33,12 +39,19 @@ async def test_extraccion_exitosa_devuelve_los_cinco_documentos(client):
     assert final["status"] == "SUCCEEDED"
 
     doc_types = {doc["doc_type"] for doc in final["documents"]}
-    assert doc_types == {
+    assert {
         "RUT",
         "EXOGENA",
         "PRIOR_RETURN",
         "SUGGESTED_RETURN",
         "EINVOICE_SUMMARY",
+    } <= doc_types
+    # El historial llega como declaracion presentada, un documento por año.
+    historial = [d for d in final["documents"] if d["doc_type"] == "FILED_RETURN"]
+    assert len(historial) == 2, "trae los dos ultimos años, no cinco: el camino critico importa"
+    assert {d["filename"] for d in historial} == {
+        "declaracion-2023.pdf",
+        "declaracion-2022.pdf",
     }
     assert not final["failures"]
     assert all(doc["sha256"] and doc["size_bytes"] > 0 for doc in final["documents"])
@@ -91,7 +104,8 @@ async def test_reto_de_identidad_parquea_el_job_y_se_reanuda_al_responder(client
 
     final = await wait_for_status(client, job_id, "SUCCEEDED", "FAILED")
     assert final["status"] == "SUCCEEDED"
-    assert len(final["documents"]) == 5
+    # Cinco insumos + las dos declaraciones anteriores.
+    assert len(final["documents"]) == 7
 
 
 async def test_documento_no_publicado_produce_exito_parcial(client):
@@ -99,7 +113,8 @@ async def test_documento_no_publicado_produce_exito_parcial(client):
     final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED", "FAILED")
 
     assert final["status"] == "SUCCEEDED"
-    assert len(final["documents"]) == 4
+    # Cuatro insumos (falta la exogena) + las dos declaraciones anteriores.
+    assert len(final["documents"]) == 6
     assert len(final["failures"]) == 1
     failure = final["failures"][0]
     assert failure["doc_type"] == "EXOGENA"
@@ -194,7 +209,18 @@ async def test_los_pasos_se_declaran_completos_desde_el_principio(client):
     created = await client.post(BASE, json=payload("clave-buena"))
     en_curso = created.json()
 
-    esperados = ["login", "RUT", "EXOGENA", "PRIOR_RETURN", "SUGGESTED_RETURN", "EINVOICE_SUMMARY"]
+    # El historial es UN paso y no uno por año: cuantos años tiene la persona solo se sabe
+    # despues de preguntarle a la DIAN, y un paso por año seria justamente la lista que crece
+    # sola que esta prueba existe para impedir.
+    esperados = [
+        "login",
+        "RUT",
+        "EXOGENA",
+        "PRIOR_RETURN",
+        "SUGGESTED_RETURN",
+        "EINVOICE_SUMMARY",
+        "historial",
+    ]
     assert [p["key"] for p in en_curso["progress"]] == esperados
     # Y con nombre en lenguaje de la persona, no con el codigo del documento.
     assert en_curso["progress"][1]["label"] == "Tu RUT"
@@ -247,7 +273,8 @@ async def test_la_clave_esta_guardada_antes_de_que_el_job_sea_reclamable(client,
     created = await client.post(BASE, json=payload("clave-bad"))
     job_id = created.json()["job_id"]
 
-    assert len(created.json()["progress"]) == 6, "el job nace con su plan, no lo completa despues"
+    # Siete: entrar, los cinco documentos y el historial.
+    assert len(created.json()["progress"]) == 7, "el job nace con su plan, no lo completa despues"
     from uuid import UUID
 
     assert await container.vault.get(UUID(job_id)) is not None, "la clave ya tiene que estar"

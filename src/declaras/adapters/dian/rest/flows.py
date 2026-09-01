@@ -254,12 +254,17 @@ async def descargar_declaracion_de(ctx: PortalContext, anio: int) -> RawDocument
             available_years=anios,
             evidencia="listado de la DIAN, sin ese año",
         )
-    return await _download_declaration(
+    documento = await _download_declaration(
         ctx,
         form_id=str(encontrada["form_id"]),
         doc_type=DocumentType.FILED_RETURN,
         year=anio,
         filename=f"declaracion-{anio}.pdf",
+    )
+    # La marca con la que el expediente sabe que esta es una declaracion DEL HISTORIAL y no la
+    # del año en curso: de ahi sale su tipo con el año adentro, para que la serie no se pise.
+    return documento.model_copy(
+        update={"metadata": {**documento.metadata, "historial": True, "tax_year": anio}}
     )
 
 

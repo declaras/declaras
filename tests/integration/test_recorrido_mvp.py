@@ -84,7 +84,8 @@ async def test_con_los_cinco_documentos_el_recorrido_llega_hasta_el_formulario(c
 
     detalle = await client.get(f"/v1/cases/{case_id}")
     assert detalle.status_code == 200
-    assert len(detalle.json()["documents"]) == 5
+    # Cinco insumos del año + las dos declaraciones anteriores que trae la misma sesion.
+    assert len(detalle.json()["documents"]) == 7
 
     # No se afirma el contenido de cada parada —eso lo cubren sus propias pruebas— sino que la
     # cadena no se corta y que ninguna se queda muda.

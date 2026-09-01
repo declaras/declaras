@@ -78,9 +78,20 @@ async def test_flujo_completo_extraccion_dian_vinculada_al_expediente(client):
     assert linked.status_code == 200
     body = linked.json()
     assert body["status"] == "READY_FOR_REVIEW"
-    assert len(body["documents"]) == 5
+    # Cinco insumos del año + las dos declaraciones anteriores, cada una con SU año en el tipo
+    # para que la serie no se pise cuando entre la siguiente consulta.
+    assert len(body["documents"]) == 7
+    assert {"DECLARACION_2023", "DECLARACION_2022"} <= {d["doc_type"] for d in body["documents"]}
     doc_types = {d["doc_type"] for d in body["documents"]}
-    assert doc_types == {"RUT", "EXOGENA", "PRIOR_RETURN", "SUGGESTED_RETURN", "EINVOICE_SUMMARY"}
+    assert doc_types == {
+        "RUT",
+        "EXOGENA",
+        "PRIOR_RETURN",
+        "SUGGESTED_RETURN",
+        "EINVOICE_SUMMARY",
+        "DECLARACION_2023",
+        "DECLARACION_2022",
+    }
 
 
 async def test_resolver_un_flag(client, container):

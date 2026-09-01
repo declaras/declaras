@@ -82,8 +82,9 @@ async def test_volver_a_traer_no_duplica(client):
     """Repetir la consulta no vuelve a bajar lo que ya esta: es una peticion menos al portal,
     y el portal es justamente el recurso escaso."""
     case_id = await _abrir_caso(client, FILA_SALARIO)
-    primera = await client.post(f"{BASE}/{case_id}/historial", json={"dian_password": "clave-buena"})
-    segunda = await client.post(f"{BASE}/{case_id}/historial", json={"dian_password": "clave-buena"})
+    clave = {"dian_password": "clave-buena"}
+    primera = await client.post(f"{BASE}/{case_id}/historial", json=clave)
+    segunda = await client.post(f"{BASE}/{case_id}/historial", json=clave)
     assert segunda.status_code == 200, segunda.text
     assert primera.json() == segunda.json()
 
@@ -106,3 +107,39 @@ async def test_la_clave_no_queda_en_el_expediente(client):
 async def test_caso_que_no_existe(client):
     respuesta = await client.get(f"{BASE}/00000000-0000-0000-0000-000000000000/historial")
     assert respuesta.status_code == 404
+
+
+async def test_la_consulta_a_la_dian_ya_trae_las_ultimas_dos(client):
+    """El historial NO empieza vacio esperando que alguien toque un boton.
+
+    Vivio un rato detras de "Revisar en la DIAN" y eso estaba mal por dos razones. La de
+    producto: es un paso manual con clave otra vez, y este sistema existe para quitar pasos.
+    La que decide: la sesion ya esta abierta en la extraccion, y lo escaso NO es la descarga
+    sino el LOGIN —la DIAN bloquea la cuenta al tercer intento fallido—, asi que pedir la clave
+    de nuevo gasta el recurso caro para ahorrarse el barato.
+
+    Son DOS años y no cinco: el anterior es insumo del calculo y el de antes sirve para ver el
+    patrimonio en serie. Los cinco siguen en el boton, que ahora es lo que su nombre dice.
+    """
+    from tests.integration.test_cases_api import wait_for_status
+
+    creado = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    case_id = creado.json()["id"]
+    extraccion = await client.post(
+        "/v1/extractions",
+        json={"id_number": "1020304050", "dian_password": "clave-buena", "tax_year": 2025},
+    )
+    job_id = extraccion.json()["job_id"]
+    await wait_for_status(client, job_id, "SUCCEEDED")
+    vinculada = await client.post(f"{BASE}/{case_id}/link-extraction", json={"job_id": job_id})
+    assert vinculada.status_code == 200, vinculada.text
+
+    filas = (await client.get(f"{BASE}/{case_id}/historial")).json()
+    por_anio = {f["anio"]: f for f in filas}
+
+    for anio in (2023, 2022):
+        assert por_anio[anio]["estado"] == "guardada", f"{anio} tenia que venir con la consulta"
+        assert por_anio[anio]["document_id"]
+
+    # Y los mas viejos siguen sin revisar: no se afirma que no declaro sin haber preguntado.
+    assert por_anio[2020]["estado"] == "sin_revisar"

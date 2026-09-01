@@ -202,7 +202,7 @@ class FakeDianSession:
             content=_PDF_STUB + f"FILED_RETURN:{anio}".encode(),
             content_type="application/pdf",
             source_url=f"https://fake.local/declaracion/{anio}",
-            metadata={"fake": True, "tax_year": anio},
+            metadata={"fake": True, "historial": True, "tax_year": anio},
         )
 
     async def escribir_borrador(

@@ -18,7 +18,6 @@ from declaras.domain.errors import (
     DeclarasError,
     DianDocumentUnavailableError,
     DianError,
-    DianInvalidCredentialsError,
     DianSessionExpiredError,
     JobNotFoundError,
     JobStateConflictError,
@@ -46,6 +45,7 @@ from declaras.domain.ports import (
     LoginAttemptGuard,
 )
 from declaras.observability import get_logger
+from declaras.services.apertura import abrir_sesion_con_freno
 from declaras.services.credential_vault import InMemoryCredentialVault
 from declaras.services.notifier import WebhookNotifier
 from declaras.services.session_registry import InMemorySessionRegistry
@@ -188,17 +188,13 @@ class ExtractionService:
                 "La clave ya no está en memoria, así que hay que empezar la consulta de nuevo."
             )
 
-        subject = request.taxpayer.subject_key
-        await self._guard.assert_can_attempt(subject)
-        try:
-            session = await self._connector.open_session(credentials, request.taxpayer)
-        except DianInvalidCredentialsError as exc:
-            remaining = await self._guard.register_failure(subject)
-            raise DianInvalidCredentialsError(
-                exc.message, attempts_remaining=remaining, **exc.details
-            ) from exc
-
-        await self._guard.reset(subject)
+        session = await abrir_sesion_con_freno(
+            connector=self._connector,
+            guard=self._guard,
+            credentials=credentials,
+            titular=request.taxpayer,
+            motivo="extraccion",
+        )
 
         # Toda sesion queda registrada, no solo las que esperan reto: asi _cleanup
         # siempre encuentra el navegador y no quedan contextos huerfanos.
@@ -263,6 +259,8 @@ class ExtractionService:
                 _avanzar(pasos, doc_type.value, StepState.DONE)
                 await self._publicar(job.id, pasos)
 
+        documents += await self._historial(job, request, session, pasos)
+
         if not documents and failures:
             # Nada se logro: es una falla del job, no una extraccion parcial.
             first = failures[0]
@@ -276,6 +274,94 @@ class ExtractionService:
             started_at=now,
             finished_at=now,
         )
+
+    async def _historial(
+        self, job: Job, request: ExtractionRequest, session: DianSession, pasos: list[JobStep]
+    ) -> list[StoredDocument]:
+        """Las declaraciones de años anteriores, en la MISMA sesion que ya esta abierta.
+
+        ═══ POR QUE VA AQUI Y NO EN UN BOTON APARTE ═══
+
+        Vivio un rato detras de un boton ("Revisar en la DIAN") y eso estaba mal por dos
+        razones. La primera es de producto: es un paso manual con clave otra vez, y este
+        sistema existe para quitar pasos manuales. La segunda es la que decide: la sesion ya
+        esta abierta, y lo escaso NO es la descarga sino el LOGIN —la DIAN bloquea la cuenta al
+        tercer intento fallido—, asi que pedir la clave de nuevo gasta el recurso caro para
+        ahorrarse el barato.
+
+        ═══ DOS AÑOS, NO CINCO ═══
+
+        Aca van los dos ultimos, que es lo que se usa: el año anterior es insumo del calculo
+        (patrimonio inicial, anticipos, saldos a favor) y el de antes sirve para ver si el
+        patrimonio cuadra en serie. Los cinco siguen disponibles en el boton del historial, que
+        ahora es lo que su nombre dice: revisar mas atras cuando alguien quiere.
+
+        Traer cinco PDF en cada consulta seria alargar el camino critico —el contador esperando
+        la pantalla— por documentos que casi nadie abre.
+
+        UNA FALLA AQUI NO TUMBA LA EXTRACCION. Lo que importa ya se trajo; que la DIAN no tenga
+        un año viejo, o que este conector no sepa listarlos, no puede convertir una extraccion
+        buena en una fallida.
+        """
+        # PEDIR UN SUBCONJUNTO ES PEDIR ESO Y NADA MAS. Si quien llama enumero los documentos
+        # que quiere, agregarle el historial por iniciativa propia le cambia el contrato: se
+        # trae solo cuando pidio la declaracion anterior, que es de lo que el historial es la
+        # continuacion natural.
+        if DocumentType.PRIOR_RETURN not in request.doc_types:
+            return []
+
+        anterior = request.taxpayer.tax_year - 1
+        try:
+            declaraciones = await session.listar_declaraciones()
+        except Exception as exc:
+            # El conector de navegador no sabe listar (la operacion vive en el HTTP), y la DIAN
+            # puede no tener ninguna. Las dos son normales y se registran sin alarma.
+            log.info(
+                "extraction.historial_no_disponible",
+                job_id=str(job.id),
+                motivo=str(exc)[:120],
+            )
+            _avanzar(pasos, _PASO_HISTORIAL, StepState.EMPTY, "no se pudieron consultar")
+            await self._publicar(job.id, pasos)
+            return []
+
+        anios = sorted(
+            (int(d["anio"]) for d in declaraciones if int(d["anio"]) <= anterior), reverse=True
+        )[:_ANIOS_DE_HISTORIAL]
+        _avanzar(pasos, _PASO_HISTORIAL, StepState.RUNNING)
+        await self._publicar(job.id, pasos)
+
+        traidos: list[StoredDocument] = []
+        for anio in anios:
+            try:
+                raw = await session.descargar_declaracion(anio)
+                stored = await self._store.put(
+                    taxpayer=request.taxpayer, document=raw, scope_id=job.id
+                )
+            except DianError as exc:
+                log.warning(
+                    "extraction.historial_anio_fallido",
+                    job_id=str(job.id),
+                    anio=anio,
+                    code=exc.code,
+                )
+                continue
+            traidos.append(stored)
+
+        if traidos:
+            cuantas = len(traidos)
+            _avanzar(
+                pasos,
+                _PASO_HISTORIAL,
+                StepState.DONE,
+                f"{cuantas} {'declaración' if cuantas == 1 else 'declaraciones'}",
+            )
+        else:
+            # Vacio no es fallido: quien declara por primera vez no tiene años anteriores, y
+            # pintarlo en rojo asusta sin motivo.
+            _avanzar(pasos, _PASO_HISTORIAL, StepState.EMPTY, "no hay declaraciones anteriores")
+        await self._publicar(job.id, pasos)
+        return traidos
 
     async def _capture_evidence(
         self, job: Job, request: ExtractionRequest, session: DianSession, *, label: str
@@ -362,6 +448,9 @@ class ExtractionService:
 # se colgo. Los pasos se nombran como los entiende quien espera, no como se llaman adentro.
 
 _PASO_ENTRAR = "login"
+# Cuantos años atras trae la extraccion sola. El boton del historial llega mas lejos.
+_ANIOS_DE_HISTORIAL = 2
+_PASO_HISTORIAL = "historial"
 _ETIQUETAS = {
     DocumentType.RUT: "Tu RUT",
     DocumentType.EXOGENA: "Lo que otros reportaron a tu nombre",
@@ -382,6 +471,11 @@ def _plan_de_trabajo(request: ExtractionRequest) -> list[JobStep]:
         JobStep(key=doc.value, label=_ETIQUETAS.get(doc, document_label(doc.value).capitalize()))
         for doc in request.doc_types
     ]
+    # El historial es UN paso y no uno por año, justamente por la regla de arriba: cuantos años
+    # tiene la persona solo se sabe despues de preguntarle a la DIAN, asi que un paso por año
+    # seria una lista que crece sola mientras alguien la mira.
+    if DocumentType.PRIOR_RETURN in request.doc_types:
+        pasos.append(JobStep(key=_PASO_HISTORIAL, label="Tus declaraciones de años anteriores"))
     return pasos
 
 

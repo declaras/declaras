@@ -45,6 +45,7 @@ from declaras.domain.models import (
 )
 from declaras.domain.ports import DocumentStore
 from declaras.observability import get_logger
+from declaras.services.historial_service import tipo_de
 from declaras.services.reading_diff import ReadingDiff, compare, describe_sync
 
 log = get_logger(__name__)
@@ -168,17 +169,24 @@ class CaseService:
             if stored.doc_type.value == _EVIDENCE_DOC_TYPE:
                 continue  # es evidencia de auditoria, no un insumo del motor
 
+            # LAS DEL HISTORIAL LLEVAN EL AÑO EN EL TIPO. Todas llegan como FILED_RETURN, y el
+            # expediente reemplaza documentos del mismo tipo cuando entra uno nuevo: sin esto,
+            # traer 2023 borraria 2022 y quedaria una sola declaracion en vez de la serie.
+            tipo = stored.doc_type.value
+            if stored.metadata.get("historial"):
+                tipo = tipo_de(int(stored.metadata["tax_year"]))
+
             # Una consulta nueva reemplaza la anterior del mismo tipo. No se puede
             # deduplicar por hash del contenido: la DIAN incrusta la fecha de generacion
             # dentro del archivo, asi que cada descarga del MISMO documento tiene un hash
             # distinto. Y reconsultar es normal (el contador vuelve cuando la DIAN ya
             # publico la exogena), asi que acumular copias dejaria el expediente sin un
             # documento vigente claro.
-            reemplazados += await self._supersede_previous(case_id, stored.doc_type.value)
+            reemplazados += await self._supersede_previous(case_id, tipo)
 
             case_doc = await self._cases.add_document(
                 case_id=case_id,
-                doc_type=stored.doc_type.value,
+                doc_type=tipo,
                 source=CaseDocumentSource.DIAN_PORTAL,
                 storage_uri=stored.storage_uri,
                 filename=stored.filename,
@@ -188,13 +196,20 @@ class CaseService:
             reading = await self._try_read_and_flag(
                 case_id=case_id,
                 case_doc=case_doc,
-                doc_type=stored.doc_type.value,
-                anio_esperado=detail.case.tax_year,
+                doc_type=tipo,
+                # El año esperado de una declaracion del historial es SU año, no el del
+                # expediente: si no, cada una levantaria una alerta de "el documento es de otro
+                # año" que es justamente lo que se pidio traer.
+                anio_esperado=(
+                    int(stored.metadata["tax_year"])
+                    if stored.metadata.get("historial")
+                    else detail.case.tax_year
+                ),
             )
             diffs.append(
                 compare(
-                    doc_type=stored.doc_type.value,
-                    before=previous_readings.get(stored.doc_type.value),
+                    doc_type=tipo,
+                    before=previous_readings.get(tipo),
                     after=reading,
                 )
             )
