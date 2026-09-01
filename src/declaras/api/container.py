@@ -84,6 +84,8 @@ class Container:
         vault = InMemoryCredentialVault()
         registry = InMemorySessionRegistry(ttl_seconds=settings.worker_lease_ttl_s)
 
+        clients = SqlClientRepository(sessions)
+        clave = ClaveService(clients=clients, llave=settings.clave_de_cifrado)
         extraction = ExtractionService(
             connector=connector,
             store=store,
@@ -93,9 +95,10 @@ class Container:
             registry=registry,
             notifier=WebhookNotifier(),
             settings=settings,
+            clave=clave,
+            clients=clients,
         )
         document_reader = DocumentReaderService()
-        clients = SqlClientRepository(sessions)
         cases = SqlCaseRepository(sessions)
         case_service = CaseService(
             clients=clients, cases=cases, store=store, reader=document_reader
@@ -108,7 +111,6 @@ class Container:
             connector=connector,
             guard=guard,
         )
-        clave = ClaveService(clients=clients, llave=settings.clave_de_cifrado)
         escritura = EscrituraService(
             connector=connector,
             cases=cases,

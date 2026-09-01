@@ -65,6 +65,8 @@ class ExtractionService:
         registry: InMemorySessionRegistry,
         notifier: WebhookNotifier,
         settings: Settings,
+        clave: object | None = None,
+        clients: object | None = None,
     ) -> None:
         self._connector = connector
         self._store = store
@@ -74,6 +76,8 @@ class ExtractionService:
         self._registry = registry
         self._notifier = notifier
         self._settings = settings
+        self._clave = clave
+        self._clients = clients
 
     # ─────────────────────────── casos de uso ───────────────────────────
 
@@ -380,6 +384,12 @@ class ExtractionService:
     async def _succeed(
         self, job: Job, request: ExtractionRequest, result: ExtractionResult
     ) -> None:
+        # LA CLAVE QUE FUNCIONO SE GUARDA, cifrada, ANTES de que el cleanup la purgue de la
+        # memoria. Es la misma regla de la escritura y cierra el hueco que quedaba: la
+        # extraccion es lo PRIMERO que se hace con un cliente, asi que era la clave que mas
+        # veces se pedia — cada consulta la pedia de nuevo aunque la anterior hubiera
+        # funcionado, porque el unico camino que guardaba era el ultimo del proceso.
+        await self._guardar_clave_que_funciono(job, request)
         await self._cleanup(job.id, keep_credentials=False)
         updated = await self._jobs.mark_succeeded(job.id, result=result.model_dump(mode="json"))
         log.info(
@@ -389,6 +399,32 @@ class ExtractionService:
             failures=len(result.failures),
         )
         await self._maybe_notify(request, updated)
+
+    async def _guardar_clave_que_funciono(self, job: Job, request: ExtractionRequest) -> None:
+        """Guarda la clave del vault para el cliente, si el cliente ya existe.
+
+        SIN CLIENTE NO SE GUARDA, y es lo correcto: la extraccion puede correr antes de que
+        exista el expediente (el flujo publico de consultas), y crear un cliente como efecto
+        colateral de guardar una clave seria poner la persistencia a decidir el modelo. Cuando
+        el expediente exista, la proxima operacion la guarda.
+
+        Y NUNCA puede tumbar la extraccion: el trabajo ya esta hecho, esto es un ahorro para
+        la proxima vez.
+        """
+        if self._clave is None or self._clients is None:
+            return
+        try:
+            credentials = await self._vault.get(job.id)
+            if credentials is None:
+                return
+            cliente = await self._clients.find_by_document(  # type: ignore[attr-defined]
+                request.taxpayer.id_kind, request.taxpayer.id_number
+            )
+            if cliente is None:
+                return
+            await self._clave.guardar(cliente.id, credentials.password)  # type: ignore[attr-defined]
+        except Exception as exc:
+            log.warning("extraction.clave_no_guardada", job_id=str(job.id), error=str(exc)[:120])
 
     async def _fail(self, job: Job, error: DeclarasError) -> None:
         # Si el job se va a reintentar, la clave debe sobrevivir: sin ella el reintento

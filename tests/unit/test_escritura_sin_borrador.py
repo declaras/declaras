@@ -110,3 +110,38 @@ async def test_si_el_portal_falla_de_verdad_no_se_confunde_con_no_tener_borrador
 
     with pytest.raises(DianPortalUnavailableError):
         await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 1})
+
+
+async def test_un_400_dice_el_paso_y_lo_que_respondio_la_dian():
+    """El error que llegó a la pantalla como "La DIAN rechazó la consulta (400)" a secas.
+
+    Dos descartes lo dejaron mudo: el motivo del cuerpo solo se leía para el 404, y el
+    envoltorio que nombra el paso solo cubría un tipo de error. Un 400 real al crear el
+    borrador de un contribuyente pasó por los dos huecos y llegó sin paso y sin porqué:
+    imposible de diagnosticar sin reproducirlo a mano.
+    """
+    import pytest
+
+    from declaras.domain.errors import DianError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(404, json=SIN_DOCUMENTOS)
+        # El 400 del caso real: la DIAN rechaza crear el borrador y dice por qué en el cuerpo.
+        return httpx.Response(
+            400, json={"codigo": 400, "mensaje": "El contribuyente no tiene RUT activo"}
+        )
+
+    with pytest.raises(DianError) as arrojado:
+        await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 1})
+
+    error = arrojado.value
+    assert "abrir el borrador del año" in error.message, "tiene que decir el paso"
+    assert error.details.get("motivo") == "El contribuyente no tiene RUT activo", (
+        "y lo que respondió la DIAN, que es lo único que permite actuar"
+    )

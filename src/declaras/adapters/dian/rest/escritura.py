@@ -46,7 +46,11 @@ from typing import Any
 
 from declaras.adapters.dian.endpoints import DIAN_API
 from declaras.adapters.dian.rest.client import PortalContext
-from declaras.domain.errors import DianDocumentUnavailableError, DianLayoutChangedError
+from declaras.domain.errors import (
+    DianDocumentUnavailableError,
+    DianError,
+    DianLayoutChangedError,
+)
 from declaras.domain.models import BorradorEscrito, DiferenciaDeEscritura
 from declaras.observability import get_logger
 
@@ -65,19 +69,26 @@ _ULTIMA_CASILLA_OFICIAL = 139
 
 
 async def _paso(que_se_hacia: str, tarea: Awaitable[Any]) -> Any:
-    """Corre una llamada al portal y, si falla por documento ausente, dice CUAL era.
+    """Corre una llamada al portal y, si falla, dice CUAL paso era.
 
-    Un 404 del portal llega siempre como "la DIAN no tiene ese documento", que es correcto
-    para una descarga y desorientador al escribir: no falta un documento del contribuyente,
-    falló un paso concreto de la escritura. Se conserva el código (quien lo trate por código
-    sigue funcionando) y el motivo que dio la DIAN, y se le agrega el paso.
+    ═══ CUBRE TODA FALLA DE LA DIAN, NO UN SOLO TIPO ═══
+
+    La primera version solo envolvia el 404 ("documento no disponible"), que era el error del
+    dia. Al dia siguiente el mismo flujo fallo con un 400 y llego a la pantalla como "La DIAN
+    rechazó la consulta (400)" a secas: sin paso, porque el envoltorio dejaba pasar de largo
+    todo lo que no fuera el tipo del dia anterior. Envolver por tipo es jugar a adivinar cual
+    sera el proximo error; se envuelve por FAMILIA, que para el portal es una sola.
+
+    El tipo del error SE CONSERVA (el constructor es uniforme: mensaje + detalles), asi que
+    quien lo trate por codigo sigue funcionando; solo cambian el mensaje, que ahora nombra el
+    paso, y los detalles, que lo cargan.
     """
     try:
         return await tarea
-    except DianDocumentUnavailableError as exc:
-        raise DianDocumentUnavailableError(
-            # El paso va como frase propia y no interpolado en la del portal: pegados, el punto
-            # final quedaba dentro de una oración que arrancaba con el mensaje de la DIAN.
+    except DianError as exc:
+        # El paso va como frase propia y no interpolado en la del portal: pegados, el punto
+        # final quedaba dentro de una oración que arrancaba con el mensaje de la DIAN.
+        raise type(exc)(
             f"Falló un paso de la escritura en el portal: {que_se_hacia}. {exc.message}",
             **{**exc.details, "paso": que_se_hacia},
         ) from exc

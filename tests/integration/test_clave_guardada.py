@@ -86,3 +86,45 @@ async def test_nunca_queda_en_claro_en_la_base(client, container):
     guardadas = [f[0] for f in filas if f[0]]
     assert guardadas, "tenia que quedar guardada"
     assert all("clave-buena" not in g for g in guardadas)
+
+
+async def test_la_consulta_exitosa_tambien_guarda_la_clave(client):
+    """LA EXTRACCION ES LO PRIMERO QUE SE HACE CON UN CLIENTE, así que era la clave que más
+    veces se pedía: cada consulta la pedía de nuevo aunque la anterior hubiera funcionado,
+    porque el único camino que guardaba era la escritura, el último paso del proceso.
+
+    Se vio en el uso real: "no debería pedir contraseña, porque la pide aún".
+    """
+    from tests.integration.test_cases_api import wait_for_status
+
+    creado = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    case_id = creado.json()["id"]
+
+    extraccion = await client.post(
+        "/v1/extractions",
+        json={"id_number": "1020304050", "dian_password": "clave-buena", "tax_year": 2025},
+    )
+    await wait_for_status(client, extraccion.json()["job_id"], "SUCCEEDED")
+
+    estado = await client.get(f"{BASE}/{case_id}/clave")
+    assert estado.json()["guardada"] is True, (
+        "la clave que abrió la consulta funcionó: pedirla otra vez en el siguiente paso es "
+        "pedir lo que ya se tiene"
+    )
+
+
+async def test_la_consulta_fallida_no_guarda_nada(client):
+    """La misma regla de siempre: solo se archiva la clave que FUNCIONÓ."""
+    from tests.integration.test_cases_api import wait_for_status
+
+    creado = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    case_id = creado.json()["id"]
+
+    extraccion = await client.post(
+        "/v1/extractions",
+        json={"id_number": "1020304050", "dian_password": "clave-bad", "tax_year": 2025},
+    )
+    await wait_for_status(client, extraccion.json()["job_id"], "FAILED")
+
+    estado = await client.get(f"{BASE}/{case_id}/clave")
+    assert estado.json()["guardada"] is False

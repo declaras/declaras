@@ -83,20 +83,31 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     codigo = response.status_code
     if codigo < 400:
         return
+    # EL MOTIVO SE LEE PARA TODOS LOS CODIGOS, no solo para el 404. Se aprendio dos veces con
+    # el mismo golpe: primero un 404 ambiguo que el cuerpo explicaba ("Documentos no
+    # encontrados"), y despues un 400 al crear un borrador que llego a la pantalla como "La
+    # DIAN rechazó la consulta (400)" a secas — con el porque descartado aqui, en la unica capa
+    # que lo tuvo en la mano. Un codigo HTTP dice que fallo; el `mensaje` de la DIAN dice que
+    # hacer al respecto, y sin el cada 400 nuevo es una sesion de adivinacion.
+    motivo = motivo_de_la_dian(response)
     if codigo == httpx.codes.UNAUTHORIZED:
-        raise DianSessionExpiredError("La sesión con la DIAN se venció.")
+        raise DianSessionExpiredError("La sesión con la DIAN se venció.", motivo=motivo)
     if codigo == httpx.codes.NOT_FOUND:
         raise DianDocumentUnavailableError(
             "La DIAN no tiene ese documento.",
             url=url,
             status=codigo,
-            motivo=motivo_de_la_dian(response),
+            motivo=motivo,
         )
     if codigo == httpx.codes.TOO_MANY_REQUESTS:
-        raise DianRateLimitedError("La DIAN está limitando las consultas.")
+        raise DianRateLimitedError("La DIAN está limitando las consultas.", motivo=motivo)
     if codigo >= 500:
-        raise DianPortalUnavailableError("La DIAN respondió con un error.", url=url, status=codigo)
-    raise DianError(f"La DIAN rechazó la consulta ({codigo}).", url=url, status=codigo)
+        raise DianPortalUnavailableError(
+            "La DIAN respondió con un error.", url=url, status=codigo, motivo=motivo
+        )
+    raise DianError(
+        f"La DIAN rechazó la consulta ({codigo}).", url=url, status=codigo, motivo=motivo
+    )
 
 
 def build_digest(cookie_value: str) -> str:

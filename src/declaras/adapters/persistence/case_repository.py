@@ -203,6 +203,10 @@ class SqlClientRepository:
             row.dian_password_guardada_at = None
             return True
 
+    async def find_by_document(self, id_kind: IdDocumentKind, id_number: str) -> Client | None:
+        """El cliente con ese documento, si existe. Es la identidad real: el id es interno."""
+        return await self._find(id_kind, id_number)
+
     async def _find(self, id_kind: IdDocumentKind, id_number: str) -> Client | None:
         async with self._sessions() as session:
             row = (
