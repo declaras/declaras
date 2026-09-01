@@ -13,7 +13,11 @@ import httpx
 from declaras.adapters.dian.rest.api_client import DianApiClient
 from declaras.adapters.dian.rest.client import PortalClient, PortalContext
 from declaras.adapters.dian.rest.escritura import escribir_borrador
-from declaras.adapters.dian.rest.flows import DOWNLOADERS
+from declaras.adapters.dian.rest.flows import (
+    DOWNLOADERS,
+    descargar_declaracion_de,
+    listar_declaraciones_presentadas,
+)
 from declaras.domain.errors import DianLayoutChangedError, ValidationError
 from declaras.domain.models import (
     BorradorEscrito,
@@ -57,6 +61,17 @@ class HttpDianSession:
             )
         log.info("dian.http.download_start", doc_type=doc_type.value, session_id=self.session_id)
         return await downloader(self._ctx, taxpayer)
+
+    async def listar_declaraciones(self) -> list[dict[str, object]]:
+        """Los años que la DIAN tiene declarados, con su identificador."""
+        self._assert_open()
+        return await listar_declaraciones_presentadas(self._ctx)
+
+    async def descargar_declaracion(self, anio: int) -> RawDocument:
+        """El PDF de la declaracion presentada de un año concreto."""
+        self._assert_open()
+        log.info("dian.http.download_year", anio=anio, session_id=self.session_id)
+        return await descargar_declaracion_de(self._ctx, anio)
 
     async def escribir_borrador(
         self, taxpayer: TaxpayerRef, casillas: dict[int, int]

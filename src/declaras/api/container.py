@@ -34,6 +34,7 @@ from declaras.services.consultas_service import ConsultasService
 from declaras.services.credential_vault import InMemoryCredentialVault
 from declaras.services.escritura_service import EscrituraService
 from declaras.services.extraction import ExtractionService
+from declaras.services.historial_service import HistorialService
 from declaras.services.job_runner import JobRunner
 from declaras.services.notifier import WebhookNotifier
 from declaras.services.session_registry import InMemorySessionRegistry
@@ -60,6 +61,7 @@ class Container:
     conciliacion: ConciliacionRepository
     conciliacion_service: ConciliacionService
     escritura: EscrituraService
+    historial: HistorialService
     consultas: ConsultasService
     # None cuando no hay auth de personas configurado: sin proyecto de Supabase no hay llaves que
     # cachear. Va en el contenedor y no como global del modulo para que cada prueba tenga la suya
@@ -100,9 +102,13 @@ class Container:
             repo=conciliacion,
             clave_de_cifrado=settings.clave_de_cifrado,
             connector=connector,
+            guard=guard,
         )
         escritura = EscrituraService(
-            connector=connector, cases=cases, conciliacion=conciliacion_service
+            connector=connector, cases=cases, conciliacion=conciliacion_service, guard=guard
+        )
+        historial = HistorialService(
+            cases=cases, connector=connector, store=store, guard=guard
         )
         runner = JobRunner(
             jobs=jobs,
@@ -129,6 +135,7 @@ class Container:
             conciliacion=conciliacion,
             conciliacion_service=conciliacion_service,
             escritura=escritura,
+            historial=historial,
             consultas=consultas,
             llaves=(
                 CacheDeLlaves(jwks_url_de(settings.supabase_url)) if settings.supabase_url else None

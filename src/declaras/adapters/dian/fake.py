@@ -169,6 +169,42 @@ class FakeDianSession:
             metadata={"fake": True, "tax_year": taxpayer.tax_year},
         )
 
+    async def listar_declaraciones(self) -> list[dict[str, object]]:
+        """Un historial con un HUECO a proposito.
+
+        El caso interesante no es la serie completa: es el año que falta en la mitad, porque
+        eso es un atraso y el sistema tiene que saber mostrarlo. Aca falta 2024, igual que le
+        pasaba al primer expediente real donde se noto que el historial no se veia.
+        """
+        if self._closed:
+            raise ValidationError("La sesión ya fue cerrada.")
+        if "sindecl" in self._scenario:
+            return []
+        return [
+            {"anio": anio, "form_id": f"fake-{anio}"}
+            for anio in (2025, 2023, 2022, 2021, 2020)
+        ]
+
+    async def descargar_declaracion(self, anio: int) -> RawDocument:
+        if self._closed:
+            raise ValidationError("La sesión ya fue cerrada.")
+        disponibles = {d["anio"] for d in await self.listar_declaraciones()}
+        if anio not in disponibles:
+            raise DianDocumentUnavailableError(
+                f"La DIAN no tiene la declaración presentada del año gravable {anio}.",
+                doc_type=DocumentType.FILED_RETURN.value,
+                tax_year=anio,
+                available_years=sorted(disponibles, reverse=True),
+            )
+        return RawDocument(
+            doc_type=DocumentType.FILED_RETURN,
+            filename=f"declaracion-{anio}.pdf",
+            content=_PDF_STUB + f"FILED_RETURN:{anio}".encode(),
+            content_type="application/pdf",
+            source_url=f"https://fake.local/declaracion/{anio}",
+            metadata={"fake": True, "tax_year": anio},
+        )
+
     async def escribir_borrador(
         self, taxpayer: TaxpayerRef, casillas: dict[int, int]
     ) -> BorradorEscrito:

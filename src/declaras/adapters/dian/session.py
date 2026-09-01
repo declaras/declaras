@@ -62,6 +62,29 @@ class PlaywrightDianSession:
         log.info("dian.download.done", doc_type=doc_type.value, size_bytes=len(document.content))
         return document
 
+    async def listar_declaraciones(self) -> list[dict[str, object]]:
+        """El historial vive en el conector HTTP, y aca la negativa es explicita.
+
+        El listado sale de la API de renta (`renta/formularios?estado=...`), que devuelve los
+        años con su identificador en una sola respuesta. Rasparlo del DOM seria una segunda
+        implementacion del mismo dato, mas fragil y sin identificadores, y este conector existe
+        para los casos donde la API no alcanza — no para duplicarla.
+        """
+        raise DianLayoutChangedError(
+            "El historial de declaraciones se consulta con el conector HTTP, no con el de "
+            "navegador.",
+            adaptador="playwright",
+        )
+
+    async def descargar_declaracion(self, anio: int) -> RawDocument:
+        """Por la misma razon que el listado: sin identificador no hay que descargar."""
+        raise DianLayoutChangedError(
+            "La descarga de una declaración por año se hace con el conector HTTP, no con el de "
+            "navegador.",
+            adaptador="playwright",
+            tax_year=anio,
+        )
+
     async def escribir_borrador(
         self, taxpayer: TaxpayerRef, casillas: dict[int, int]
     ) -> BorradorEscrito:

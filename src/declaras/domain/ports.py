@@ -47,6 +47,26 @@ class DianSession(Protocol):
         """Captura de pantalla para auditoria."""
         ...
 
+    async def listar_declaraciones(self) -> list[dict[str, object]]:
+        """Los años que la DIAN tiene declarados, con el identificador de cada formulario.
+
+        NO CUESTA UNA PETICION EXTRA: la DIAN responde con el listado completo cuando se le
+        pregunta por una declaracion, asi que enumerar el historial es leer lo que ya llego.
+
+        Sirve para dos cosas distintas: ver el historial del contribuyente, y saber que años
+        NO declaro, que es donde puede haber un atraso.
+        """
+        ...
+
+    async def descargar_declaracion(self, anio: int) -> RawDocument:
+        """El PDF de la declaracion presentada de un año concreto.
+
+        Se diferencia de `download(PRIOR_RETURN, ...)` en que aquella baja siempre el año
+        anterior al del expediente porque lo necesita como insumo; esta baja el año que le
+        pidan, que es lo que hace falta para el historial.
+        """
+        ...
+
     async def escribir_borrador(
         self, taxpayer: TaxpayerRef, casillas: dict[int, int]
     ) -> BorradorEscrito:

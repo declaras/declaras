@@ -370,3 +370,59 @@ async def escribir_al_portal(
     # permitir escribir el 210 de una persona con la sesion de otra.
     resultado = await container.escritura.escribir(case_id, payload.dian_password)
     return EscrituraResponse.from_domain(resultado)
+
+
+class AnioDelHistorial(BaseModel):
+    """Un año del historial, con lo que se sabe de el.
+
+    `estado` es lo que decide como se ve en la pantalla, y son cuatro cosas distintas:
+    `guardada` (la tenemos, se puede abrir), `en_la_dian` (existe y no se ha bajado),
+    `sin_declaracion` (la DIAN no la tiene: puede ser un atraso) y `sin_revisar` (todavia no
+    se le ha preguntado al portal, que no es lo mismo que no exista).
+    """
+
+    anio: int
+    estado: str
+    document_id: str | None = None
+    filename: str | None = None
+
+
+@router.get(
+    "/cases/{case_id}/historial",
+    response_model=list[AnioDelHistorial],
+    summary="Las declaraciones de años anteriores que hay en el expediente",
+)
+async def ver_historial(
+    case_id: UUID,
+    container: ContainerDep,
+    _auth: AutenticadoDep,
+) -> list[AnioDelHistorial]:
+    """Se lee SIN clave, para que la pantalla muestre algo antes de pedir nada.
+
+    Los años sin documento quedan como `sin_revisar` y no como "no declaró": afirmar que
+    alguien no declaró sin haberle preguntado al portal seria inventar un dato sobre su vida
+    tributaria.
+    """
+    filas = await container.historial.ver(case_id)
+    return [AnioDelHistorial(**f) for f in filas]
+
+
+@router.post(
+    "/cases/{case_id}/historial",
+    response_model=list[AnioDelHistorial],
+    summary="Pregunta a la DIAN que años declaro el contribuyente y baja los que falten",
+)
+async def traer_historial(
+    case_id: UUID,
+    payload: EscribirAlPortalRequest,
+    container: ContainerDep,
+    _auth: AutenticadoDep,
+) -> list[AnioDelHistorial]:
+    """Una sola sesion para todo el historial.
+
+    Abrir sesion es lo caro y es lo que la DIAN cuenta para bloquear la cuenta, asi que el
+    listado y todas las descargas van dentro de la misma. Un año que falle no cancela los
+    demas: un historial parcial sirve.
+    """
+    filas = await container.historial.traer(case_id, password=payload.dian_password)
+    return [AnioDelHistorial(**f) for f in filas]

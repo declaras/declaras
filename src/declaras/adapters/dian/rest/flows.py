@@ -207,6 +207,62 @@ async def _download_declaration(
     )
 
 
+async def listar_declaraciones_presentadas(ctx: PortalContext) -> list[dict[str, object]]:
+    """Los años que la DIAN tiene declarados a nombre del contribuyente, con su identificador.
+
+    ═══ POR QUE ESTO NO CUESTA NADA ═══
+
+    La DIAN no responde "¿declaró en 2023?": responde con el LISTADO COMPLETO de declaraciones
+    presentadas, y de ahi se saca el año que se buscaba. Es la misma llamada que ya hace
+    `_find_declaration`, asi que enumerar el historial no agrega ni una peticion al portal.
+
+    Ese listado se venia tirando a la basura salvo para redactar un mensaje de error, y con el
+    se contesta algo que el expediente no sabia responder: cuales años declaro esta persona y
+    cuales no. Un año faltante en la mitad de la serie es la señal de un atraso.
+    """
+    payload = await ctx.api.get_json(f"{DIAN_API.renta_forms}?estado={DIAN_API.state_filed}")
+    listado = (payload or {}).get("listadoFormularios", {}).get("infoFormularios", [])
+    declaraciones = [
+        {
+            "anio": int(item["anio"]),
+            "form_id": str(item["identificador"]["id"]),
+        }
+        for item in listado
+        if item.get("anio") and item.get("identificador", {}).get("id")
+    ]
+    declaraciones.sort(key=lambda d: d["anio"], reverse=True)
+    log.info("dian.api.declarations_listed", anios=[d["anio"] for d in declaraciones])
+    return declaraciones
+
+
+async def descargar_declaracion_de(ctx: PortalContext, anio: int) -> RawDocument:
+    """El PDF de la declaracion presentada de un año concreto.
+
+    Existe aparte de `download_prior_return` porque esa baja SIEMPRE el año anterior al del
+    expediente (es su insumo de calculo) y esta baja el año que le pidan, que es lo que necesita
+    el historial. Las dos comparten el listado y la descarga.
+    """
+    declaraciones = await listar_declaraciones_presentadas(ctx)
+    encontrada = next((d for d in declaraciones if d["anio"] == anio), None)
+    if encontrada is None:
+        anios = [d["anio"] for d in declaraciones]
+        tiene = f"; sí la tiene de {', '.join(str(a) for a in anios)}" if anios else ""
+        raise DianDocumentUnavailableError(
+            f"La DIAN no tiene la declaración presentada del año gravable {anio}{tiene}.",
+            doc_type=DocumentType.FILED_RETURN.value,
+            tax_year=anio,
+            available_years=anios,
+            evidencia="listado de la DIAN, sin ese año",
+        )
+    return await _download_declaration(
+        ctx,
+        form_id=str(encontrada["form_id"]),
+        doc_type=DocumentType.FILED_RETURN,
+        year=anio,
+        filename=f"declaracion-{anio}.pdf",
+    )
+
+
 async def download_prior_return(ctx: PortalContext, taxpayer: TaxpayerRef) -> RawDocument:
     """Declaracion presentada del anio anterior.
 
