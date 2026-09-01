@@ -57,6 +57,8 @@ DOCUMENT_TYPE_LABELS: dict[str, str] = {
     # No es un tipo del conector (no lo baja del portal, lo aporta el cliente), pero si
     # tiene lector, asi que aparece en las alertas del expediente y necesita nombre.
     "CERT_INGRESOS_220": "el certificado de ingresos y retenciones",
+    # El 210 que Clara dejo escrito en el portal, bajado del portal despues de escribirlo.
+    "BORRADOR_ESCRITO": "el borrador que quedó en el portal",
 }
 
 
@@ -218,6 +220,14 @@ class BorradorEscrito(BaseModel):
     # anticipo del año anterior...). No son un error, pero el contador tiene que verlas: el
     # borrador final es la mezcla de lo nuestro y lo que ya estaba.
     ajenas: dict[int, int | str] = Field(default_factory=dict)
+    # El PDF del borrador tal como quedo en el portal, ya guardado en el expediente.
+    #
+    # ES LA PRUEBA, y por eso vale la pena bajarlo aunque cueste una descarga: la verificacion
+    # casilla por casilla dice que el portal guardo lo que se mando, pero eso es nuestro
+    # sistema dandose la razon a si mismo. El documento que la DIAN genera es lo que un
+    # contador puede mirar, archivar y mostrarle al cliente. `None` si no se pudo bajar, que no
+    # invalida la escritura: son dos cosas distintas.
+    documento_id: UUID | None = None
 
 
 class StoredDocument(BaseModel):

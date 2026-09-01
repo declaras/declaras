@@ -107,7 +107,11 @@ class Container:
             guard=guard,
         )
         escritura = EscrituraService(
-            connector=connector, cases=cases, conciliacion=conciliacion_service, guard=guard
+            connector=connector,
+            cases=cases,
+            conciliacion=conciliacion_service,
+            guard=guard,
+            store=store,
         )
         historial = HistorialService(cases=cases)
         limitador = LimitadorPorOrigen(sessions)

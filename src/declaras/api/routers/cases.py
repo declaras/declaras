@@ -336,6 +336,9 @@ class EscrituraResponse(BaseModel):
     verificado: bool
     diferencias: list[dict[str, Any]]
     ajenas: dict[int, int | str]
+    # El PDF del borrador tal como quedo en el portal, ya en el expediente. `None` si no se
+    # pudo bajar, que no invalida la escritura.
+    documento_id: UUID | None = None
 
     @classmethod
     def from_domain(cls, r: BorradorEscrito) -> EscrituraResponse:
@@ -346,6 +349,7 @@ class EscrituraResponse(BaseModel):
             verificado=r.verificado,
             diferencias=[d.model_dump() for d in r.diferencias],
             ajenas=r.ajenas,
+            documento_id=r.documento_id,
         )
 
 

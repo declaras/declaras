@@ -11,16 +11,26 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
-from declaras.domain.case import CaseStatus
+from declaras.domain.case import CaseDocumentSource, CaseStatus
 from declaras.domain.case_ports import CaseRepository
 from declaras.domain.errors import CaseNotFoundError, DeclarasError, DianError
-from declaras.domain.models import BorradorEscrito, DianCredentials, TaxpayerRef
-from declaras.domain.ports import DianConnector, LoginAttemptGuard
+from declaras.domain.models import (
+    BorradorEscrito,
+    DianCredentials,
+    DocumentType,
+    TaxpayerRef,
+)
+from declaras.domain.ports import DianConnector, DocumentStore, LoginAttemptGuard
 from declaras.observability import get_logger
 from declaras.services.apertura import abrir_sesion_con_freno
 from declaras.services.conciliacion_service import ConciliacionService
 
 log = get_logger(__name__)
+
+# Como se llama en el expediente el 210 que Clara dejo en el portal. Tipo propio y no
+# `SUGGESTED_RETURN`: aquel es el borrador que la DIAN precarga sola, y son dos documentos
+# distintos que vale la pena poder comparar.
+_DOC_BORRADOR = "BORRADOR_ESCRITO"
 
 
 class BorradorNoCerradoError(DeclarasError):
@@ -48,11 +58,13 @@ class EscrituraService:
         cases: CaseRepository,
         conciliacion: ConciliacionService,
         guard: LoginAttemptGuard,
+        store: DocumentStore,
     ) -> None:
         self._connector = connector
         self._cases = cases
         self._conciliacion = conciliacion
         self._guard = guard
+        self._store = store
 
     async def escribir(self, case_id: UUID, password: SecretStr) -> BorradorEscrito:
         """Lleva el 210 del expediente al borrador del portal y verifica lo guardado.
@@ -103,8 +115,15 @@ class EscrituraService:
                     "extracción (que sí sabe relevar el reto) y vuelve a intentar."
                 )
             resultado = await session.escribir_borrador(titular, casillas)
+            # EL PDF, EN LA MISMA SESION. Es la unica ventana en que se puede bajar sin pedir
+            # la clave otra vez, y es lo que convierte "quedo escrito" en algo que un contador
+            # puede mirar, archivar y mostrarle al cliente. Que falle no invalida la escritura:
+            # el borrador YA quedo en el portal, y decir lo contrario seria mentir al reves.
+            documento_id = await self._guardar_el_pdf(case_id, titular, session)
         finally:
             await session.close()
+
+        resultado = resultado.model_copy(update={"documento_id": documento_id})
 
         veredicto = (
             "verificado renglón por renglón"
@@ -124,5 +143,35 @@ class EscrituraService:
             case_id=str(case_id),
             form_id=resultado.form_id,
             verificado=resultado.verificado,
+            con_pdf=documento_id is not None,
         )
         return resultado
+
+    async def _guardar_el_pdf(
+        self, case_id: UUID, titular: TaxpayerRef, session: object
+    ) -> UUID | None:
+        """Baja el borrador recien escrito y lo deja en el expediente.
+
+        Se guarda con un tipo PROPIO y no como `SUGGESTED_RETURN`, que es el borrador que la
+        DIAN precarga sola: son dos documentos distintos —uno es lo que la DIAN suponia y otro
+        es lo que Clara escribio— y pisarlos entre si borraria justamente la comparacion que
+        hace valioso al segundo.
+        """
+        try:
+            raw = await session.download(  # type: ignore[attr-defined]
+                DocumentType.SUGGESTED_RETURN, titular
+            )
+            stored = await self._store.put(taxpayer=titular, document=raw, scope_id=case_id)
+            documento = await self._cases.add_document(
+                case_id=case_id,
+                doc_type=_DOC_BORRADOR,
+                source=CaseDocumentSource.DIAN_PORTAL,
+                storage_uri=stored.storage_uri,
+                filename=f"borrador-210-{titular.tax_year}.pdf",
+                content_sha256=stored.sha256,
+            )
+        except Exception as exc:
+            # Un fallo aca NO puede tumbar la escritura: lo importante ya paso en el portal.
+            log.warning("portal.pdf_no_guardado", case_id=str(case_id), error=str(exc)[:160])
+            return None
+        return documento.id
