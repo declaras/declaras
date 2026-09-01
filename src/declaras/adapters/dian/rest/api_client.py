@@ -63,10 +63,20 @@ def motivo_de_la_dian(response: httpx.Response) -> str | None:
         cuerpo = response.json()
     except ValueError:
         return None
-    mensaje = cuerpo.get("mensaje") if isinstance(cuerpo, dict) else None
-    if not isinstance(mensaje, str) or not mensaje.strip():
+    if not isinstance(cuerpo, dict):
         return None
-    return mensaje.strip()[:200]
+    mensaje = cuerpo.get("mensaje")
+    if isinstance(mensaje, str) and mensaje.strip():
+        return mensaje.strip()[:200]
+    # Cuando `mensaje` viene vacio —pasa en algunos 400— el unico texto que hay es
+    # `descripcion`, que suele ser una traza de Java. La PRIMERA linea de esa traza a veces
+    # trae la excepcion con su motivo ("...IllegalArgumentException: periodo requerido"), que
+    # es mas util que nada. Se toma solo esa linea, no las cuatro mil de la pila.
+    descripcion = cuerpo.get("descripcion")
+    if isinstance(descripcion, str) and descripcion.strip():
+        primera = descripcion.strip().splitlines()[0]
+        return primera[:200]
+    return None
 
 
 def _raise_for_status(response: httpx.Response, *, url: str) -> None:
@@ -83,6 +93,14 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     codigo = response.status_code
     if codigo < 400:
         return
+    # EL CUERPO ENTERO AL LOG, aunque no sea presentable. `motivo_de_la_dian` devuelve solo el
+    # `mensaje` limpio para MOSTRARSELO a una persona, y a veces ese campo viene vacio: un 400
+    # al crear un borrador llego asi, "La DIAN rechazó la consulta (400)" sin una palabra mas,
+    # imposible de diagnosticar. El error puede estar en `descripcion` (una traza de Java), en
+    # otro campo, o en un cuerpo que ni es JSON. Todo eso NO va a la pantalla —seria ruido—
+    # pero SI al log, que es donde se diagnostica un fallo que no se puede reproducir a mano.
+    cuerpo_crudo = response.text[:800] if response.text else ""
+    log.warning("dian.api.error", status=codigo, url=url, cuerpo=cuerpo_crudo)
     # EL MOTIVO SE LEE PARA TODOS LOS CODIGOS, no solo para el 404. Se aprendio dos veces con
     # el mismo golpe: primero un 404 ambiguo que el cuerpo explicaba ("Documentos no
     # encontrados"), y despues un 400 al crear un borrador que llego a la pantalla como "La
