@@ -524,7 +524,30 @@ class ConciliacionService:
         detail = await self._detalle(case_id)
         respuestas = await self._repo.respuestas(case_id)
         caso = estado.caso if estado.caso is not None else self._caso_vacio(detail)
-        return derivar_peticiones(estado.partidas, respuestas, caso, p=self._parametros(detail))
+        return derivar_peticiones(
+            estado.partidas,
+            respuestas,
+            caso,
+            p=self._parametros(detail),
+            # LO QUE YA ESTA EN EL EXPEDIENTE NO SE VUELVE A PEDIR. Antes solo apagaba la
+            # peticion que el beneficio estuviera en el CALCULO, y hay soportes que no se
+            # pueden leer (un registro civil no trae cifras): esos se pedian para siempre,
+            # aunque el cliente ya los hubiera mandado.
+            soportes=self._soportes_de(detail),
+        )
+
+    @staticmethod
+    def _soportes_de(detail: object) -> list[str]:
+        """Los tipos de documento vigentes del expediente.
+
+        Los reemplazados quedan fuera: si un documento se sustituyó por otro del mismo tipo, el
+        vigente es el que cuenta, y si se sustituyó por nada entonces ya no esta.
+        """
+        return [
+            d.doc_type
+            for d in detail.documents  # type: ignore[attr-defined]
+            if d.superseded_at is None
+        ]
 
     async def recomendaciones(self, case_id: UUID) -> Recomendaciones:
         """Qué le ahorraría cada beneficio, esté o no pedido. Derivado, nunca almacenado.

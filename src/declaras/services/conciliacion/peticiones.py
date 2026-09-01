@@ -539,12 +539,31 @@ def derivar_peticiones(
     caso: CasoTributario,
     *,
     p: ParametrosAnio | None = None,
+    soportes: Sequence[str] = (),
 ) -> list[Peticion]:
     """La lista priorizada de lo que le falta al expediente.
 
     `caso` es el caso que hay HOY (el que produce `a_caso` con las partidas resueltas):
     de él sale la base contra la que se mide cada ahorro y qué beneficios ya están
     capturados. `p` se puede inyectar; por defecto se cargan los del año del caso.
+
+    ═══ `soportes` CIERRA EL LAZO QUE ESTABA ABIERTO ═══
+
+    Hasta aca, lo unico que apagaba una peticion era que el beneficio estuviera EN EL CASO, o
+    sea que el documento se hubiera podido LEER. Y hay documentos que no se leen: un registro
+    civil no es un certificado con cifras, es una prueba de parentesco, y no tiene lector ni
+    deberia tenerlo.
+
+    El resultado era el peor posible: el sistema pedia un papel cuya llegada no podia detectar.
+    El cliente lo mandaba, quedaba guardado, y la peticion seguia viva pidiendo lo mismo para
+    siempre. Con la lista de tipos de documento que YA estan en el expediente, un soporte que
+    llego deja de pedirse aunque nadie haya podido extraerle una cifra.
+
+    Que el documento este no significa que el beneficio este aplicado, y esa diferencia NO se
+    esconde: al subir un soporte que nadie puede leer se levanta un aviso en el expediente
+    diciendo que falta capturar el dato. Cerrar la peticion sin aplicar el beneficio y sin
+    decirlo seria cambiar una molestia (pedir dos veces) por un daño (perder plata en
+    silencio).
     """
     parametros = p if p is not None else cargar(caso.anio_gravable)
     apagadas = {r.pregunta for r in respuestas if not r.tiene}
@@ -565,7 +584,7 @@ def derivar_peticiones(
 
     candidatas = [
         *_de_partidas(partidas, caso, parametros, apagadas, del_cruce),
-        *_de_beneficios(caso, parametros, apagadas, contestadas, del_cruce),
+        *_de_beneficios(caso, parametros, apagadas, contestadas, del_cruce, set(soportes)),
     ]
     # Por plata descendente, con el id como desempate: dos peticiones no estimables (0)
     # tienen que salir siempre en el mismo orden o la lista baila entre consultas.
@@ -698,16 +717,23 @@ def _de_beneficios(
     apagadas: set[str],
     contestadas: set[str],
     del_cruce: Sequence[Flag],
+    soportes: set[str],
 ) -> list[_Candidata]:
     """Orígenes 2 y 3: los beneficios que la DIAN no puede ver.
 
     Sin respuesta la petición es una PREGUNTA; con el `sí` dado es la petición del
     certificado; con el `no` no existe (`tiene=False` apaga para siempre). Y si el
     beneficio ya está en el caso, el certificado llegó: no hay nada que pedir.
+
+    Y TAMPOCO SE PIDE LO QUE YA ESTA EN EL EXPEDIENTE, aunque no se haya podido leer: pedirle
+    dos veces el mismo papel a alguien que ya lo mandó es la forma más rápida de que deje de
+    mandar papeles.
     """
     candidatas: list[_Candidata] = []
     for beneficio in BENEFICIOS:
         if beneficio.pregunta in apagadas or beneficio.presente(caso):
+            continue
+        if beneficio.tipo_documento in soportes:
             continue
         hipotesis = beneficio.hipotesis(caso, p) if beneficio.hipotesis is not None else None
         medida = ahorro_de(caso, hipotesis, p, del_cruce)
@@ -827,3 +853,16 @@ __all__ = [
     "costo_de_cerrar",
     "derivar_peticiones",
 ]
+
+
+def beneficio_de_documento(doc_type: str) -> str | None:
+    """Que beneficio soporta ese tipo de documento, en palabras, o None si no soporta ninguno.
+
+    Sirve para decir QUE hay que capturar cuando llega un soporte que nadie puede leer. Sale
+    del mismo catalogo que las peticiones: si un beneficio cambia de documento, esto lo sigue
+    solo, sin una segunda tabla que se desactualice en silencio.
+    """
+    for beneficio in BENEFICIOS:
+        if beneficio.tipo_documento == doc_type:
+            return etiqueta_de_pregunta(beneficio.pregunta)
+    return None

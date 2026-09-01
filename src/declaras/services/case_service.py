@@ -359,6 +359,12 @@ class CaseService:
             # Todavia no hay parser para ese tipo: es una limitacion conocida del sistema,
             # no un problema del documento. Queda disponible para revision manual.
             log.info("case.no_reader_yet", case_id=str(case_id), doc_type=doc_type)
+            # PERO SI ES EL SOPORTE DE UN BENEFICIO, CALLARSE CUESTA PLATA. Hay documentos que
+            # no se leen ni deberian: un registro civil no trae cifras, prueba un parentesco.
+            # Con su llegada la peticion deja de pedirse —el cliente ya lo mando— y sin este
+            # aviso el dependiente no entraria al calculo y nadie se enteraria. El cliente
+            # habria mandado su papel para perder el beneficio en silencio.
+            await self._flag_si_falta_capturar(case_id, case_doc, doc_type)
             return None
         except DocumentUnreadableError as exc:
             # El documento SI deberia poder leerse y no se pudo: el contador debe saberlo,
@@ -392,6 +398,26 @@ class CaseService:
             await self._flag_from_warning(case_id, case_doc.id, warning)
         await self._flag_if_identity_differs(case_id, case_doc, reading)
         return reading
+
+    async def _flag_si_falta_capturar(
+        self, case_id: UUID, case_doc: CaseDocument, doc_type: str
+    ) -> None:
+        """Avisa que llego el soporte de un beneficio y falta meter el dato al calculo."""
+        from declaras.services.conciliacion.peticiones import beneficio_de_documento
+
+        beneficio = beneficio_de_documento(doc_type)
+        if beneficio is None:
+            return
+        await self._cases.add_flag(
+            case_id=case_id,
+            code="SOPORTE_SIN_DATO",
+            message=(
+                f"Llegó {document_label(doc_type)} y todavía no está en el cálculo: "
+                f"hay que capturar {beneficio} para que el beneficio se aplique."
+            ),
+            severity=FlagSeverity.WARNING,
+            source_document_id=case_doc.id,
+        )
 
     async def _supersede_previous(self, case_id: UUID, doc_type: str) -> int:
         """Marca reemplazados los documentos del portal de ese tipo y cierra sus avisos.
