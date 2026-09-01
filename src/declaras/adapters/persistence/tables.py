@@ -302,3 +302,30 @@ class LoginAttemptRow(Base):
     subject_key: Mapped[str] = mapped_column(String(32), primary_key=True)
     failures: Mapped[int] = mapped_column(Integer, default=0)
     last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PeticionesPorOrigenRow(Base):
+    """Cuantas veces pidio cada origen, por ventana de tiempo.
+
+    ═══ QUE PROTEGE, QUE NO ES LO OBVIO ═══
+
+    No protege una cuenta (de eso se encarga `login_attempts`, que cuenta por cedula): protege
+    la IP DE ESTE SERVICIO. La consulta publica hace que nuestro servidor entre al portal de la
+    DIAN, asi que alguien que la llame en bucle con cedulas distintas nos convierte en el que
+    golpea el portal miles de veces — y el que termina bloqueado es nuestro despliegue, con
+    todos los clientes adentro.
+
+    ═══ EN BASE DE DATOS Y NO EN MEMORIA ═══
+
+    Por la misma razon que el contador de intentos: un contador en memoria se pierde al
+    reiniciar y, peor, no existe entre instancias. Con dos replicas, un limite de 10 se vuelve
+    de 20 sin que nadie lo note.
+    """
+
+    __tablename__ = "peticiones_por_origen"
+
+    # `origen|recurso|ventana`. Compuesta en una sola llave para que incrementar sea un UPSERT
+    # y no una transaccion de leer-y-escribir, que con concurrencia cuenta de menos.
+    clave: Mapped[str] = mapped_column(String(120), primary_key=True)
+    conteo: Mapped[int] = mapped_column(Integer, default=0)
+    ventana_inicio: Mapped[datetime] = mapped_column(DateTime(timezone=True))

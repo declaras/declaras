@@ -19,6 +19,7 @@ from declaras.adapters.persistence.engine import (
     create_session_factory,
 )
 from declaras.adapters.persistence.job_repository import SqlJobRepository
+from declaras.adapters.persistence.limitador import LimitadorPorOrigen
 from declaras.adapters.persistence.login_guard import SqlLoginAttemptGuard
 from declaras.adapters.storage.factory import build_document_store
 from declaras.api.auth.jwks import CacheDeLlaves
@@ -62,6 +63,7 @@ class Container:
     conciliacion_service: ConciliacionService
     escritura: EscrituraService
     historial: HistorialService
+    limitador: LimitadorPorOrigen
     consultas: ConsultasService
     # None cuando no hay auth de personas configurado: sin proyecto de Supabase no hay llaves que
     # cachear. Va en el contenedor y no como global del modulo para que cada prueba tenga la suya
@@ -110,12 +112,14 @@ class Container:
         historial = HistorialService(
             cases=cases, connector=connector, store=store, guard=guard
         )
+        limitador = LimitadorPorOrigen(sessions)
         runner = JobRunner(
             jobs=jobs,
             extraction=extraction,
             vault=vault,
             registry=registry,
             settings=settings,
+            limitador=limitador,
         )
         return cls(
             settings=settings,
@@ -136,6 +140,7 @@ class Container:
             conciliacion_service=conciliacion_service,
             escritura=escritura,
             historial=historial,
+            limitador=limitador,
             consultas=consultas,
             llaves=(
                 CacheDeLlaves(jwks_url_de(settings.supabase_url)) if settings.supabase_url else None

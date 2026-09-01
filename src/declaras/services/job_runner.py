@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import socket
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from declaras.config import Settings
@@ -21,6 +22,10 @@ from declaras.services.extraction import ExtractionService
 from declaras.services.session_registry import InMemorySessionRegistry
 
 log = get_logger(__name__)
+
+# Cuantas horas de ventanas se conservan. Dos alcanza: la actual y la anterior, por si el
+# reloj queda en el borde. Lo demas es basura que nadie va a leer.
+_VENTANAS_QUE_SE_GUARDAN = 2
 
 _JANITOR_EVERY_N_TICKS = 15
 
@@ -34,12 +39,14 @@ class JobRunner:
         vault: InMemoryCredentialVault,
         registry: InMemorySessionRegistry,
         settings: Settings,
+        limitador: object | None = None,
     ) -> None:
         self._jobs = jobs
         self._extraction = extraction
         self._vault = vault
         self._registry = registry
         self._settings = settings
+        self._limitador = limitador
         self._worker_id = f"{socket.gethostname()}-{uuid4().hex[:8]}"
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -111,10 +118,18 @@ class JobRunner:
         released = await self._jobs.release_expired_leases()
         evicted = await self._registry.evict_expired()
         purged = await self._vault.purge_expired()
-        if released or evicted or purged:
+        # Las ventanas del limitador: una fila por origen y por hora que nada vuelve a leer
+        # despues de su hora. Sin barrerlas, la tabla crece para siempre.
+        ventanas = 0
+        if self._limitador is not None:
+            ventanas = await self._limitador.limpiar(  # type: ignore[attr-defined]
+                antes_de=datetime.now(UTC) - timedelta(hours=_VENTANAS_QUE_SE_GUARDAN)
+            )
+        if released or evicted or purged or ventanas:
             log.info(
                 "worker.janitor",
                 leases_released=released,
                 sessions_evicted=evicted,
                 credentials_purged=purged,
+                ventanas_borradas=ventanas,
             )

@@ -9,12 +9,25 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
 
 from declaras.api.deps import ContainerDep
+from declaras.api.origen import origen_de
 
 router = APIRouter(prefix="/v1", tags=["consultas"])
+
+# ═══ CUANTAS CONSULTAS POR HORA DESDE UN MISMO PUNTO DE ACCESO ═══
+#
+# Los dos numeros son muy distintos porque las dos operaciones cuestan muy distinto. Registrar
+# una consulta escribe una fila; consultar la DIAN abre una sesion en el portal y descarga un
+# archivo, o sea que gasta tiempo nuestro Y credito nuestro con la DIAN.
+#
+# Estan puestos donde el uso legitimo no llega: quince consultas al portal en una hora desde la
+# misma IP no es una persona averiguando si le toca declarar. Se cuenta por IP, asi que una
+# oficina entera comparte cuota — y aun asi quince alcanza para una oficina entera.
+_LIMITE_REGISTRO = 40
+_LIMITE_DIAN = 15
 
 Telefono = Annotated[str, StringConstraints(min_length=7, max_length=20)]
 # Un patron propio en vez de `EmailStr`, que arrastra la dependencia `email-validator` entera
@@ -50,12 +63,17 @@ class ConsultaResponse(BaseModel):
     response_model=ConsultaResponse,
     summary="Registra una consulta de obligación de declarar y devuelve el veredicto",
 )
-async def registrar_consulta(payload: ConsultaRequest, container: ContainerDep) -> ConsultaResponse:
+async def registrar_consulta(
+    payload: ConsultaRequest, request: Request, container: ContainerDep
+) -> ConsultaResponse:
     """El veredicto lo calcula el SERVIDOR sobre las respuestas, no lo recibe hecho.
 
     Recibirlo dejaria la regla del art. 592 en dos sitios —el navegador y el motor— y bastaria
     con abrir las herramientas del navegador para guardarse un "no obligado" que nadie calculo.
     """
+    await container.limitador.registrar(
+        origen=origen_de(request), recurso="consultas", limite=_LIMITE_REGISTRO
+    )
     consulta_id, resultado = await container.consultas.registrar(
         nombre=payload.nombre,
         correo=payload.correo,
@@ -84,13 +102,18 @@ class ConsultaDianRequest(BaseModel):
     summary="Consulta con la DIAN si la persona debe declarar, con cifras reales",
 )
 async def consultar_con_la_dian(
-    payload: ConsultaDianRequest, container: ContainerDep
+    payload: ConsultaDianRequest, request: Request, container: ContainerDep
 ) -> dict[str, object]:
     """Baja SOLO la exógena y compara sus cinco topes contra el límite legal del año.
 
     No abre expediente: quien pregunta si le toca declarar todavía no es cliente, y bajarle los
     cinco documentos seria cobrarle una extraccion completa a alguien que solo pregunto.
     """
+    # ANTES de abrir sesion: el limite existe para que este servicio no golpee el portal en
+    # bucle, asi que comprobarlo despues del login no serviria de nada.
+    await container.limitador.registrar(
+        origen=origen_de(request), recurso="consultas_dian", limite=_LIMITE_DIAN
+    )
     return await container.consultas.consultar_con_la_dian(
         nombre=payload.nombre,
         correo=payload.correo,
