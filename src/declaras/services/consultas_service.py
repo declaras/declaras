@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 from declaras.domain.errors import ValidationError
 from declaras.observability import get_logger
+from declaras.services.apertura import abrir_sesion_con_freno
 from declaras.services.cifrado import cifrar
 from declaras.tax.obligation import (
     THRESHOLD_LABELS,
@@ -60,10 +61,12 @@ class ConsultasService:
         repo: object,
         clave_de_cifrado: str | None,
         connector: object | None = None,
+        guard: object | None = None,
     ) -> None:
         self._repo = repo
         self._clave = clave_de_cifrado
         self._connector = connector
+        self._guard = guard
 
     async def consultar_con_la_dian(
         self,
@@ -99,11 +102,22 @@ class ConsultasService:
 
         if self._connector is None:
             raise ValidationError("La consulta con la DIAN no está disponible en este despliegue.")
+        if self._guard is None:
+            # Sin freno NO se consulta, y la negativa es deliberada. Este endpoint es publico:
+            # sin contador de intentos, cualquiera puede bloquear la cuenta de la DIAN de un
+            # tercero con tres peticiones y una cedula ajena. Es el lado correcto en el que
+            # fallar: mejor sin funcion que con una que le hace dano a quien no pregunto.
+            raise ValidationError("La consulta con la DIAN no está disponible en este despliegue.")
 
         titular = TaxpayerRef(id_number=id_number, tax_year=tax_year)
-        sesion = await self._connector.open_session(  # type: ignore[attr-defined]
-            DianCredentials(id_kind=IdDocumentKind.CC, id_number=id_number, password=dian_password),
-            titular,
+        sesion = await abrir_sesion_con_freno(
+            connector=self._connector,  # type: ignore[arg-type]
+            guard=self._guard,  # type: ignore[arg-type]
+            credentials=DianCredentials(
+                id_kind=IdDocumentKind.CC, id_number=id_number, password=dian_password
+            ),
+            titular=titular,
+            motivo="consulta_publica",
         )
         try:
             documento = await sesion.download(DocumentType.EXOGENA, titular)

@@ -15,8 +15,9 @@ from declaras.domain.case import CaseStatus
 from declaras.domain.case_ports import CaseRepository
 from declaras.domain.errors import CaseNotFoundError, DeclarasError, DianError
 from declaras.domain.models import BorradorEscrito, DianCredentials, TaxpayerRef
-from declaras.domain.ports import DianConnector
+from declaras.domain.ports import DianConnector, LoginAttemptGuard
 from declaras.observability import get_logger
+from declaras.services.apertura import abrir_sesion_con_freno
 from declaras.services.conciliacion_service import ConciliacionService
 
 log = get_logger(__name__)
@@ -46,10 +47,12 @@ class EscrituraService:
         connector: DianConnector,
         cases: CaseRepository,
         conciliacion: ConciliacionService,
+        guard: LoginAttemptGuard,
     ) -> None:
         self._connector = connector
         self._cases = cases
         self._conciliacion = conciliacion
+        self._guard = guard
 
     async def escribir(self, case_id: UUID, password: SecretStr) -> BorradorEscrito:
         """Lleva el 210 del expediente al borrador del portal y verifica lo guardado.
@@ -81,7 +84,15 @@ class EscrituraService:
             id_number=detail.client.id_number,
             tax_year=detail.case.tax_year,
         )
-        session = await self._connector.open_session(credentials, titular)
+        # Con freno, igual que la extraccion: escribir el borrador tambien empieza por un
+        # login, y un login fallido cuenta para el bloqueo de la cuenta.
+        session = await abrir_sesion_con_freno(
+            connector=self._connector,
+            guard=self._guard,
+            credentials=credentials,
+            titular=titular,
+            motivo="escritura_borrador",
+        )
         try:
             if session.pending_challenge is not None:
                 # El relevo de identidad vive en el flujo de extraccion. Antes que duplicarlo
