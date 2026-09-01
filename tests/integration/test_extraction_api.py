@@ -49,9 +49,11 @@ async def test_extraccion_exitosa_devuelve_los_cinco_documentos(client):
     # El historial llega como declaracion presentada, un documento por año.
     historial = [d for d in final["documents"] if d["doc_type"] == "FILED_RETURN"]
     assert len(historial) == 2, "trae los dos ultimos años, no cinco: el camino critico importa"
+    # 2022 y 2021: el año anterior (2024) ya vino como PRIOR_RETURN, y 2023 no existe en el
+    # falso, que deja ese hueco a proposito.
     assert {d["filename"] for d in historial} == {
-        "declaracion-2023.pdf",
         "declaracion-2022.pdf",
+        "declaracion-2021.pdf",
     }
     assert not final["failures"]
     assert all(doc["sha256"] and doc["size_bytes"] > 0 for doc in final["documents"])

@@ -109,9 +109,7 @@ class Container:
         escritura = EscrituraService(
             connector=connector, cases=cases, conciliacion=conciliacion_service, guard=guard
         )
-        historial = HistorialService(
-            cases=cases, connector=connector, store=store, guard=guard
-        )
+        historial = HistorialService(cases=cases)
         limitador = LimitadorPorOrigen(sessions)
         runner = JobRunner(
             jobs=jobs,

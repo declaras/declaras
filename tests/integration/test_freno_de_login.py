@@ -17,9 +17,6 @@ caminos pasen por el, y estan escritas por CAMINO —no una sola generica— por
 impedir es justamente que el proximo camino nuevo se olvide.
 """
 
-import pytest
-
-from tests.integration.test_conciliacion_api import FILA_SALARIO, _abrir_caso
 from tests.integration.test_escritura_api import _listo_para_escribir
 
 # El fake falla el login cuando la clave contiene "bad", y el limite son 2 intentos: se corta
@@ -89,21 +86,16 @@ async def test_el_freno_es_por_cedula_y_no_global(client):
     assert otra.status_code == 200, otra.text
 
 
-@pytest.mark.parametrize("camino", ["historial", "escritura"])
-async def test_los_caminos_del_expediente_tambien_frenan(client, camino):
-    """Traer el historial y escribir el borrador tambien empiezan por un login, y un login
-    fallido cuenta para el bloqueo igual que el de la extraccion.
+async def test_escribir_el_borrador_tambien_frena(client):
+    """Escribir el borrador tambien empieza por un login, y un login fallido cuenta para el
+    bloqueo igual que el de la extraccion.
 
-    La escritura necesita el borrador cerrado: su compuerta de producto (un 409) corta ANTES de
-    llegar al portal, asi que sin cerrarlo esta prueba pasaria por la razon equivocada y no
-    probaria el freno.
+    Necesita el borrador cerrado: su compuerta de producto (un 409) corta ANTES de llegar al
+    portal, asi que sin cerrarlo esta prueba pasaria por la razon equivocada y no probaria el
+    freno.
     """
-    if camino == "historial":
-        case_id = await _abrir_caso(client, FILA_SALARIO)
-        ruta = f"/v1/cases/{case_id}/historial"
-    else:
-        case_id = await _listo_para_escribir(client)
-        ruta = f"/v1/cases/{case_id}/portal/escribir"
+    case_id = await _listo_para_escribir(client)
+    ruta = f"/v1/cases/{case_id}/portal/escribir"
 
     primera = await client.post(ruta, json={"dian_password": MALA})
     assert primera.json()["code"] == "DIAN_INVALID_CREDENTIALS", primera.text

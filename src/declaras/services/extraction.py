@@ -325,8 +325,11 @@ class ExtractionService:
             await self._publicar(job.id, pasos)
             return []
 
+        # ESTRICTAMENTE ANTERIORES al año que ya trae PRIOR_RETURN: ese ya se descargo unas
+        # lineas mas arriba, y bajarlo otra vez seria pedirle a la DIAN dos veces el mismo
+        # archivo para guardarlo con dos nombres distintos.
         anios = sorted(
-            (int(d["anio"]) for d in declaraciones if int(d["anio"]) <= anterior), reverse=True
+            (int(d["anio"]) for d in declaraciones if int(d["anio"]) < anterior), reverse=True
         )[:_ANIOS_DE_HISTORIAL]
         _avanzar(pasos, _PASO_HISTORIAL, StepState.RUNNING)
         await self._publicar(job.id, pasos)

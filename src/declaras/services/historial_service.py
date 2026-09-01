@@ -18,9 +18,9 @@ La DIAN responde con el listado completo de años presentados, asi que los años
 ese listado son los que no declaro. Eso no se deduce: se observa. Y por eso el resultado
 distingue tres cosas que se ven distinto en la pantalla:
 
-    presentada + guardada    la tenemos, se puede abrir
-    presentada, sin traer    la DIAN la tiene y todavia no se ha bajado
-    sin declaracion          la DIAN no la tiene: puede ser un atraso
+    guardada         la tenemos, se puede abrir
+    sin declaracion  la DIAN no la tiene: puede ser un atraso
+    sin revisar      mas atras de lo que trae la consulta, asi que no se sabe
 
 ═══ QUE NO HACE ═══
 
@@ -33,21 +33,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import SecretStr
-
-from declaras.domain.case import CaseDocumentSource
 from declaras.domain.case_ports import CaseRepository
-from declaras.domain.errors import CaseNotFoundError, DianError
-from declaras.domain.models import DianCredentials, TaxpayerRef
-from declaras.domain.ports import DianConnector, DocumentStore, LoginAttemptGuard
+from declaras.domain.errors import CaseNotFoundError
 from declaras.observability import get_logger
-from declaras.services.apertura import abrir_sesion_con_freno
 
 log = get_logger(__name__)
 
-# Hasta donde mirar atras. Cinco años cubre el periodo en que la DIAN todavia puede revisar o
-# sancionar una declaracion (firmeza ordinaria de tres años, mas el margen de las que se
-# presentan tarde), y es el tramo en el que un atraso sigue siendo cobrable.
+# Cuantos años se MUESTRAN. Es mayor que los que trae la consulta a proposito: los que sobran
+# salen como "sin revisar", que es la forma de decir "aca no sabemos" sin fingir que no existen.
+# Cinco cubre el periodo en que la DIAN todavia puede revisar o sancionar una declaracion, que
+# es el tramo en el que un atraso sigue siendo cobrable.
 ANIOS_ATRAS = 5
 
 # Como se llama en el expediente la declaracion de un año del historial. Lleva el año DENTRO del
@@ -58,120 +53,20 @@ def tipo_de(anio: int) -> str:
 
 
 class HistorialService:
-    def __init__(
-        self,
-        *,
-        cases: CaseRepository,
-        connector: DianConnector,
-        store: DocumentStore,
-        guard: LoginAttemptGuard,
-    ) -> None:
+    def __init__(self, *, cases: CaseRepository) -> None:
         self._cases = cases
-        self._connector = connector
-        self._store = store
-        self._guard = guard
 
     async def ver(self, case_id: UUID) -> list[dict[str, object]]:
-        """El historial con lo que ya esta en el expediente. NO abre sesion en el portal.
+        """El historial, leido del expediente. NO abre sesion ni pide la clave.
 
-        Se puede mirar sin la clave, que es lo que hace falta para que la pantalla muestre algo
-        desde el primer momento en vez de exigir una consulta antes de decir nada.
+        HUBO UN "TRAER" Y SE FUE, y vale la pena decir por que: cuando esto se construyo, la
+        consulta a la DIAN no traia el historial, asi que habia un boton aparte que pedia la
+        clave por segunda vez para bajarlo. En cuanto la consulta empezo a traerlo, ese boton
+        quedo pidiendo una clave que ya no hacia falta, para un trabajo que ya estaba hecho.
+        Ahora esto solo lee: lo que hay llego con la consulta.
         """
         detail = await self._require_detail(case_id)
-        return self._armar(detail, anios_en_la_dian=None)
-
-    async def traer(self, case_id: UUID, *, password: SecretStr) -> list[dict[str, object]]:
-        """Pregunta a la DIAN que años tiene y baja los que falten.
-
-        UNA SOLA SESION para todo el historial: abrirla es lo caro (y lo que la DIAN cuenta
-        para bloquear), asi que el listado y todas las descargas van adentro.
-        """
-        detail = await self._require_detail(case_id)
-        titular = TaxpayerRef(
-            id_kind=detail.client.id_kind,
-            id_number=detail.client.id_number,
-            tax_year=detail.case.tax_year,
-        )
-        credentials = DianCredentials(
-            id_kind=detail.client.id_kind,
-            id_number=detail.client.id_number,
-            password=password,
-        )
-
-        # Con freno: la DIAN bloquea la cuenta al tercer intento fallido, y revisar el
-        # historial es la clase de accion que se repite sin pensarla.
-        session = await abrir_sesion_con_freno(
-            connector=self._connector,
-            guard=self._guard,
-            credentials=credentials,
-            titular=titular,
-            motivo="historial",
-        )
-        try:
-            if session.pending_challenge is not None:
-                raise DianError(
-                    "El portal pidió verificación de identidad. Corre primero una extracción "
-                    "(que sí sabe relevar el reto) y vuelve a intentar."
-                )
-            declaraciones = await session.listar_declaraciones()
-            anios_en_la_dian = sorted(
-                {int(d["anio"]) for d in declaraciones},  # type: ignore[call-overload]
-                reverse=True,
-            )
-            ya_estan = {
-                doc.doc_type for doc in detail.documents if doc.doc_type.startswith("DECLARACION_")
-            }
-            for anio in self._ventana(detail.case.tax_year):
-                if anio not in anios_en_la_dian or tipo_de(anio) in ya_estan:
-                    continue
-                # Una descarga que falla no cancela las demas: el historial parcial sirve, y
-                # que un año concreto no se pueda bajar no dice nada de los otros.
-                try:
-                    raw = await session.descargar_declaracion(anio)
-                except DianError as exc:
-                    log.warning(
-                        "historial.anio_fallido",
-                        case_id=str(case_id),
-                        anio=anio,
-                        code=exc.code,
-                    )
-                    continue
-                stored = await self._store.put(taxpayer=titular, document=raw, scope_id=case_id)
-                await self._cases.add_document(
-                    case_id=case_id,
-                    doc_type=tipo_de(anio),
-                    source=CaseDocumentSource.DIAN_PORTAL,
-                    storage_uri=stored.storage_uri,
-                    filename=raw.filename,
-                    content_sha256=stored.sha256,
-                )
-        finally:
-            await session.close()
-
-        sin_declarar = [a for a in self._ventana(detail.case.tax_year) if a not in anios_en_la_dian]
-        cuantas = len(anios_en_la_dian)
-        # El año que FALTA se nombra en la bitacora, no solo se cuenta: es el dato sobre el que
-        # hay que hacer algo, y un conteo no dice cual fue.
-        faltantes = (
-            f" y no tiene la de {', '.join(str(a) for a in sin_declarar)}." if sin_declarar else "."
-        )
-        await self._cases.add_event(
-            case_id=case_id,
-            kind="DIAN_QUERY",
-            message=(
-                f"Se revisó el historial: la DIAN tiene {cuantas} "
-                f"{'declaración' if cuantas == 1 else 'declaraciones'} presentadas{faltantes}"
-            ),
-            payload={"anios": anios_en_la_dian, "sin_declarar": sin_declarar},
-        )
-        log.info(
-            "historial.revisado",
-            case_id=str(case_id),
-            anios=anios_en_la_dian,
-            sin_declarar=sin_declarar,
-        )
-        # Se relee el expediente para que el resultado incluya lo que se acabo de guardar.
-        return self._armar(await self._require_detail(case_id), anios_en_la_dian=anios_en_la_dian)
+        return self._armar(detail)
 
     # ─────────────────────────── internos ───────────────────────────
 
@@ -182,14 +77,20 @@ class HistorialService:
         """
         return [anio_del_caso - n for n in range(1, ANIOS_ATRAS + 1)]
 
-    def _armar(
-        self, detail: object, *, anios_en_la_dian: list[int] | None
-    ) -> list[dict[str, object]]:
+    def _armar(self, detail: object) -> list[dict[str, object]]:
         """Un año por fila, con lo que se sabe de cada uno.
 
-        `anios_en_la_dian` es None cuando no se ha preguntado al portal en esta llamada: ahi el
-        estado de un año sin documento es "no se sabe", que es distinto de "no declaro". Decir
-        "no declaró" sin haber preguntado seria inventar.
+        ═══ COMO SE SABE QUE UN AÑO NO SE DECLARO, SIN VOLVER A PREGUNTAR ═══
+
+        La consulta trae las declaraciones MAS RECIENTES que la DIAN tenga. Entonces, si hay
+        una de 2022 pero no hay de 2023, no es que falte por traer: es que la DIAN no la tiene,
+        porque 2023 se habria traido antes que 2022. El hueco entre las que si estan es
+        informacion, no ausencia de informacion.
+
+        Mas atras del año mas viejo que tenemos ya no se puede afirmar nada: ahi el limite es
+        cuantas trae la consulta, no cuantas existen. Esos años quedan "sin revisar", que es lo
+        honesto. Decir "no declaró" sin poder saberlo seria inventar un dato sobre la vida
+        tributaria de alguien.
         """
         guardadas = {
             doc.doc_type: doc
@@ -204,17 +105,23 @@ class HistorialService:
             None,
         )
 
+        # El año mas viejo que si tenemos marca hasta donde alcanza lo que sabemos.
+        anios_con_documento = [
+            anio
+            for anio in self._ventana(detail.case.tax_year)  # type: ignore[attr-defined]
+            if guardadas.get(tipo_de(anio)) or (prior if anio == anterior else None)
+        ]
+        hasta_donde_sabemos = min(anios_con_documento) if anios_con_documento else None
+
         filas: list[dict[str, object]] = []
         for anio in self._ventana(detail.case.tax_year):  # type: ignore[attr-defined]
             doc = guardadas.get(tipo_de(anio)) or (prior if anio == anterior else None)
             if doc is not None:
                 estado = "guardada"
-            elif anios_en_la_dian is None:
-                estado = "sin_revisar"
-            elif anio in anios_en_la_dian:
-                estado = "en_la_dian"
-            else:
+            elif hasta_donde_sabemos is not None and anio > hasta_donde_sabemos:
                 estado = "sin_declaracion"
+            else:
+                estado = "sin_revisar"
             filas.append(
                 {
                     "anio": anio,

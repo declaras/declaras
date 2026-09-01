@@ -8,11 +8,11 @@ estaba.
 
 Lo que se fija aca:
   - el año que FALTA en la mitad de la serie se marca como tal (es un atraso, y se puede vender)
-  - "no se ha preguntado" NO es lo mismo que "no declaro"
+  - "no se sabe" NO es lo mismo que "no declaro"
   - la declaracion del año anterior, que llega por la extraccion con otro nombre, aparece en el
     historial igual: para quien mira, es la declaracion de ese año y punto
-  - abrir UNA sesion para todo el historial, porque abrirla es lo que la DIAN cuenta para
-    bloquear la cuenta
+  - todo llega con la consulta a la DIAN: no hay un segundo paso ni una clave que volver a
+    escribir
 """
 
 from tests.integration.test_conciliacion_api import FILA_SALARIO, _abrir_caso
@@ -36,72 +36,36 @@ async def test_sin_preguntar_no_se_afirma_que_no_declaro(client):
     assert all(f["document_id"] is None for f in filas)
 
 
-async def test_trae_las_que_hay_y_marca_el_hueco(client):
-    """El caso completo: la DIAN tiene 2023, 2022, 2021 y 2020 pero NO 2024.
+async def test_el_hueco_se_marca_sin_volver_a_preguntar(client):
+    """EL AÑO QUE FALTA ES EL DATO, y se deduce sin gastar una consulta mas.
 
-    Ese hueco es el dato que importa: es una declaracion que no se presento, o sea un atraso.
+    La consulta trae las declaraciones MAS RECIENTES que la DIAN tenga. Entonces, si hay una de
+    2022 pero no de 2023, no es que falte por traer: es que la DIAN no la tiene, porque 2023 se
+    habria traido antes que 2022. El fake deja 2024 por fuera a proposito, igual que el
+    expediente real donde se noto que el historial no se veia.
+
+    Mas atras del año mas viejo que tenemos ya no se puede afirmar nada, y esos años quedan
+    "sin revisar" en vez de acusar a alguien de no haber declarado.
     """
-    case_id = await _abrir_caso(client, FILA_SALARIO)
+    from tests.integration.test_cases_api import wait_for_status
 
-    respuesta = await client.post(
-        f"{BASE}/{case_id}/historial", json={"dian_password": "clave-buena"}
+    creado = await client.post("/v1/cases", json={"id_number": "1020304050", "tax_year": 2025})
+    case_id = creado.json()["id"]
+    extraccion = await client.post(
+        "/v1/extractions",
+        json={"id_number": "1020304050", "dian_password": "clave-buena", "tax_year": 2025},
     )
-    assert respuesta.status_code == 200, respuesta.text
-    por_anio = {f["anio"]: f for f in respuesta.json()}
+    await wait_for_status(client, extraccion.json()["job_id"], "SUCCEEDED")
+    await client.post(
+        f"{BASE}/{case_id}/link-extraction", json={"job_id": extraccion.json()["job_id"]}
+    )
 
-    # El fake deja 2024 por fuera a proposito, igual que el expediente real donde se noto.
-    assert por_anio[2024]["estado"] == "sin_declaracion"
-    assert por_anio[2024]["document_id"] is None
+    por_anio = {f["anio"]: f for f in (await client.get(f"{BASE}/{case_id}/historial")).json()}
 
-    for anio in (2023, 2022, 2021, 2020):
-        assert por_anio[anio]["estado"] == "guardada", anio
-        assert por_anio[anio]["document_id"], f"{anio} tiene que quedar descargable"
-        assert por_anio[anio]["filename"] == f"declaracion-{anio}.pdf"
-
-
-async def test_quedan_en_los_documentos_del_expediente(client):
-    """Cada año es su propio documento y NO se reemplazan entre si.
-
-    El expediente reemplaza documentos del mismo tipo cuando llega uno nuevo. Si todas las
-    declaraciones del historial se llamaran igual, cada descarga borraria la anterior y
-    quedaria una sola: por eso el año va DENTRO del tipo.
-    """
-    case_id = await _abrir_caso(client, FILA_SALARIO)
-    await client.post(f"{BASE}/{case_id}/historial", json={"dian_password": "clave-buena"})
-
-    detalle = (await client.get(f"{BASE}/{case_id}")).json()
-    tipos = {d["doc_type"] for d in detalle["documents"]}
-    assert {"DECLARACION_2023", "DECLARACION_2022", "DECLARACION_2021", "DECLARACION_2020"} <= tipos
-
-    # Y queda constancia en la bitacora, con el año que falta nombrado.
-    eventos = [e for e in detalle["events"] if e["kind"] == "DIAN_QUERY"]
-    assert any("2024" in e["message"] for e in eventos), eventos
-
-
-async def test_volver_a_traer_no_duplica(client):
-    """Repetir la consulta no vuelve a bajar lo que ya esta: es una peticion menos al portal,
-    y el portal es justamente el recurso escaso."""
-    case_id = await _abrir_caso(client, FILA_SALARIO)
-    clave = {"dian_password": "clave-buena"}
-    primera = await client.post(f"{BASE}/{case_id}/historial", json=clave)
-    segunda = await client.post(f"{BASE}/{case_id}/historial", json=clave)
-    assert segunda.status_code == 200, segunda.text
-    assert primera.json() == segunda.json()
-
-    detalle = (await client.get(f"{BASE}/{case_id}")).json()
-    declaraciones = [d for d in detalle["documents"] if d["doc_type"].startswith("DECLARACION_")]
-    assert len(declaraciones) == 4, [d["doc_type"] for d in declaraciones]
-
-
-async def test_la_clave_no_queda_en_el_expediente(client):
-    """La clave abre la sesion y se suelta. Vale escribirlo como prueba porque este endpoint
-    la recibe en el cuerpo, que es justo donde es facil que se quede pegada en un log o en un
-    payload de evento."""
-    case_id = await _abrir_caso(client, FILA_SALARIO)
-    await client.post(f"{BASE}/{case_id}/historial", json={"dian_password": "clave-secreta-123"})
-
-    detalle = (await client.get(f"{BASE}/{case_id}")).json()
-    assert "clave-secreta-123" not in str(detalle)
+    # 2023 esta ENTRE las que si tenemos (2024 y 2022), asi que su ausencia es informacion.
+    assert por_anio[2023]["estado"] == "sin_declaracion"
+    # 2020 esta mas atras de lo que trae la consulta: ahi no se sabe, y se dice.
+    assert por_anio[2020]["estado"] == "sin_revisar"
 
 
 async def test_caso_que_no_existe(client):
@@ -137,9 +101,10 @@ async def test_la_consulta_a_la_dian_ya_trae_las_ultimas_dos(client):
     filas = (await client.get(f"{BASE}/{case_id}/historial")).json()
     por_anio = {f["anio"]: f for f in filas}
 
-    for anio in (2023, 2022):
+    # El año anterior llega como PRIOR_RETURN y los dos de atras como historial.
+    for anio in (2024, 2022, 2021):
         assert por_anio[anio]["estado"] == "guardada", f"{anio} tenia que venir con la consulta"
         assert por_anio[anio]["document_id"]
 
-    # Y los mas viejos siguen sin revisar: no se afirma que no declaro sin haber preguntado.
+    # Y el mas viejo sigue sin revisar: no se afirma que no declaro sin poder saberlo.
     assert por_anio[2020]["estado"] == "sin_revisar"

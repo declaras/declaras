@@ -173,8 +173,12 @@ class FakeDianSession:
         """Un historial con un HUECO a proposito.
 
         El caso interesante no es la serie completa: es el año que falta en la mitad, porque
-        eso es un atraso y el sistema tiene que saber mostrarlo. Aca falta 2024, igual que le
-        pasaba al primer expediente real donde se noto que el historial no se veia.
+        eso es un atraso y el sistema tiene que saber mostrarlo. Aca falta 2023, con años
+        declarados a ambos lados, que es la forma en que un hueco se puede AFIRMAR.
+
+        EL LISTADO INCLUYE EL AÑO ANTERIOR (2024) porque `download` entrega su PRIOR_RETURN sin
+        chistar: un falso que dijera no tenerlo mientras lo entrega estaria enseñando una
+        realidad que no existe, y las pruebas que se apoyen en el probarian otra cosa.
         """
         if self._closed:
             raise ValidationError("La sesión ya fue cerrada.")
@@ -182,7 +186,7 @@ class FakeDianSession:
             return []
         return [
             {"anio": anio, "form_id": f"fake-{anio}"}
-            for anio in (2025, 2023, 2022, 2021, 2020)
+            for anio in (2025, 2024, 2022, 2021, 2020)
         ]
 
     async def descargar_declaracion(self, anio: int) -> RawDocument:

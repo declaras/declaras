@@ -397,32 +397,12 @@ async def ver_historial(
     container: ContainerDep,
     _auth: AutenticadoDep,
 ) -> list[AnioDelHistorial]:
-    """Se lee SIN clave, para que la pantalla muestre algo antes de pedir nada.
+    """Solo LEE: las declaraciones anteriores llegan con la consulta a la DIAN, en la misma
+    sesion, asi que no hay nada que pedirle aparte al portal ni una clave que volver a escribir.
 
-    Los años sin documento quedan como `sin_revisar` y no como "no declaró": afirmar que
-    alguien no declaró sin haberle preguntado al portal seria inventar un dato sobre su vida
-    tributaria.
+    Los años que quedan fuera de lo que trae la consulta salen como `sin_revisar` y no como
+    "no declaró": afirmar que alguien no declaró sin poder saberlo seria inventar un dato sobre
+    su vida tributaria.
     """
     filas = await container.historial.ver(case_id)
-    return [AnioDelHistorial(**f) for f in filas]
-
-
-@router.post(
-    "/cases/{case_id}/historial",
-    response_model=list[AnioDelHistorial],
-    summary="Pregunta a la DIAN que años declaro el contribuyente y baja los que falten",
-)
-async def traer_historial(
-    case_id: UUID,
-    payload: EscribirAlPortalRequest,
-    container: ContainerDep,
-    _auth: AutenticadoDep,
-) -> list[AnioDelHistorial]:
-    """Una sola sesion para todo el historial.
-
-    Abrir sesion es lo caro y es lo que la DIAN cuenta para bloquear la cuenta, asi que el
-    listado y todas las descargas van dentro de la misma. Un año que falle no cancela los
-    demas: un historial parcial sirve.
-    """
-    filas = await container.historial.traer(case_id, password=payload.dian_password)
     return [AnioDelHistorial(**f) for f in filas]

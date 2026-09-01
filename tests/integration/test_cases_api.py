@@ -81,7 +81,7 @@ async def test_flujo_completo_extraccion_dian_vinculada_al_expediente(client):
     # Cinco insumos del año + las dos declaraciones anteriores, cada una con SU año en el tipo
     # para que la serie no se pise cuando entre la siguiente consulta.
     assert len(body["documents"]) == 7
-    assert {"DECLARACION_2023", "DECLARACION_2022"} <= {d["doc_type"] for d in body["documents"]}
+    assert {"DECLARACION_2022", "DECLARACION_2021"} <= {d["doc_type"] for d in body["documents"]}
     doc_types = {d["doc_type"] for d in body["documents"]}
     assert doc_types == {
         "RUT",
@@ -89,8 +89,8 @@ async def test_flujo_completo_extraccion_dian_vinculada_al_expediente(client):
         "PRIOR_RETURN",
         "SUGGESTED_RETURN",
         "EINVOICE_SUMMARY",
-        "DECLARACION_2023",
         "DECLARACION_2022",
+        "DECLARACION_2021",
     }
 
 
