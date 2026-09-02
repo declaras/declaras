@@ -496,6 +496,10 @@ _ETIQUETAS = {
     DocumentType.EINVOICE_SUMMARY: "Tus facturas electrónicas",
     DocumentType.PRIOR_RETURN: "Tu declaración del año pasado",
     DocumentType.SUGGESTED_RETURN: "El borrador que la DIAN te preparó",
+    # Se nombra por la PREGUNTA que contesta, no por el documento que busca. Sin etiqueta caia en
+    # "La declaración que se presentó ese año", que en una lista de pasos suena a que ya
+    # presentaste; y quien mira esta pantalla suele ser justamente alguien que no lo ha hecho.
+    DocumentType.FILED_RETURN: "Si ya presentaste este año",
 }
 
 

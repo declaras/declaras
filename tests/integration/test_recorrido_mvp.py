@@ -113,7 +113,14 @@ async def test_sin_declaraciones_previas_la_extraccion_entrega_los_otros_tres(cl
 
     assert final["status"] == "SUCCEEDED", "faltar dos documentos es un éxito parcial, no un fallo"
     assert {d["doc_type"] for d in final["documents"]} == {"RUT", "EXOGENA", "EINVOICE_SUMMARY"}
-    assert {f["doc_type"] for f in final["failures"]} == {"PRIOR_RETURN", "SUGGESTED_RETURN"}
+    # La presentada tambien falta, y aca SI se registra: la extraccion deja la traza de todo lo
+    # que se intento. Lo que no hace es volverse alerta del expediente, porque no haber firmado
+    # todavia es el estado normal de quien nos contrato.
+    assert {f["doc_type"] for f in final["failures"]} == {
+        "PRIOR_RETURN",
+        "SUGGESTED_RETURN",
+        "FILED_RETURN",
+    }
     assert creado.status_code == 201
 
 

@@ -245,19 +245,30 @@ class StoredDocument(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# LO QUE SE LE PIDE A LA DIAN EN CADA CONSULTA. Es UNA lista y vive aca: la capa de API tenia su
+# propia copia, y una copia de una lista es una lista que se desincroniza. Paso: al agregar la
+# declaracion presentada, la API siguio pidiendo las cinco de antes y el sistema nunca se enteraba
+# de que un contribuyente ya habia firmado.
+DOCUMENTOS_QUE_SE_PIDEN: tuple[DocumentType, ...] = (
+    DocumentType.RUT,
+    DocumentType.EXOGENA,
+    DocumentType.PRIOR_RETURN,
+    DocumentType.SUGGESTED_RETURN,
+    DocumentType.EINVOICE_SUMMARY,
+    # La declaracion PRESENTADA del año que se esta trabajando. En el año en curso normalmente no
+    # existe —y eso no es un error: se reporta como no disponible y la extraccion sigue— pero en
+    # cuanto el contribuyente firma, aparece. Es la unica forma que tiene el sistema de ENTERARSE
+    # de que ya se presento: sin pedirla, el expediente se queda para siempre en "falta que entre
+    # a firmar" incluso cuando ya firmo, y nadie puede ver que fue lo que quedo radicado.
+    DocumentType.FILED_RETURN,
+)
+
+
 class ExtractionRequest(BaseModel):
     """Peticion de extraccion. Las credenciales viajan aparte y no se persisten."""
 
     taxpayer: TaxpayerRef
-    doc_types: list[DocumentType] = Field(
-        default_factory=lambda: [
-            DocumentType.RUT,
-            DocumentType.EXOGENA,
-            DocumentType.PRIOR_RETURN,
-            DocumentType.SUGGESTED_RETURN,
-            DocumentType.EINVOICE_SUMMARY,
-        ]
-    )
+    doc_types: list[DocumentType] = Field(default_factory=lambda: list(DOCUMENTOS_QUE_SE_PIDEN))
     callback_url: str | None = None
 
     @field_validator("doc_types")

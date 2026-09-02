@@ -137,6 +137,18 @@ class FakeDianSession:
                 "La DIAN todavía no publica la información exógena del periodo.",
                 doc_label="exogena",
             )
+        # LA DECLARACION PRESENTADA DEL AÑO EN CURSO NO EXISTE hasta que el contribuyente
+        # firma, y ese es el caso normal: un expediente se trabaja ANTES de presentar. El falso
+        # la entregaba siempre —devolvia un PDF para cualquier tipo— y eso enseñaba una realidad
+        # que no existe: todo expediente nacia "ya presentado". Aparece solo con el escenario
+        # `presentada`, que es como se prueba el cierre del ciclo.
+        if doc_type is DocumentType.FILED_RETURN and "presentada" not in self._scenario:
+            raise DianDocumentUnavailableError(
+                f"La DIAN no tiene la declaración presentada del año gravable "
+                f"{taxpayer.tax_year}.",
+                doc_type=doc_type.value,
+                tax_year=taxpayer.tax_year,
+            )
         if doc_type in _DECLARACIONES and "sindecl" in self._scenario:
             # Se cita el `mensaje` real de la DIAN, igual que hace el conector HTTP, para que lo
             # que se prueba aca sea del mismo material que llega en produccion.
@@ -184,10 +196,12 @@ class FakeDianSession:
             raise ValidationError("La sesión ya fue cerrada.")
         if "sindecl" in self._scenario:
             return []
-        return [
-            {"anio": anio, "form_id": f"fake-{anio}"}
-            for anio in (2025, 2024, 2022, 2021, 2020)
-        ]
+        # El año en curso (2025) solo esta presentado en el escenario `presentada`: lo normal es
+        # trabajar un expediente ANTES de que se firme.
+        anios = [2024, 2022, 2021, 2020]
+        if "presentada" in self._scenario:
+            anios = [2025, *anios]
+        return [{"anio": anio, "form_id": f"fake-{anio}"} for anio in anios]
 
     async def descargar_declaracion(self, anio: int) -> RawDocument:
         if self._closed:

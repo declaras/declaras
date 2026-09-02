@@ -67,6 +67,15 @@ _EVIDENCE_DOC_TYPE = "EVIDENCE"
 _SIN_ESTOS_SE_PUEDE_IGUAL = frozenset({DocumentType.SUGGESTED_RETURN, DocumentType.PRIOR_RETURN})
 
 
+# NO ESTAR ES EL ESTADO NORMAL DE ESTOS, y avisarlo seria avisar de lo esperado. La declaracion
+# presentada se pide en cada consulta para saber si el contribuyente ya firmo, y la respuesta es
+# "todavia no" en practicamente todos los expedientes: si no ha firmado es justamente por lo que
+# nos contrato. Convertir eso en alerta pone una en CADA expediente, y una alerta que aparece
+# siempre no informa nada; peor, ensena a ignorar las alertas, que es como se pierden las que si
+# importan. Cuando aparezca, se ve sola: el expediente pasa a presentado.
+_SU_AUSENCIA_ES_LO_NORMAL = frozenset({DocumentType.FILED_RETURN})
+
+
 def _severidad_de(failure: object) -> FlagSeverity:
     """Qué tan grave es no haber podido traer un documento.
 
@@ -237,6 +246,8 @@ class CaseService:
             if f.resolved_at is None
         }
         for failure in result.failures:
+            if failure.doc_type in _SU_AUSENCIA_ES_LO_NORMAL:
+                continue  # no llego porque todavia no existe, que es lo esperado
             encabezado = f"No se pudo obtener {document_label(failure.doc_type.value)}"
             if (failure.code, encabezado) in vivas:
                 continue
@@ -247,7 +258,36 @@ class CaseService:
                 severity=_severidad_de(failure),
             )
 
-        await self._cases.transition(case_id, status=CaseStatus.READY_FOR_REVIEW)
+        # SI LLEGO LA DECLARACION PRESENTADA, YA SE PRESENTO, y el expediente lo refleja: su
+        # trabajo termino. Antes se quedaba en "falta que entre a firmar" para siempre, aunque
+        # el contribuyente ya hubiera firmado, porque nada le avisaba al sistema.
+        # SOLO LA DEL AÑO DEL EXPEDIENTE, y la distincion no es teorica: el historial tambien
+        # baja declaraciones presentadas —las de años anteriores— con este mismo tipo. Sin mirar
+        # el año, traer el historial de alguien marcaba su declaracion de ESTE año como
+        # presentada, que es exactamente al reves de la verdad.
+        ya_presentada = any(
+            d.doc_type is DocumentType.FILED_RETURN
+            and not d.metadata.get("historial")
+            and int(d.metadata.get("tax_year", detail.case.tax_year)) == detail.case.tax_year
+            for d in result.documents
+        )
+        # PRESENTADO NO SE DESHACE. Una declaracion firmada no se des-presenta: lo unico que
+        # sigue despues es una correccion, que tambien es una declaracion presentada. Sin este
+        # freno, reconsultar la DIAN un dia que la descarga falle —el portal se cae seguido—
+        # devolveria un expediente ya terminado a "por revisar", y quien lo abriera lo daria por
+        # pendiente. El estado no puede depender de si el portal respondio hoy.
+        ya_estaba = detail.case.status is CaseStatus.SUBMITTED
+        if ya_presentada or not ya_estaba:
+            await self._cases.transition(
+                case_id,
+                status=CaseStatus.SUBMITTED if ya_presentada else CaseStatus.READY_FOR_REVIEW,
+            )
+        if ya_presentada and not ya_estaba:
+            await self._cases.add_event(
+                case_id=case_id,
+                kind="FILED",
+                message="La DIAN ya tiene la declaración presentada de este año.",
+            )
         await self._cases.add_event(
             case_id=case_id,
             kind="DIAN_QUERY",

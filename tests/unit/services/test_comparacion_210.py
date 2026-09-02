@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from declaras.documents.models import DocumentReading, ExtractedField
 from declaras.render import Casilla
-from declaras.services.comparacion_210 import Diferencia, comparar
+from declaras.services.comparacion_210 import Contra, Diferencia, comparar
 
 
 def _reading(**casillas: int) -> DocumentReading:
@@ -189,3 +189,44 @@ def test_cada_casilla_trae_los_dos_nombres() -> None:
     [casilla] = c.casillas
     assert casilla.nombre == "Ingresos brutos (rentas de trabajo)"
     assert casilla.en_palabras == "Lo que te pagaron como empleado"
+
+
+# ─────────────── contra lo que se presentó de verdad ───────────────
+#
+# El mismo emparejamiento, otra pregunta. Y hasta ahora nada lo cubría: `Contra` existía, el
+# endpoint existía y el front ya ramificaba sobre el valor, pero la cadena entera estaba muerta
+# porque la declaración presentada NUNCA se le pedía a la DIAN. Se pedía la sugerida, la del año
+# anterior y el historial; la de este año, no. Comparar contra un documento que jamás llegaba da
+# siempre "no disponible", que es indistinguible de "todavía no ha presentado".
+
+
+def test_comparar_contra_lo_presentado_dice_contra_que_se_comparo():
+    """`contra` no cambia el cálculo, cambia lo que la comparación SIGNIFICA, y la pantalla
+    depende de ese valor para redactar: frente al borrador de la DIAN una diferencia es una mejora
+    nuestra, y frente a lo presentado es una discrepancia con el trabajo de otro contador."""
+    comparacion = comparar(
+        [Casilla(numero=29, nombre="Ingresos brutos", valor=90_000_000)],
+        _reading(c29=80_000_000),
+        Contra.DECLARACION_PRESENTADA,
+    )
+
+    assert comparacion.contra is Contra.DECLARACION_PRESENTADA
+    assert comparacion.disponible
+    (casilla,) = [c for c in comparacion.casillas if c.numero == 29]
+    assert casilla.diferencia is Diferencia.MAYOR_NUESTRA
+
+
+def test_sin_declaracion_presentada_no_esta_disponible_y_no_es_un_error():
+    """El caso de casi todos: el año todavía no se ha presentado. No disponible NO es un fallo,
+    y por eso la ausencia del documento tampoco genera alerta en el expediente."""
+    comparacion = comparar([], None, Contra.DECLARACION_PRESENTADA)
+
+    assert comparacion.contra is Contra.DECLARACION_PRESENTADA
+    assert not comparacion.disponible
+    assert comparacion.casillas == []
+
+
+def test_el_valor_por_defecto_sigue_siendo_el_borrador_de_la_dian():
+    """Quien llama sin decir contra qué está comparando contra el borrador: es la comparación que
+    ya existía, y cambiarle el defecto al agregar la otra le cambiaría el texto a esa pantalla."""
+    assert comparar([], None).contra is Contra.BORRADOR_DE_LA_DIAN

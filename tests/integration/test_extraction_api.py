@@ -55,7 +55,10 @@ async def test_extraccion_exitosa_devuelve_los_cinco_documentos(client):
         "declaracion-2022.pdf",
         "declaracion-2021.pdf",
     }
-    assert not final["failures"]
+    # La unica que falta es la presentada: este cliente todavia no ha firmado, que es el estado
+    # normal de quien esta preparando su declaracion. Se registra la falla (traza de lo que se
+    # intento) pero no genera alerta en el expediente.
+    assert [f["doc_type"] for f in final["failures"]] == ["FILED_RETURN"]
     assert all(doc["sha256"] and doc["size_bytes"] > 0 for doc in final["documents"])
 
 
@@ -117,9 +120,9 @@ async def test_documento_no_publicado_produce_exito_parcial(client):
     assert final["status"] == "SUCCEEDED"
     # Cuatro insumos (falta la exogena) + las dos declaraciones anteriores.
     assert len(final["documents"]) == 6
-    assert len(final["failures"]) == 1
-    failure = final["failures"][0]
-    assert failure["doc_type"] == "EXOGENA"
+    # La exogena (lo que esta prueba mira) y la presentada (que aun no existe, como en todos).
+    assert {f["doc_type"] for f in final["failures"]} == {"EXOGENA", "FILED_RETURN"}
+    failure = next(f for f in final["failures"] if f["doc_type"] == "EXOGENA")
     assert failure["code"] == "DIAN_DOCUMENT_UNAVAILABLE"
 
 
@@ -221,6 +224,7 @@ async def test_los_pasos_se_declaran_completos_desde_el_principio(client):
         "PRIOR_RETURN",
         "SUGGESTED_RETURN",
         "EINVOICE_SUMMARY",
+        "FILED_RETURN",
         "historial",
     ]
     assert [p["key"] for p in en_curso["progress"]] == esperados
@@ -232,7 +236,12 @@ async def test_al_terminar_todos_los_pasos_quedan_hechos(client):
     created = await client.post(BASE, json=payload("clave-buena"))
     final = await wait_for_status(client, created.json()["job_id"], "SUCCEEDED")
 
-    assert set(_pasos(final).values()) == {"DONE"}
+    # Todos hechos menos uno: "si ya presentaste este año" queda VACIO, no fallado, porque este
+    # cliente todavia no ha firmado. Vacio es el estado que ya existia para "la DIAN no tiene
+    # esto", y es exactamente lo que pasa.
+    pasos = _pasos(final)
+    assert pasos.pop("FILED_RETURN") == "EMPTY"
+    assert set(pasos.values()) == {"DONE"}
 
 
 async def test_un_documento_que_la_dian_no_tiene_no_se_marca_como_falla(client):
@@ -275,8 +284,8 @@ async def test_la_clave_esta_guardada_antes_de_que_el_job_sea_reclamable(client,
     created = await client.post(BASE, json=payload("clave-bad"))
     job_id = created.json()["job_id"]
 
-    # Siete: entrar, los cinco documentos y el historial.
-    assert len(created.json()["progress"]) == 7, "el job nace con su plan, no lo completa despues"
+    # Ocho: entrar, los seis documentos y el historial.
+    assert len(created.json()["progress"]) == 8, "el job nace con su plan, no lo completa despues"
     from uuid import UUID
 
     assert await container.vault.get(UUID(job_id)) is not None, "la clave ya tiene que estar"

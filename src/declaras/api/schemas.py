@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
 from declaras.documents.models import DocumentReading
 from declaras.domain.models import (
+    DOCUMENTOS_QUE_SE_PIDEN,
     DianCredentials,
     DocumentType,
     ExtractionRequest,
@@ -23,13 +24,10 @@ from declaras.domain.models import (
 )
 from declaras.domain.tax_calendar import default_tax_year
 
-_DEFAULT_DOC_TYPES = [
-    DocumentType.RUT,
-    DocumentType.EXOGENA,
-    DocumentType.PRIOR_RETURN,
-    DocumentType.SUGGESTED_RETURN,
-    DocumentType.EINVOICE_SUMMARY,
-]
+
+# QUE DOCUMENTOS SE PIDEN LO DECIDE EL DOMINIO, NO ESTA CAPA: `DOCUMENTOS_QUE_SE_PIDEN`.
+def _doc_types_por_defecto() -> list[DocumentType]:
+    return list(DOCUMENTOS_QUE_SE_PIDEN)
 
 
 class CreateExtractionRequest(BaseModel):
@@ -54,7 +52,7 @@ class CreateExtractionRequest(BaseModel):
         ),
     )
     on_behalf_of_nit: str | None = Field(default=None, examples=[None])
-    doc_types: list[DocumentType] = Field(default_factory=lambda: list(_DEFAULT_DOC_TYPES))
+    doc_types: list[DocumentType] = Field(default_factory=_doc_types_por_defecto)
     callback_url: HttpUrl | None = Field(
         default=None,
         description="Si se envia, avisamos aqui cuando el job termine.",
