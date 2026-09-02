@@ -194,3 +194,48 @@ def test_lo_que_el_molde_ya_traia_no_se_pisa():
 
     assert molde["doc"]["cuerpo"]["cs_id_24"] == "4321"
     assert molde["doc"]["cuerpo"]["cs_id_29"] == "5000000"
+
+
+async def test_no_se_escriben_las_casillas_calculadas():
+    """La causa del segundo 400: "Inconsistencia en el Cálculo :: valor sugerido".
+
+    Las casillas `editable: false` las calcula el portal a partir de las de entrada. Escribir
+    la 40 (deducciones) o la 91 (total cédula general) es mandarle un valor que no coincide con
+    lo que el portal deriva, y lo rechaza. Un humano no las puede tocar —salen en gris—; llena
+    las blancas y el sistema calcula el resto.
+
+    Se escribe la 29 (patrimonio bruto, de entrada) y se OMITE la 40 y la 91 (calculadas).
+    """
+    puesto: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        # Ya tiene un borrador editable, para ir directo a escribir sin crear.
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO,
+                "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                import json as _json
+                puesto.update(_json.loads(request.content)["doc"]["cuerpo"])
+                return httpx.Response(200, json={})
+            return httpx.Response(200, json={"doc": {"cuerpo": {
+                "cs_id_29": None, "cs_id_40": None, "cs_id_91": None,
+            }}})
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    await escribir_borrador(
+        _contexto(handler), anio=ANIO, casillas={29: 72_000_000, 40: 5_000_000, 91: 60_000_000}
+    )
+
+    assert puesto["cs_id_29"] == 72_000_000, "la de entrada sí se escribe"
+    # Las calculadas quedan como estaban (None), NO con nuestro valor.
+    assert puesto["cs_id_40"] is None, "la 40 la calcula el portal, no se escribe"
+    assert puesto["cs_id_91"] is None, "la 91 (total) tampoco"

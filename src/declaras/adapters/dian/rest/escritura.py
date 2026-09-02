@@ -140,6 +140,23 @@ _CASILLAS_NUMERICAS = frozenset({
 # especifica (`cs_id_24 = '0010'`). Sin ella, la casilla 24 sale como error al crear.
 _ACTIVIDAD_ECONOMICA_POR_DEFECTO = "0010"
 
+# Las casillas de SOLO LECTURA del 210 (`editable: false` en la tabla del bundle de la DIAN):
+# el portal las CALCULA a partir de las de entrada, y escribirlas es el error "Inconsistencia
+# en el Cálculo :: valor sugerido". Un humano en el portal no las puede tocar —salen en gris—;
+# llena las blancas (de entrada) y el sistema calcula el resto.
+#
+# NUESTRO `formulario_210` SI produce muchas de estas, y esta bien: las necesita para MOSTRARLE
+# el 210 completo al contador y para comparar contra el borrador de la DIAN. Lo que no se puede
+# es MANDARSELAS al portal. Por eso el filtro vive aca, en la escritura, y no en el calculo.
+_CASILLAS_CALCULADAS = frozenset({
+    27, 31, 34, 37, 40, 41, 42, 46, 49, 52, 53, 54, 55, 57, 61, 65, 68, 69, 70, 71, 73, 78, 82,
+    85, 86, 87, 88, 90, 91, 92, 93, 97, 101, 103, 106, 108, 116, 117, 118, 119, 120, 121, 122,
+    126, 130, 135, 137, 138, 139, 141, 241, 242, 244, 245, 246, 247, 248, 249, 250, 251, 252,
+    253, 254, 255, 256, 265, 266, 267, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280,
+    281, 282, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 298, 299, 306, 309, 312, 315,
+    316, 317, 320, 323, 326, 329, 332, 335, 341, 357, 358, 359,
+})
+
 
 def _preparar_molde_para_crear(molde: Mapping[str, Any]) -> None:
     """Rellena el molde en blanco con lo que la DIAN exige para CREAR, in place.
@@ -290,6 +307,12 @@ async def escribir_borrador(
     enviadas: dict[int, int] = {}
     for numero, valor in casillas.items():
         clave = f"cs_id_{numero}"
+        if numero in _CASILLAS_CALCULADAS:
+            # El portal la calcula solo. Mandarla es el error "Inconsistencia en el Cálculo":
+            # nuestro valor y el que el portal deriva de las casillas de entrada no coinciden,
+            # y no tienen por que —el borrador nuevo aun no tiene las entradas que la alimentan
+            # cuando el portal la evalua. Se omite y el portal la llena al recalcular.
+            continue
         if clave not in cuerpo:
             # Una casilla que el formato no tiene no se inventa: agregar claves que el
             # documento no trae es pedirle al portal que interprete algo no calibrado.
