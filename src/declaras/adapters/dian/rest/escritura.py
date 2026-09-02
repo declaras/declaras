@@ -118,6 +118,53 @@ def _es_editable(info: Mapping[str, Any]) -> bool:
     return bool(atributos.get("esEditable")) and not atributos.get("esPresentado")
 
 
+# Las casillas NUMERICAS del 210, extraidas de la tabla `keys` del propio bundle de la DIAN
+# (`transformarDatosModeloParaEnviar`). Son las que, vacias, la DIAN rechaza como "Casilla
+# Obligatoria" al crear: hay que mandarlas en 0. Las que NO estan aca son texto y se dejan como
+# vengan. La lista se copia entera y no se resume en rangos porque tiene huecos reales (140 no
+# esta, 242 es string) y un rango inventado meteria ceros donde va texto.
+_CASILLAS_NUMERICAS = frozenset({
+    28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+    97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115,
+    116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133,
+    134, 135, 136, 137, 138, 139, 141, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253,
+    254, 255, 256, 265, 266, 267, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281,
+    282, 287, 289, 290, 292, 293, 295, 296, 297, 298, 299, 300, 301, 302, 304, 305, 306, 307,
+    308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325,
+    326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 341, 355, 356, 357, 359,
+})
+
+# Actividad economica generica, la que la app pone cuando el contribuyente no trae una
+# especifica (`cs_id_24 = '0010'`). Sin ella, la casilla 24 sale como error al crear.
+_ACTIVIDAD_ECONOMICA_POR_DEFECTO = "0010"
+
+
+def _preparar_molde_para_crear(molde: Mapping[str, Any]) -> None:
+    """Rellena el molde en blanco con lo que la DIAN exige para CREAR, in place.
+
+    Un molde recien pedido trae las casillas en `null`. Crear un borrador con eso da un 400 que
+    lista cada casilla obligatoria vacia. La app de la DIAN, antes de su POST, convierte los
+    numeros vacios a 0 y pone la actividad economica; esto hace lo mismo, casilla por casilla,
+    con la tabla de tipos que la propia app define.
+
+    No se tocan las casillas de texto: meterles un 0 seria el error opuesto, un numero donde va
+    una cadena.
+    """
+    doc = molde.get("doc") if isinstance(molde, dict) else None
+    cuerpo = doc.get("cuerpo") if isinstance(doc, dict) else None
+    if not isinstance(cuerpo, dict):
+        return
+    for numero in _CASILLAS_NUMERICAS:
+        clave = f"cs_id_{numero}"
+        if clave in cuerpo and cuerpo[clave] in (None, ""):
+            cuerpo[clave] = "0"
+    # La actividad economica: si el molde no la trajo, la generica. Si la trajo, se respeta.
+    if not cuerpo.get("cs_id_24"):
+        cuerpo["cs_id_24"] = _ACTIVIDAD_ECONOMICA_POR_DEFECTO
+
+
 async def _crear_borrador(ctx: PortalContext, uri: str, anio: int) -> str:
     """Crea el borrador del año, igual que el boton "Haga su declaracion de renta" del portal.
 
@@ -134,6 +181,14 @@ async def _crear_borrador(ctx: PortalContext, uri: str, anio: int) -> str:
     molde = await ctx.api.get_json(
         f"{uri}/formularios/borrador?modo=inicial&anio={anio}&periodicidad=anual&periodo=null"
     )
+    # EL MOLDE EN BLANCO NO SE PUEDE MANDAR TAL CUAL, y esto costó descubrirlo: la DIAN lo
+    # rechaza con un 400 que enumera casilla por casilla lo que le falta ("Casilla Obligatoria"
+    # en la 29, 30, 31...; "El valor debe ser 1 o 0" en la 335 y la 253; la actividad económica
+    # en la 24). El molde trae esas casillas en `null`, y crear un borrador exige que las
+    # numéricas sean 0 y las banderas 0 o 1. La app de la DIAN hace exactamente esto antes de
+    # su POST (leído de `transformarDatosModeloParaEnviar` + `guardarActualizarBorrador` en su
+    # bundle): rellena la actividad y convierte los vacíos a cero. Se replica igual.
+    _preparar_molde_para_crear(molde)
     creado = await ctx.api.post_json(f"{uri}/formularios", molde)
 
     # La respuesta del portal anida el documento creado; el id tambien viaja en el mensaje.

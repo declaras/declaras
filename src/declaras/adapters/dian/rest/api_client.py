@@ -108,6 +108,14 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     # que lo tuvo en la mano. Un codigo HTTP dice que fallo; el `mensaje` de la DIAN dice que
     # hacer al respecto, y sin el cada 400 nuevo es una sesion de adivinacion.
     motivo = motivo_de_la_dian(response)
+    # SI NO HAY MOTIVO PRESENTABLE PERO EL CUERPO ES JSON, va el cuerpo crudo recortado. Un
+    # cuerpo JSON sin `mensaje` casi siempre trae la razon en otra forma —el 400 al crear el
+    # borrador la traia en un arreglo `marcas` con una entrada por casilla obligatoria— y
+    # citarlo es mejor que "(400)" a secas. Un HTML de error ("<html>Not Found</html>") no se
+    # cita: no aporta nada y ensucia el mensaje. Por eso se condiciona al content-type.
+    es_json = "json" in response.headers.get("content-type", "")
+    if not motivo and es_json and cuerpo_crudo.strip():
+        motivo = "(sin mensaje) " + " ".join(cuerpo_crudo.split())[:260]
     if codigo == httpx.codes.UNAUTHORIZED:
         raise DianSessionExpiredError("La sesión con la DIAN se venció.", motivo=motivo)
     if codigo == httpx.codes.NOT_FOUND:

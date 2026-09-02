@@ -34,11 +34,22 @@ SIN_DOCUMENTOS = {"codigo": 500, "mensaje": "Documentos no encontrados", "descri
 
 
 def _molde() -> dict:
-    """El documento que el portal prellena cuando se le pide un borrador nuevo."""
+    """El documento que el portal prellena cuando se le pide un borrador nuevo.
+
+    LAS CASILLAS VIENEN EN `null`, igual que el molde real: es exactamente lo que la DIAN
+    rechaza al crear si no se rellena antes.
+    """
     return {
         "doc": {
             "cab": {"cs_id_4": "2100000000000"},
-            "cuerpo": {"cs_id_29": 0, "cs_id_30": 0, "cs_id_31": 0},
+            "cuerpo": {
+                "cs_id_24": None,   # actividad económica
+                "cs_id_29": None,   # obligatoria, numérica
+                "cs_id_30": None,
+                "cs_id_31": None,
+                "cs_id_335": None,  # bandera 0/1
+                "cs_id_27": None,   # texto: NO se debe tocar
+            },
         }
     }
 
@@ -145,3 +156,41 @@ async def test_un_400_dice_el_paso_y_lo_que_respondio_la_dian():
     assert error.details.get("motivo") == "El contribuyente no tiene RUT activo", (
         "y lo que respondió la DIAN, que es lo único que permite actuar"
     )
+
+
+
+def test_el_molde_en_blanco_se_rellena_antes_de_crear():
+    """LA CAUSA REAL DEL 400, con las validaciones que la DIAN devolvió palabra por palabra.
+
+    Un molde recién pedido trae las casillas en `null`, y crear un borrador con eso da un 400
+    que enumera cada obligatoria vacía: "Casilla Obligatoria" en la 29/30/31, "El valor debe
+    ser 1 o 0" en la 335, la actividad económica en la 24. La app de la DIAN rellena esos
+    campos antes de su POST; esto hace lo mismo.
+    """
+    from declaras.adapters.dian.rest.escritura import _preparar_molde_para_crear
+
+    molde = _molde()
+    _preparar_molde_para_crear(molde)
+    cuerpo = molde["doc"]["cuerpo"]
+
+    # Las numéricas obligatorias, en 0 (no null).
+    assert cuerpo["cs_id_29"] == "0"
+    assert cuerpo["cs_id_30"] == "0"
+    assert cuerpo["cs_id_31"] == "0"
+    assert cuerpo["cs_id_335"] == "0"
+    # La actividad económica, la genérica.
+    assert cuerpo["cs_id_24"] == "0010"
+    # El texto NO se toca: un 0 ahí sería el error opuesto.
+    assert cuerpo["cs_id_27"] is None
+
+
+def test_lo_que_el_molde_ya_traia_no_se_pisa():
+    """Rellenar es para los vacíos. Un valor que vino se respeta: sobrescribirlo borraría un
+    dato que la DIAN sí precargó."""
+    from declaras.adapters.dian.rest.escritura import _preparar_molde_para_crear
+
+    molde = {"doc": {"cuerpo": {"cs_id_24": "4321", "cs_id_29": "5000000"}}}
+    _preparar_molde_para_crear(molde)
+
+    assert molde["doc"]["cuerpo"]["cs_id_24"] == "4321"
+    assert molde["doc"]["cuerpo"]["cs_id_29"] == "5000000"
