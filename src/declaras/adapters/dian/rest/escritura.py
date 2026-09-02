@@ -158,6 +158,18 @@ _CASILLAS_CALCULADAS = frozenset({
 })
 
 
+def _al_millar(valor: int) -> int:
+    """Redondea al millar como lo exige la DIAN, con SU regla exacta (leida del bundle).
+
+    El 210 se declara en miles: la DIAN rechaza cualquier casilla que no sea multiplo de 1000
+    ("Valor no aproximado al múltiplo de mil"). Y no es truncar: es redondeo comercial, resto
+    >= 500 sube al millar siguiente, resto < 500 baja. Es `redondearValorMoneda` de su libreria,
+    con `menorValorRedondeo=500` y `mayorValorRedondeo=1000`.
+    """
+    resto = valor % 1000
+    return valor - resto + (1000 if resto >= 500 else 0)
+
+
 def _preparar_molde_para_crear(molde: Mapping[str, Any]) -> None:
     """Rellena el molde en blanco con lo que la DIAN exige para CREAR, in place.
 
@@ -363,10 +375,14 @@ async def escribir_borrador(
             # documento no trae es pedirle al portal que interprete algo no calibrado.
             log.warning("dian.write.casilla_sin_destino", casilla=numero, anio=anio)
             continue
+        # AL MILLAR: el 210 se declara en miles y la DIAN rechaza lo que no lo sea. Se redondea
+        # aca, en el ultimo punto antes de escribir, para que el valor que se verifica en la
+        # relectura sea el mismo que se mando (si se redondeara antes, la comparacion fallaria).
+        redondeado = _al_millar(int(valor))
         # Se respeta el tipo que el documento ya trae: donde hay str se escribe str.
         existente = cuerpo[clave]
-        cuerpo[clave] = str(valor) if isinstance(existente, str) else int(valor)
-        enviadas[numero] = int(valor)
+        cuerpo[clave] = str(redondeado) if isinstance(existente, str) else redondeado
+        enviadas[numero] = redondeado
 
     log.info("dian.write.put", form_id=form_id, anio=anio, casillas=len(enviadas))
     await _guardar_con_calculo_del_portal(ctx, ruta, documento, cuerpo)

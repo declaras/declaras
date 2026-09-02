@@ -284,3 +284,43 @@ async def test_cuando_la_dian_corrige_un_total_se_reenvia_con_su_valor():
     assert len(intentos) == 2, "se reenvía una vez con el valor que sugirió la DIAN"
     # El segundo envío ya lleva la 91 con el valor que el portal pidió.
     assert str(intentos[1]["cs_id_91"]) == "40000000"
+
+
+def test_las_cifras_se_redondean_al_millar():
+    """La DIAN rechaza casillas que no sean múltiplo de mil ("Valor no aproximado al múltiplo
+    de mil"). El 210 se declara en miles, y no es truncar: es redondeo comercial."""
+    from declaras.adapters.dian.rest.escritura import _al_millar
+
+    assert _al_millar(72_325_681) == 72_326_000  # resto 681 >= 500 → sube
+    assert _al_millar(72_325_400) == 72_325_000  # resto 400 < 500 → baja
+    assert _al_millar(1_500) == 2_000            # el punto medio sube
+    assert _al_millar(1_499) == 1_000
+    assert _al_millar(0) == 0
+
+
+async def test_el_valor_escrito_llega_redondeado_al_portal():
+    """No solo la función: el número que sale hacia el portal ya viene al millar."""
+    puesto: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO, "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                puesto.update(_json.loads(request.content)["doc"]["cuerpo"])
+                return httpx.Response(200, json={})
+            return httpx.Response(200, json={"doc": {"cuerpo": {"cs_id_29": None}}})
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_325_681})
+    assert puesto["cs_id_29"] == 72_326_000, "el valor exacto se redondeó al millar antes de ir"
