@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from typing import Any
 
@@ -79,6 +80,40 @@ def motivo_de_la_dian(response: httpx.Response) -> str | None:
     return None
 
 
+_VALOR_SUGERIDO = re.compile(r"valor sugerido\s*::\s*(-?\d+)")
+
+
+def _marcas_de(response: httpx.Response) -> list[dict[str, object]]:
+    """Las marcas de error del portal, con el valor sugerido de cada casilla cuando lo trae.
+
+    Una marca de inconsistencia luce asi:
+        {"idCasilla": "40", "msg": "Inconsistencia en el Cálculo :: valor sugerido :: 0"}
+    y de ahi sale que la casilla 40 el portal la quiere en 0. Se devuelve `{casilla, sugerido}`
+    para las que traen numero; las demas (una "Casilla Obligatoria" sin valor) quedan sin
+    `sugerido` y no se usan para corregir.
+    """
+    try:
+        cuerpo = response.json()
+    except ValueError:
+        return []
+    if not isinstance(cuerpo, dict):
+        return []
+    salida: list[dict[str, object]] = []
+    for marca in cuerpo.get("marcas") or []:
+        if not isinstance(marca, dict):
+            continue
+        casilla = marca.get("idCasilla")
+        msg = marca.get("msg") or ""
+        if casilla is None:
+            continue
+        item: dict[str, object] = {"casilla": int(casilla), "msg": msg}
+        m = _VALOR_SUGERIDO.search(str(msg))
+        if m:
+            item["sugerido"] = int(m.group(1))
+        salida.append(item)
+    return salida
+
+
 def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     """Traduce la respuesta de la API a un error del dominio.
 
@@ -116,6 +151,11 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
     es_json = "json" in response.headers.get("content-type", "")
     if not motivo and es_json and cuerpo_crudo.strip():
         motivo = "(sin mensaje) " + " ".join(cuerpo_crudo.split())[:260]
+    # LAS MARCAS: cuando el portal rechaza un formulario, devuelve una entrada por casilla mal
+    # con su `msg`. Para las inconsistencias de calculo ese msg trae el "valor sugerido", que es
+    # lo que el propio motor de la DIAN calculo. Guardarlas estructuradas permite CORREGIR con
+    # ellas —escribir lo que el portal espera— en vez de solo mostrar el error.
+    marcas = _marcas_de(response) if es_json else []
     if codigo == httpx.codes.UNAUTHORIZED:
         raise DianSessionExpiredError("La sesión con la DIAN se venció.", motivo=motivo)
     if codigo == httpx.codes.NOT_FOUND:
@@ -132,7 +172,11 @@ def _raise_for_status(response: httpx.Response, *, url: str) -> None:
             "La DIAN respondió con un error.", url=url, status=codigo, motivo=motivo
         )
     raise DianError(
-        f"La DIAN rechazó la consulta ({codigo}).", url=url, status=codigo, motivo=motivo
+        f"La DIAN rechazó la consulta ({codigo}).",
+        url=url,
+        status=codigo,
+        motivo=motivo,
+        marcas=marcas,
     )
 
 

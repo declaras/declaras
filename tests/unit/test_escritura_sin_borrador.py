@@ -239,3 +239,48 @@ async def test_no_se_escriben_las_casillas_calculadas():
     # Las calculadas quedan como estaban (None), NO con nuestro valor.
     assert puesto["cs_id_40"] is None, "la 40 la calcula el portal, no se escribe"
     assert puesto["cs_id_91"] is None, "la 91 (total) tampoco"
+
+
+
+async def test_cuando_la_dian_corrige_un_total_se_reenvia_con_su_valor():
+    """LA CAUSA REAL DEL SEGUNDO 400 y su solución.
+
+    El portal recalcula las casillas derivadas con su propio motor y rechaza el formulario si
+    no coinciden al peso ("Inconsistencia en el Cálculo :: valor sugerido :: N"). En vez de
+    reproducir ese motor —frágil—, se le pregunta: se manda lo que tenemos, y si corrige, se
+    aplican los valores que él mismo sugirió y se reenvía.
+    """
+    intentos: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO, "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                cuerpo = _json.loads(request.content)["doc"]["cuerpo"]
+                intentos.append(dict(cuerpo))
+                # El PRIMER PUT lo rechaza y sugiere que la 91 (total) debe ser 40 millones.
+                if len(intentos) == 1:
+                    msg = "Inconsistencia en el Cálculo :: valor sugerido :: 40000000"
+                    return httpx.Response(400, json={"marcas": [{"idCasilla": "91", "msg": msg}]})
+                return httpx.Response(200, json={})  # el segundo, ya corregido, pasa
+            return httpx.Response(
+                200, json={"doc": {"cuerpo": {"cs_id_29": None, "cs_id_91": None}}}
+            )
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_000_000})
+
+    assert len(intentos) == 2, "se reenvía una vez con el valor que sugirió la DIAN"
+    # El segundo envío ya lleva la 91 con el valor que el portal pidió.
+    assert str(intentos[1]["cs_id_91"]) == "40000000"

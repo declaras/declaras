@@ -182,6 +182,51 @@ def _preparar_molde_para_crear(molde: Mapping[str, Any]) -> None:
         cuerpo["cs_id_24"] = _ACTIVIDAD_ECONOMICA_POR_DEFECTO
 
 
+async def _guardar_con_calculo_del_portal(
+    ctx: PortalContext, ruta: str, documento: dict[str, Any], cuerpo: dict[str, Any]
+) -> None:
+    """Guarda el borrador dejando que la DIAN calcule sus propias casillas derivadas.
+
+    ═══ POR QUE NO ALCANZA CON MANDAR NUESTROS TOTALES ═══
+
+    El portal no solo guarda: RECALCULA cada casilla derivada (renta liquida, totales, saldos)
+    con su motor —el del art. 336 y sus limites— y rechaza el formulario si lo que le mandamos
+    no coincide al peso. Nuestro motor liquida bien, pero el mapeo a las ~200 casillas del 210
+    es una aproximacion, y una diferencia de redondeo en una casilla intermedia tumba el
+    guardado entero con "Inconsistencia en el Calculo :: valor sugerido :: N".
+
+    Reproducir el motor del portal casilla por casilla seria fragil y se rompe cada vez que la
+    DIAN cambia una formula. Pero el portal, en ese mismo rechazo, DICE cuanto deberia valer
+    cada casilla ("valor sugerido"). Asi que se le pregunta: se manda lo que tenemos, y si
+    corrige, se aplican sus valores y se reenvia. Es determinista y usa el motor de la DIAN, no
+    una copia nuestra que envejece.
+
+    Un solo reintento: con los valores que el propio portal sugirio, el segundo envio cuadra o
+    el problema es otro y hay que verlo, no insistir.
+    """
+    try:
+        await _paso("guardar el borrador", ctx.api.put_json(ruta, documento))
+        return
+    except DianError as exc:
+        sugeridos = {
+            int(m["casilla"]): m["sugerido"]
+            for m in exc.details.get("marcas", [])
+            if isinstance(m, dict) and "sugerido" in m
+        }
+        if not sugeridos:
+            raise  # no hay nada que corregir: es otro error, se propaga con su paso
+
+    log.info("dian.write.aplica_sugeridos", casillas=len(sugeridos))
+    for numero, valor in sugeridos.items():
+        clave = f"cs_id_{numero}"
+        if clave not in cuerpo:
+            continue
+        existente = cuerpo[clave]
+        cuerpo[clave] = str(valor) if isinstance(existente, str) else int(valor)
+    await _paso("guardar el borrador (con los valores que sugirió la DIAN)",
+                ctx.api.put_json(ruta, documento))
+
+
 async def _crear_borrador(ctx: PortalContext, uri: str, anio: int) -> str:
     """Crea el borrador del año, igual que el boton "Haga su declaracion de renta" del portal.
 
@@ -324,7 +369,7 @@ async def escribir_borrador(
         enviadas[numero] = int(valor)
 
     log.info("dian.write.put", form_id=form_id, anio=anio, casillas=len(enviadas))
-    await _paso("guardar el borrador", ctx.api.put_json(ruta, documento))
+    await _guardar_con_calculo_del_portal(ctx, ruta, documento, cuerpo)
 
     # ═══ LA RELECTURA ═══
     releido = await _paso("releer el borrador para verificarlo", ctx.api.get_json(ruta))
