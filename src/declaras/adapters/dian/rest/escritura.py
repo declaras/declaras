@@ -140,6 +140,11 @@ _CASILLAS_NUMERICAS = frozenset({
 # especifica (`cs_id_24 = '0010'`). Sin ella, la casilla 24 sale como error al crear.
 _ACTIVIDAD_ECONOMICA_POR_DEFECTO = "0010"
 
+# Cuantas veces se reenvia aplicando los valores que sugiere la DIAN. Tres alcanza para la
+# cascada normal (renta liquida -> impuesto -> saldo); mas que eso es un caso que no converge y
+# hay que verlo, no seguir reintentando.
+_MAXIMO_AJUSTES = 3
+
 # Las casillas de SOLO LECTURA del 210 (`editable: false` en la tabla del bundle de la DIAN):
 # el portal las CALCULA a partir de las de entrada, y escribirlas es el error "Inconsistencia
 # en el Cálculo :: valor sugerido". Un humano en el portal no las puede tocar —salen en gris—;
@@ -213,30 +218,35 @@ async def _guardar_con_calculo_del_portal(
     corrige, se aplican sus valores y se reenvia. Es determinista y usa el motor de la DIAN, no
     una copia nuestra que envejece.
 
-    Un solo reintento: con los valores que el propio portal sugirio, el segundo envio cuadra o
-    el problema es otro y hay que verlo, no insistir.
+    ITERA HASTA CONVERGER, no una sola vez: corregir una casilla puede cambiar el calculo de
+    otra (la renta liquida mueve el impuesto, que mueve el saldo), asi que el portal puede pedir
+    un segundo ajuste tras el primero. Cada iteracion aplica los sugeridos y reenvia; se acota a
+    unas pocas para que un caso que no converge falle en vez de girar sin fin. Los reenvios son
+    operaciones dentro de la sesion, no logins, asi que no cuentan para el bloqueo.
     """
-    try:
-        await _paso("guardar el borrador", ctx.api.put_json(ruta, documento))
-        return
-    except DianError as exc:
-        sugeridos = {
-            int(m["casilla"]): m["sugerido"]
-            for m in exc.details.get("marcas", [])
-            if isinstance(m, dict) and "sugerido" in m
-        }
-        if not sugeridos:
-            raise  # no hay nada que corregir: es otro error, se propaga con su paso
-
-    log.info("dian.write.aplica_sugeridos", casillas=len(sugeridos))
-    for numero, valor in sugeridos.items():
-        clave = f"cs_id_{numero}"
-        if clave not in cuerpo:
-            continue
-        existente = cuerpo[clave]
-        cuerpo[clave] = str(valor) if isinstance(existente, str) else int(valor)
-    await _paso("guardar el borrador (con los valores que sugirió la DIAN)",
-                ctx.api.put_json(ruta, documento))
+    for intento in range(_MAXIMO_AJUSTES + 1):
+        try:
+            etiqueta = "guardar el borrador" if intento == 0 else (
+                "guardar el borrador (con los valores que sugirió la DIAN)"
+            )
+            await _paso(etiqueta, ctx.api.put_json(ruta, documento))
+            return
+        except DianError as exc:
+            sugeridos = {
+                int(m["casilla"]): m["sugerido"]
+                for m in exc.details.get("marcas", [])
+                if isinstance(m, dict) and "sugerido" in m
+            }
+            # Sin nada que corregir, o ya en el ultimo intento: se propaga con su paso.
+            if not sugeridos or intento == _MAXIMO_AJUSTES:
+                raise
+            log.info("dian.write.aplica_sugeridos", intento=intento + 1, casillas=len(sugeridos))
+            for numero, valor in sugeridos.items():
+                clave = f"cs_id_{numero}"
+                if clave not in cuerpo:
+                    continue
+                existente = cuerpo[clave]
+                cuerpo[clave] = str(valor) if isinstance(existente, str) else int(valor)
 
 
 async def _crear_borrador(ctx: PortalContext, uri: str, anio: int) -> str:
@@ -361,15 +371,21 @@ async def escribir_borrador(
     documento = await _paso("leer el borrador", ctx.api.get_json(ruta))
     cuerpo = documento["doc"]["cuerpo"]
 
+    # LAS CALCULADAS SE LIMPIAN PRIMERO, TODAS. El portal las deriva de las de entrada, asi que
+    # no se escriben con nuestro valor —seria "Inconsistencia en el Cálculo"—; pero un borrador
+    # reusado arrastra el valor de intentos anteriores en CUALQUIER calculada, no solo en las
+    # que nuestro calculo produce, y esa basura tambien se valida. Se ponen todas en 0 —el punto
+    # de partida limpio— y el portal las corrige via los valores sugeridos del reintento.
+    for numero in _CASILLAS_CALCULADAS:
+        clave = f"cs_id_{numero}"
+        if clave in cuerpo and cuerpo[clave] not in (None, "", 0, "0"):
+            cuerpo[clave] = "0" if isinstance(cuerpo[clave], str) else 0
+
     enviadas: dict[int, int] = {}
     for numero, valor in casillas.items():
         clave = f"cs_id_{numero}"
         if numero in _CASILLAS_CALCULADAS:
-            # El portal la calcula solo. Mandarla es el error "Inconsistencia en el Cálculo":
-            # nuestro valor y el que el portal deriva de las casillas de entrada no coinciden,
-            # y no tienen por que —el borrador nuevo aun no tiene las entradas que la alimentan
-            # cuando el portal la evalua. Se omite y el portal la llena al recalcular.
-            continue
+            continue  # ya limpiada arriba; el portal la calcula
         if clave not in cuerpo:
             # Una casilla que el formato no tiene no se inventa: agregar claves que el
             # documento no trae es pedirle al portal que interprete algo no calibrado.

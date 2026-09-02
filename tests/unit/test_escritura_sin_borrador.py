@@ -236,9 +236,9 @@ async def test_no_se_escriben_las_casillas_calculadas():
     )
 
     assert puesto["cs_id_29"] == 72_000_000, "la de entrada sí se escribe"
-    # Las calculadas quedan como estaban (None), NO con nuestro valor.
-    assert puesto["cs_id_40"] is None, "la 40 la calcula el portal, no se escribe"
-    assert puesto["cs_id_91"] is None, "la 91 (total) tampoco"
+    # Las calculadas NO llevan nuestro valor: quedan en 0 (limpias), el portal las deriva.
+    assert puesto["cs_id_40"] in (None, 0, "0"), "la 40 la calcula el portal, no se escribe"
+    assert puesto["cs_id_91"] in (None, 0, "0"), "la 91 (total) tampoco"
 
 
 
@@ -324,3 +324,78 @@ async def test_el_valor_escrito_llega_redondeado_al_portal():
 
     await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_325_681})
     assert puesto["cs_id_29"] == 72_326_000, "el valor exacto se redondeó al millar antes de ir"
+
+
+async def test_itera_cuando_corregir_una_casilla_desencadena_otra():
+    """Corregir una casilla puede cambiar el cálculo de otra (renta líquida → impuesto →
+    saldo), así que el portal puede pedir un segundo ajuste tras el primero. El guardado itera
+    hasta converger, no una sola vez."""
+    intentos: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO, "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                cuerpo = _json.loads(request.content)["doc"]["cuerpo"]
+                intentos.append(dict(cuerpo))
+                # 1er PUT: pide corregir la 90. 2do: al corregirla, ahora pide la 126. 3ro: pasa.
+                sug = "Inconsistencia en el Cálculo :: valor sugerido :: "
+                if len(intentos) == 1:
+                    return httpx.Response(400, json={"marcas": [
+                        {"idCasilla": "90", "type": "error", "msg": sug + "5000000"}]})
+                if len(intentos) == 2:
+                    return httpx.Response(400, json={"marcas": [
+                        {"idCasilla": "126", "type": "error", "msg": sug + "800000"}]})
+                return httpx.Response(200, json={})
+            vacio = {"cs_id_29": None, "cs_id_90": None, "cs_id_126": None}
+            return httpx.Response(200, json={"doc": {"cuerpo": vacio}})
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_000_000})
+
+    assert len(intentos) == 3, "iteró hasta que el portal aceptó"
+    assert str(intentos[2]["cs_id_90"]) == "5000000"
+    assert str(intentos[2]["cs_id_126"]) == "800000"
+
+
+async def test_las_calculadas_se_limpian_a_cero_del_borrador_reusado():
+    """Un borrador reusado arrastra el valor de intentos anteriores en las calculadas. Esa
+    basura también se valida, así que se pone en 0 antes de escribir."""
+    puesto: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO, "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                puesto.update(_json.loads(request.content)["doc"]["cuerpo"])
+                return httpx.Response(200, json={})
+            # El borrador viene SUCIO: la 90 (calculada) trae basura de un intento anterior.
+            return httpx.Response(
+                200, json={"doc": {"cuerpo": {"cs_id_29": None, "cs_id_90": "9999999"}}}
+            )
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_000_000})
+    assert puesto["cs_id_90"] == "0", "la basura de la calculada se limpió a 0"
