@@ -103,3 +103,28 @@ async def test_escribir_el_borrador_tambien_frena(client):
 
     agotada = await client.post(ruta, json={"dian_password": MALA})
     assert agotada.json()["code"] == "DIAN_LOGIN_ATTEMPTS_EXHAUSTED", agotada.text
+
+
+async def test_el_boton_de_desbloquear_libera_los_intentos_del_expediente(client):
+    """La salida cuando alguien tecleó mal la clave hasta agotar NUESTRO freno.
+
+    Sin este reinicio, quien se equivocó dos veces tendría que esperar la ventana entera para
+    escribir bien la clave, aunque ya sepa cuál es. El botón lo deja intentar de una, y la
+    cuenta de la DIAN sigue protegida: la DIAN cuenta sus propios fallos, no los nuestros.
+    """
+    case_id = await _listo_para_escribir(client)
+    ruta = f"/v1/cases/{case_id}/portal/escribir"
+
+    # Se agotan los intentos con clave mala.
+    await client.post(ruta, json={"dian_password": MALA})
+    await client.post(ruta, json={"dian_password": MALA})
+    agotada = await client.post(ruta, json={"dian_password": MALA})
+    assert agotada.json()["code"] == "DIAN_LOGIN_ATTEMPTS_EXHAUSTED"
+
+    # El botón reinicia el contador.
+    desbloqueo = await client.post(f"/v1/cases/{case_id}/desbloquear-intentos")
+    assert desbloqueo.status_code == 200, desbloqueo.text
+
+    # Y ahora la clave buena vuelve a tener oportunidad (ya no es EXHAUSTED).
+    reintento = await client.post(ruta, json={"dian_password": BUENA})
+    assert reintento.status_code == 200, reintento.text

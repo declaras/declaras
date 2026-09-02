@@ -7,7 +7,7 @@ cuenta, el usuario queda sin poder declarar y eso es un dano real.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -22,13 +22,30 @@ class SqlLoginAttemptGuard:
     """Implementa LoginAttemptGuard."""
 
     def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession], *, max_attempts: int
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        max_attempts: int,
+        ventana_minutos: int = 15,
     ) -> None:
         self._sessions = session_factory
         self._max_attempts = max_attempts
+        # Cuanto duran los fallos antes de caducar. SIN ESTO EL FRENO ES UNA TRAMPA: una vez en
+        # el limite, `assert_can_attempt` corta para siempre, y como no deja ni intentar, nunca
+        # hay login exitoso que lo resetee. Dos claves mal escritas dejaban la cedula sin poder
+        # operar NUNCA MAS, aunque la DIAN nunca la bloqueara (la DIAN corta al tercer fallo;
+        # nosotros al segundo, asi que la cuenta real queda a salvo pero la persona queda
+        # atrapada de nuestro lado). Con la ventana, tras esperarla se puede reintentar con la
+        # clave buena. Es la misma logica de la DIAN, que tampoco cuenta fallos de hace horas.
+        self._ventana = timedelta(minutes=ventana_minutos)
 
     async def assert_can_attempt(self, subject_key: str) -> None:
-        failures = await self._failures(subject_key)
+        failures, ultimo = await self._estado(subject_key)
+        # Los fallos caducados no cuentan: si el ultimo fue hace mas que la ventana, la cuenta
+        # ya tuvo su descanso y arranca de cero.
+        if ultimo is not None and datetime.now(UTC) - ultimo > self._ventana:
+            await self.reset(subject_key)
+            return
         if failures >= self._max_attempts:
             log.warning("dian.login.attempts_exhausted", failures=failures)
             raise DianLoginAttemptsExhaustedError(
@@ -56,6 +73,16 @@ class SqlLoginAttemptGuard:
                 row.last_failure_at = None
 
     async def _failures(self, subject_key: str) -> int:
+        fallos, _ = await self._estado(subject_key)
+        return fallos
+
+    async def _estado(self, subject_key: str) -> tuple[int, datetime | None]:
         async with self._sessions() as session:
             row = await session.get(LoginAttemptRow, subject_key)
-            return int(row.failures) if row else 0
+            if row is None:
+                return 0, None
+            ultimo = row.last_failure_at
+            if ultimo is not None and ultimo.tzinfo is None:
+                # SQLite devuelve naive; se ancla a UTC, que es como se guardo.
+                ultimo = ultimo.replace(tzinfo=UTC)
+            return int(row.failures), ultimo

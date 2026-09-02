@@ -34,7 +34,7 @@ from declaras.domain.errors import (
     JobNotFoundError,
     ValidationError,
 )
-from declaras.domain.models import BorradorEscrito
+from declaras.domain.models import BorradorEscrito, TaxpayerRef
 from declaras.observability import get_logger
 from declaras.services.case_summary import CaseSummary, build_summary
 from declaras.services.conciliacion_service import (
@@ -401,6 +401,40 @@ async def estado_de_la_clave(
     detalle = await container.case_service.get_detail(case_id)
     guardada = await container.clave.recuperar(detalle.client.id)
     return ClaveGuardadaResponse(guardada=guardada is not None)
+
+
+@router.post(
+    "/cases/{case_id}/desbloquear-intentos",
+    response_model=ClaveGuardadaResponse,
+    summary="Reinicia el contador de intentos fallidos del portal para este cliente",
+)
+async def desbloquear_intentos(
+    case_id: UUID, container: ContainerDep, _auth: AutenticadoDep
+) -> ClaveGuardadaResponse:
+    """La salida cuando alguien tecleó mal la clave hasta agotar los intentos DE NUESTRO freno.
+
+    ═══ POR QUE HACE FALTA UN BOTON Y NO SOLO LA VENTANA DE TIEMPO ═══
+
+    El freno corta al segundo fallo para no llegar al tercero, que es el que bloquea la cuenta
+    en la DIAN. Sin este reinicio, quien tecleó mal dos veces tendría que esperar la ventana
+    entera para poder escribir bien la clave, aunque ya sepa cuál es. Esto lo deja intentar de
+    una: la cuenta de la DIAN sigue protegida —la DIAN cuenta sus propios fallos, no los
+    nuestros— y lo único que se reinicia es nuestro contador.
+
+    NO desbloquea nada en el portal de la DIAN: si la cuenta quedó bloqueada allá (tres fallos
+    reales), eso se resuelve en el portal, no acá.
+    """
+    detalle = await container.case_service.get_detail(case_id)
+    titular = TaxpayerRef(
+        id_kind=detalle.client.id_kind,
+        id_number=detalle.client.id_number,
+        tax_year=detalle.case.tax_year,
+    )
+    await container.guard.reset(titular.subject_key)
+    # Se reusa la forma de la respuesta de clave: al operador le interesa el mismo bloque.
+    return ClaveGuardadaResponse(
+        guardada=(await container.clave.recuperar(detalle.client.id)) is not None
+    )
 
 
 @router.delete(
