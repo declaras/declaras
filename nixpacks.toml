@@ -1,3 +1,18 @@
+# La version de uv con la que se instalan las dependencias.
+#
+# ═══ POR QUE ESTA FIJADA AQUI Y NO SE DEJA AL BUILDER ═══
+#
+# El builder de Railway arma el comando `pip install uv==$NIXPACKS_UV_VERSION`, y el dia que esa
+# variable llego VACIA el build murio con `Invalid requirement: 'uv=='`. No fue un cambio nuestro
+# —el codigo estaba sano, con sus pruebas en verde— sino la plantilla del builder resolviendo una
+# variable que no tenia valor. Fijarla aca quita esa dependencia: el build usa la version que
+# nosotros decimos, no la que el entorno tenga a bien darnos ese dia.
+#
+# Se sube a mano cuando haga falta, que es como debe ser: la version del instalador de
+# dependencias es parte de la reproducibilidad del build, no un detalle del proveedor.
+[variables]
+NIXPACKS_UV_VERSION = "0.11.10"
+
 # Paquetes del sistema que la imagen no trae y el arranque necesita.
 #
 # `openssh` es para el tunel de salida hacia `api.dian.gov.co` (ver `scripts/arrancar.sh`): ese
