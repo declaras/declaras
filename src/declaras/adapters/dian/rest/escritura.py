@@ -140,6 +140,10 @@ _CASILLAS_NUMERICAS = frozenset({
 # especifica (`cs_id_24 = '0010'`). Sin ella, la casilla 24 sale como error al crear.
 _ACTIVIDAD_ECONOMICA_POR_DEFECTO = "0010"
 
+# Casillas que son CONTEOS, no pesos: no se redondean al millar. La 138 es el numero de
+# dependientes economicos; redondearla mandaria 1 dependiente a 0.
+_CASILLAS_DE_CONTEO = frozenset({138})
+
 # Cuantas veces se reenvia aplicando los valores que sugiere la DIAN. Tres alcanza para la
 # cascada normal (renta liquida -> impuesto -> saldo); mas que eso es un caso que no converge y
 # hay que verlo, no seguir reintentando.
@@ -160,7 +164,8 @@ _CASILLAS_CALCULADAS = frozenset({
     253, 254, 255, 256, 265, 266, 267, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280,
     281, 282, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 298, 299, 306, 309, 312, 315,
     316, 317, 320, 323, 326, 329, 332, 335, 341, 357, 358, 359,
-})
+}) - {138}  # la 138 (numero de dependientes) la marca la tabla como calculada, pero el portal
+# la EXIGE como dato de entrada cuando hay deduccion por dependientes: se escribe, no se limpia.
 
 
 def _al_millar(valor: int) -> int:
@@ -391,10 +396,10 @@ async def escribir_borrador(
             # documento no trae es pedirle al portal que interprete algo no calibrado.
             log.warning("dian.write.casilla_sin_destino", casilla=numero, anio=anio)
             continue
-        # AL MILLAR: el 210 se declara en miles y la DIAN rechaza lo que no lo sea. Se redondea
-        # aca, en el ultimo punto antes de escribir, para que el valor que se verifica en la
-        # relectura sea el mismo que se mando (si se redondeara antes, la comparacion fallaria).
-        redondeado = _al_millar(int(valor))
+        # AL MILLAR: el 210 se declara en miles y la DIAN rechaza lo que no lo sea. PERO las
+        # casillas de conteo no son pesos —la 138 es cuantos dependientes hay— y redondearlas
+        # las destruiria (1 dependiente -> 0). Esas se escriben tal cual.
+        redondeado = int(valor) if numero in _CASILLAS_DE_CONTEO else _al_millar(int(valor))
         # Se respeta el tipo que el documento ya trae: donde hay str se escribe str.
         existente = cuerpo[clave]
         cuerpo[clave] = str(redondeado) if isinstance(existente, str) else redondeado

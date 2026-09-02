@@ -87,6 +87,8 @@ _NUMEROS = (
     133,
     136,
     137,
+    # El numero de dependientes economicos. Solo se emite cuando hay deduccion por dependientes.
+    138,
 )
 CASILLAS_DEL_210: dict[int, str] = {n: nombre_de_casilla(n) for n in _NUMEROS}
 
@@ -203,6 +205,14 @@ def formulario_210(liq: Liquidacion, caso: CasoTributario) -> list[Casilla]:
         (136, max(saldo, 0), "SALDO"),
         (137, max(-saldo, 0), "SALDO"),
     ]
+
+    # LA 138 ES UN CONTEO, no pesos: el numero de dependientes economicos. El portal la exige
+    # cuando la declaracion aplica la deduccion del art. 387 ("Hay un dependiente económico"),
+    # y sin ella rechaza el guardado. La 139 (la adicion por dependientes) la calcula el portal
+    # a partir de este numero, asi que esa no se manda.
+    n_dependientes = len(caso.beneficios.dependientes)
+    if n_dependientes:
+        filas.append((138, n_dependientes, None))
 
     return [
         Casilla(numero=n, nombre=CASILLAS_DEL_210[n], valor=v, nodo=nodo) for n, v, nodo in filas

@@ -399,3 +399,33 @@ async def test_las_calculadas_se_limpian_a_cero_del_borrador_reusado():
 
     await escribir_borrador(_contexto(handler), anio=ANIO, casillas={29: 72_000_000})
     assert puesto["cs_id_90"] == "0", "la basura de la calculada se limpió a 0"
+
+
+async def test_el_numero_de_dependientes_se_escribe_sin_redondear():
+    """La casilla 138 es un CONTEO, no pesos: el portal la exige cuando hay deducción por
+    dependientes ("Hay un dependiente económico"). Redondearla al millar mandaría 1 → 0."""
+    puesto: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        ruta = request.url.path
+        if ruta == DIAN_API.token_from_cookies:
+            return httpx.Response(200, json={"idToken": "jwt"})
+        if ruta == DIAN_API.renta_form_versions:
+            return httpx.Response(200, json=[{"anioGravable": ANIO, "uriApi": URI, "version": 18}])
+        if ruta.endswith(f"{URI}/formularios") and request.method == "GET":
+            return httpx.Response(200, json={"infoFormularios": [{
+                "anio": ANIO, "identificador": {"id": "2118"},
+                "atributos": {"docAtributos": {"esEditable": True, "esPresentado": False}},
+            }]})
+        if "/formularios/" in ruta:
+            if request.method == "PUT":
+                puesto.update(_json.loads(request.content)["doc"]["cuerpo"])
+                return httpx.Response(200, json={})
+            return httpx.Response(200, json={"doc": {"cuerpo": {"cs_id_138": None}}})
+        return httpx.Response(404, json=SIN_DOCUMENTOS)
+
+    # Dos dependientes: la 138 llega en 2, NO redondeada a 0.
+    await escribir_borrador(_contexto(handler), anio=ANIO, casillas={138: 2})
+    assert str(puesto["cs_id_138"]) == "2", "el conteo se escribe tal cual, no al millar"

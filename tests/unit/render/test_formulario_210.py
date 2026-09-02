@@ -105,3 +105,15 @@ def test_todas_las_casillas_que_se_llenan_existen_en_el_formulario():
     """Una casilla inventada sería un renglón que la DIAN no tiene."""
     numeros = {c.numero for c in formulario_210(optimizar(g3(), P).liquidacion, g3())}
     assert numeros <= set(CASILLAS_DEL_210), numeros - set(CASILLAS_DEL_210)
+
+
+def test_el_numero_de_dependientes_va_en_la_138():
+    """La 138 lleva CUÁNTOS dependientes hay, que es lo que el portal exige cuando la
+    declaración aplica la deducción del art. 387. g1 tiene uno, g3 tiene dos."""
+    assert _casillas(g1)[138] == 1
+    assert _casillas(g3)[138] == 2
+
+
+def test_sin_dependientes_la_138_no_aparece():
+    """g2 no tiene dependientes: la 138 no se emite (no un 0 que el portal lea como conteo)."""
+    assert 138 not in _casillas(g2)
