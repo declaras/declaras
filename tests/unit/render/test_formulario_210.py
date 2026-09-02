@@ -117,3 +117,15 @@ def test_el_numero_de_dependientes_va_en_la_138():
 def test_sin_dependientes_la_138_no_aparece():
     """g2 no tiene dependientes: la 138 no se emite (no un 0 que el portal lea como conteo)."""
     assert 138 not in _casillas(g2)
+
+
+@pytest.mark.parametrize("hacer", [g1, g2, g3], ids=["g1", "g2", "g3"])
+def test_las_deducciones_van_en_la_casilla_de_entrada_y_no_solo_en_el_total(hacer):
+    """LA 39 ES LA QUE SE ESCRIBE, la 40 es el total que el portal calcula.
+
+    Se vio en el primer borrador real: las deducciones salieron en CERO. Mandábamos el valor a
+    la 40 ("Total deducciones imputables"), que el portal deriva de la 38 (intereses de
+    vivienda) + la 39 (otras); al recalcularla desde entradas vacías la pisaba con 0.
+    """
+    c = _casillas(hacer)
+    assert c[39] == c[40], "la de entrada lleva el mismo valor que el total que se muestra"

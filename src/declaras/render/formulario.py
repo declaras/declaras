@@ -55,6 +55,9 @@ _NUMEROS = (
     34,
     36,
     37,
+    # La 39 es la casilla de ENTRADA de las deducciones; la 40 es su total, que el portal
+    # calcula. Se emiten las dos: la 39 para escribir, la 40 para que el contador vea el total.
+    39,
     40,
     41,
     42,
@@ -153,6 +156,12 @@ def formulario_210(liq: Liquidacion, caso: CasoTributario) -> list[Casilla]:
         (34, max(ingresos["trabajo"] - liq.valor("INCR_TOTAL"), 0), None),
         (36, exentas, "EXENTA_25"),
         (37, exentas, "EXENTA_25"),
+        # LAS DEDUCCIONES VAN EN LA 39, NO EN LA 40, y la diferencia se vio en el primer
+        # borrador real: salieron en CERO. La 40 es "Total deducciones imputables" y el portal
+        # la CALCULA (38 intereses de vivienda + 39 otras); escribirla es mandarle un total que
+        # el recalcula desde entradas vacias, asi que lo pisa con 0. La 39 es la casilla de
+        # entrada, y es donde el motor pone lo que no son intereses de vivienda.
+        (39, deducciones, "DEDUCCIONES_LIMITADAS"),
         (40, deducciones, "DEDUCCIONES_LIMITADAS"),
         (41, limitadas, "APLICADO_40"),
         (42, max(ingresos["trabajo"] - liq.valor("INCR_TOTAL") - limitadas, 0), None),
