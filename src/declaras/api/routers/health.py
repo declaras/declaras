@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from typing import Literal
 
 from fastapi import APIRouter, Request
@@ -16,6 +18,46 @@ from declaras.api.schemas import HealthResponse
 router = APIRouter(tags=["health"])
 
 
+def _commit() -> str:
+    """El commit que esta corriendo, para poder saber QUE se desplego sin adivinar.
+
+    ═══ POR QUE HACE FALTA ═══
+
+    `version` sale del pyproject y no cambia entre despliegues, asi que responder "0.1.0" no
+    distingue el codigo de hoy del de hace dos semanas. Se perdio media hora averiguando si un
+    commit habia llegado a produccion, probando por cuatro caminos indirectos (el esquema de
+    OpenAPI, el enum de tipos de documento, endpoints que existen o no) y ninguno servia: todos
+    contestaban sobre cosas que ya existian antes del commit en cuestion.
+
+    ═══ POR QUE ES PUBLICO ═══
+
+    El repositorio es publico, asi que el hash no revela nada que no se pueda leer en GitHub.
+    Y el front ya publica el suyo en un `<meta>` del HTML por la misma razon.
+
+    ═══ POR QUE NO ROMPE SI NO ESTA ═══
+
+    Railway inyecta `RAILWAY_GIT_COMMIT_SHA` solo, pero en local y en las pruebas no existe. Se
+    cae a leer git, y si tampoco hay, devuelve "desconocido": una sonda de salud que falla por no
+    saber su propio commit seria peor que no tener el dato.
+    """
+    sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA")
+    if sha:
+        return sha[:7]
+    try:
+        return (
+            subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            or "desconocido"
+        )
+    except Exception:
+        return "desconocido"
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health(container: ContainerDep) -> HealthResponse:
     settings = container.settings
@@ -25,6 +67,7 @@ async def health(container: ContainerDep) -> HealthResponse:
         env=settings.env.value,
         dian_adapter=settings.dian_adapter.value,
         worker_enabled=settings.worker_enabled,
+        commit=_commit(),
     )
 
 
@@ -43,6 +86,7 @@ async def ready(container: ContainerDep) -> HealthResponse:
         env=settings.env.value,
         dian_adapter=settings.dian_adapter.value,
         worker_enabled=settings.worker_enabled,
+        commit=_commit(),
     )
 
 
@@ -76,9 +120,7 @@ async def origen(request: Request, container: ContainerDep) -> OrigenResponse:
     """
     reenviado = request.headers.get("x-forwarded-for", "")
     return OrigenResponse(
-        origen=origen_de(
-            request, saltos_de_confianza=container.settings.proxies_de_confianza
-        ),
+        origen=origen_de(request, saltos_de_confianza=container.settings.proxies_de_confianza),
         saltos_de_confianza=container.settings.proxies_de_confianza,
         valores_reenviados=len([p for p in reenviado.split(",") if p.strip()]),
     )

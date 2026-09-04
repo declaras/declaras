@@ -179,6 +179,9 @@ class HealthResponse(BaseModel):
     env: str
     dian_adapter: str
     worker_enabled: bool
+    # QUE COMMIT ESTA CORRIENDO. `version` sale del pyproject y lleva meses en 0.1.0, asi que no
+    # distingue un despliegue de otro. Esto si.
+    commit: str
 
 
 class ReadStoredDocumentRequest(BaseModel):
